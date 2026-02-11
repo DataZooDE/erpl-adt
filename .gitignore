@@ -22,3 +22,7 @@ compile_commands.json
 Thumbs.db
 
 .adt.creds
+
+# Python
+__pycache__/
+*.pyc
