@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/zcl_example"
+    adtcore:type="CLAS/OC" adtcore:name="ZCL_EXAMPLE"
+    adtcore:description="Example class" adtcore:packageName="ZTEST_PKG"/>
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/zcl_helper"
+    adtcore:type="CLAS/OC" adtcore:name="ZCL_HELPER"
+    adtcore:description="Helper class" adtcore:packageName="ZUTIL_PKG"/>
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/programs/programs/ztest_prog"
+    adtcore:type="PROG/P" adtcore:name="ZTEST_PROG"
+    adtcore:description="Test program" adtcore:packageName="ZTEST_PKG"/>
+</adtcore:objectReferences>

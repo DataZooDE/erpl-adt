@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<class:abapClass xmlns:class="http://www.sap.com/adt/oo/classes"
+  xmlns:adtcore="http://www.sap.com/adt/core"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:abapsource="http://www.sap.com/adt/abapsource"
+  adtcore:name="ZCL_EXAMPLE" adtcore:type="CLAS/OC"
+  adtcore:changedAt="2026-01-15T10:30:00Z" adtcore:changedBy="DEVELOPER"
+  adtcore:createdAt="2026-01-01T08:00:00Z" adtcore:description="Example class"
+  adtcore:language="EN" adtcore:responsible="DEVELOPER" adtcore:version="active"
+  abapsource:sourceUri="source/main" class:final="false" class:abstract="false"
+  class:visibility="public" class:category="">
+  <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source"
+    type="text/plain" etag="202601151030001"/>
+  <class:include adtcore:name="CLAS/OC" class:includeType="main"
+    adtcore:type="CLAS/OC" abapsource:sourceUri="source/main">
+    <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source"
+      type="text/plain"/>
+  </class:include>
+  <class:include adtcore:name="CLAS/OCI" class:includeType="definitions"
+    adtcore:type="CLAS/OCI" abapsource:sourceUri="includes/definitions">
+    <atom:link href="includes/definitions" rel="http://www.sap.com/adt/relations/source"
+      type="text/plain"/>
+  </class:include>
+</class:abapClass>

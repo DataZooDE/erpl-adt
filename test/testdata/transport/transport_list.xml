@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tm:root xmlns:tm="http://www.sap.com/cts/transports">
+  <tm:request tm:number="NPLK900001" tm:desc="Implement feature X"
+    tm:owner="DEVELOPER" tm:status="modifiable" tm:target="NPL"/>
+  <tm:request tm:number="NPLK900002" tm:desc="Bug fix for Z report"
+    tm:owner="DEVELOPER" tm:status="released" tm:target="NPL"/>
+  <tm:request tm:number="NPLK900003" tm:desc="Refactoring"
+    tm:owner="DEVELOPER" tm:status="modifiable" tm:target="NPL"/>
+</tm:root>

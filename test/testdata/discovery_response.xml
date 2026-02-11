@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ADT Discovery Service Document (Atom Service Document)
+  GET /sap/bc/adt/discovery
+  Accept: application/atomsvc+xml
+  Content-Type: application/atomsvc+xml; charset=utf-8
+
+  Reference: marcellourbani/abap-adt-api src/api/discovery.ts
+  Namespace: app = http://www.w3.org/2007/app (Atom Publishing Protocol)
+             atom = http://www.w3.org/2005/Atom
+             adtcomp = http://www.sap.com/adt/compatibility
+-->
+<app:service xmlns:app="http://www.w3.org/2007/app"
+             xmlns:atom="http://www.w3.org/2005/Atom"
+             xmlns:adtcomp="http://www.sap.com/adt/compatibility">
+  <app:workspace>
+    <atom:title>Discovery</atom:title>
+    <app:collection href="/sap/bc/adt/discovery">
+      <atom:title>Discovery</atom:title>
+      <adtcomp:templateLinks>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/relations/discovery" template="/sap/bc/adt/discovery" title="Discovery" type="application/atomsvc+xml"/>
+      </adtcomp:templateLinks>
+    </app:collection>
+  </app:workspace>
+  <app:workspace>
+    <atom:title>Object Repository</atom:title>
+    <app:collection href="/sap/bc/adt/repository/informationsystem">
+      <atom:title>Information System</atom:title>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/packages">
+      <atom:title>Packages</atom:title>
+      <adtcomp:templateLinks>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/relations/packages" template="/sap/bc/adt/packages/{packageName}" title="Package" type="application/vnd.sap.adt.packages.v1+xml"/>
+      </adtcomp:templateLinks>
+    </app:collection>
+  </app:workspace>
+  <app:workspace>
+    <atom:title>Sources</atom:title>
+    <app:collection href="/sap/bc/adt/oo/classes">
+      <atom:title>Classes</atom:title>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/oo/interfaces">
+      <atom:title>Interfaces</atom:title>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/programs/programs">
+      <atom:title>Programs</atom:title>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/functions/groups">
+      <atom:title>Function Groups</atom:title>
+    </app:collection>
+  </app:workspace>
+  <app:workspace>
+    <atom:title>Activation</atom:title>
+    <app:collection href="/sap/bc/adt/activation">
+      <atom:title>Activation</atom:title>
+      <adtcomp:templateLinks>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/relations/activation" template="/sap/bc/adt/activation" title="Activation" type="application/xml"/>
+      </adtcomp:templateLinks>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/activation/inactiveobjects">
+      <atom:title>Inactive Objects</atom:title>
+    </app:collection>
+  </app:workspace>
+  <app:workspace>
+    <atom:title>abapGit</atom:title>
+    <app:collection href="/sap/bc/adt/abapgit/repos">
+      <atom:title>abapGit Repositories</atom:title>
+      <adtcomp:templateLinks>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/abapgit/relations/repos" template="/sap/bc/adt/abapgit/repos" title="abapGit Repositories" type="application/abapgit.adt.repos.v2+xml"/>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/abapgit/relations/repo" template="/sap/bc/adt/abapgit/repos/{repoId}" title="abapGit Repository" type="application/abapgit.adt.repo.v3+xml"/>
+      </adtcomp:templateLinks>
+    </app:collection>
+    <app:collection href="/sap/bc/adt/abapgit/externalrepoinfo">
+      <atom:title>External Repository Info</atom:title>
+      <adtcomp:templateLinks>
+        <adtcomp:templateLink rel="http://www.sap.com/adt/abapgit/relations/externalrepoinfo" template="/sap/bc/adt/abapgit/externalrepoinfo" title="External Repository Info" type="application/abapgit.adt.repo.info.ext.response.v2+xml"/>
+      </adtcomp:templateLinks>
+    </app:collection>
+  </app:workspace>
+</app:service>

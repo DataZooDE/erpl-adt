@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Repository status response
+  GET /sap/bc/adt/abapgit/repos/{key}
+  Accept: application/abapgit.adt.repo.v3+xml
+  Content-Type: application/abapgit.adt.repo.v3+xml; charset=utf-8
+
+  Reference: abapGit/ADT_Backend src/zabapgit_st_repos.xslt.source.xml (single repo)
+             marcellourbani/abap-adt-api src/api/abapgit.ts gitRepos()
+  Namespace: abapgitrepo = http://www.sap.com/adt/abapgit/repositories
+             atom = http://www.w3.org/2005/Atom
+-->
+<abapgitrepo:repository xmlns:abapgitrepo="http://www.sap.com/adt/abapgit/repositories"
+                        xmlns:atom="http://www.w3.org/2005/Atom">
+  <abapgitrepo:key>0242AC1100021EDEB4B4BD0C4F2B8C30</abapgitrepo:key>
+  <abapgitrepo:package>ZTEST_PKG</abapgitrepo:package>
+  <abapgitrepo:url>https://github.com/SAP-samples/abap-platform-refscen-flight.git</abapgitrepo:url>
+  <abapgitrepo:branchName>refs/heads/main</abapgitrepo:branchName>
+  <abapgitrepo:createdBy>DEVELOPER</abapgitrepo:createdBy>
+  <abapgitrepo:createdAt>20260207103000</abapgitrepo:createdAt>
+  <abapgitrepo:deserializedBy>DEVELOPER</abapgitrepo:deserializedBy>
+  <abapgitrepo:deserializedAt>20260207103500</abapgitrepo:deserializedAt>
+  <abapgitrepo:status>A</abapgitrepo:status>
+  <abapgitrepo:statusText>Active</abapgitrepo:statusText>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/pull" rel="http://www.sap.com/adt/abapgit/relations/pull" type="pull_link"/>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/stage" rel="http://www.sap.com/adt/abapgit/relations/stage" type="stage_link"/>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/push" rel="http://www.sap.com/adt/abapgit/relations/push" type="push_link"/>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/checks" rel="http://www.sap.com/adt/abapgit/relations/check" type="check_link"/>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/status" rel="http://www.sap.com/adt/abapgit/relations/status" type="status_link"/>
+  <atom:link href="/sap/bc/adt/abapgit/repos/0242AC1100021EDEB4B4BD0C4F2B8C30/log" rel="http://www.sap.com/adt/abapgit/relations/log" type="log_link"/>
+</abapgitrepo:repository>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Package not found response
+  GET /sap/bc/adt/packages/ZNONEXISTENT
+  HTTP/1.1 404 Not Found
+  Content-Type: application/xml; charset=utf-8
+
+  ADT returns an exception body for 404 responses.
+  Namespace: exc = http://www.sap.com/adt/exceptions
+-->
+<exc:exception xmlns:exc="http://www.sap.com/adt/exceptions">
+  <exc:namespace id="/SAP/BC/ADT"/>
+  <exc:type>not_found</exc:type>
+  <exc:message lang="EN">Package ZNONEXISTENT does not exist</exc:message>
+  <exc:localizedMessage lang="EN">Package ZNONEXISTENT does not exist</exc:localizedMessage>
+</exc:exception>

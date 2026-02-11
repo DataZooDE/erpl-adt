@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Async operation completed successfully
+  GET /sap/bc/adt/operations/{operationId}
+  HTTP/1.1 200 OK
+  Content-Type: application/xml; charset=utf-8
+
+  Terminal state for a successful async operation.
+  Namespace: adtcore = http://www.sap.com/adt/core
+-->
+<adtcore:operation xmlns:adtcore="http://www.sap.com/adt/core"
+                   adtcore:id="0242AC1100021EDEB4B4BD0C4F2BAAFF"
+                   adtcore:status="completed"
+                   adtcore:startedAt="2026-02-07T10:35:00Z"
+                   adtcore:finishedAt="2026-02-07T10:36:15Z">
+  <adtcore:description>Pull repository ZTEST_PKG</adtcore:description>
+  <adtcore:progress adtcore:percentage="100" adtcore:text="Completed"/>
+  <adtcore:result>
+    <abapObjects:abapObjects xmlns:abapObjects="http://www.sap.com/adt/abapgit/abapObjects">
+      <abapObjects:abapObject>
+        <abapObjects:type>CLAS</abapObjects:type>
+        <abapObjects:name>ZCL_TEST_FLIGHT</abapObjects:name>
+        <abapObjects:package>ZTEST_PKG</abapObjects:package>
+        <abapObjects:status>A</abapObjects:status>
+        <abapObjects:msgType>S</abapObjects:msgType>
+        <abapObjects:msgText>Object deserialized successfully</abapObjects:msgText>
+      </abapObjects:abapObject>
+      <abapObjects:abapObject>
+        <abapObjects:type>TABL</abapObjects:type>
+        <abapObjects:name>ZTEST_FLIGHT_T</abapObjects:name>
+        <abapObjects:package>ZTEST_PKG</abapObjects:package>
+        <abapObjects:status>A</abapObjects:status>
+        <abapObjects:msgType>S</abapObjects:msgType>
+        <abapObjects:msgText>Object deserialized successfully</abapObjects:msgText>
+      </abapObjects:abapObject>
+    </abapObjects:abapObjects>
+  </adtcore:result>
+</adtcore:operation>

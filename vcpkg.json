@@ -1,0 +1,19 @@
+{
+  "name": "erpl-adt",
+  "version-string": "0.1.0",
+  "description": "CLI and MCP server for the SAP ADT REST API",
+  "dependencies": [
+    {
+      "name": "cpp-httplib",
+      "features": ["openssl"]
+    },
+    "tinyxml2",
+    "yaml-cpp",
+    "argparse",
+    "openssl",
+    "nlohmann-json",
+    "ftxui",
+    "catch2"
+  ],
+  "builtin-baseline": "11bbc873e00e9e58d4e9dffb30b7a5493a030e0b"
+}

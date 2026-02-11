@@ -1,0 +1,36 @@
+# Docker Compose: SAP ABAP Cloud Developer Trial + erpl-adt provisioner
+#
+# Usage:
+#   SAP_PASSWORD=<password> docker compose -f docker/docker-compose.yaml up
+#
+# The provisioner waits for the SAP trial to become healthy before deploying.
+
+services:
+  sap-trial:
+    image: sapse/abap-cloud-developer-trial:latest
+    hostname: sap-trial
+    ports:
+      - "8443:443"
+      - "50000:50000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:50000/sap/bc/adt/discovery"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 600s
+
+  provisioner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      sap-trial:
+        condition: service_healthy
+    environment:
+      - SAP_PASSWORD=${SAP_PASSWORD}
+    volumes:
+      - ./config:/config:ro
+    command:
+      - deploy
+      - -c
+      - /config/deploy.yaml

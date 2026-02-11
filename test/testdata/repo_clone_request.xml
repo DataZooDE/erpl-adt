@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Clone repository request body
+  POST /sap/bc/adt/abapgit/repos
+  Content-Type: application/abapgit.adt.repo.v3+xml
+  x-csrf-token: (valid token)
+
+  Reference: abapGit/ADT_Backend src/zabapgit_st_repo_post.xslt.source.xml
+             marcellourbani/abap-adt-api src/api/abapgit.ts createRepo()
+  Namespace: abapgitrepo = http://www.sap.com/adt/abapgit/repositories
+-->
+<abapgitrepo:repository xmlns:abapgitrepo="http://www.sap.com/adt/abapgit/repositories">
+  <abapgitrepo:package>ZTEST_PKG</abapgitrepo:package>
+  <abapgitrepo:url>https://github.com/SAP-samples/abap-platform-refscen-flight.git</abapgitrepo:url>
+  <abapgitrepo:branchName>refs/heads/main</abapgitrepo:branchName>
+  <abapgitrepo:transportRequest></abapgitrepo:transportRequest>
+  <abapgitrepo:remoteUser></abapgitrepo:remoteUser>
+  <abapgitrepo:remotePassword></abapgitrepo:remotePassword>
+</abapgitrepo:repository>

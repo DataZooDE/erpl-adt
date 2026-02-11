@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pull accepted response (async operation started)
+  POST /sap/bc/adt/abapgit/repos/{key}/pull
+  HTTP/1.1 202 Accepted
+  Content-Type: application/abapgit.adt.repo.v3+xml; charset=utf-8
+  Location: /sap/bc/adt/operations/0242AC1100021EDEB4B4BD0C4F2BAAFF
+
+  Pull is an async operation. The server returns 202 Accepted with a Location
+  header pointing to the operation status endpoint. The body contains initial
+  operation metadata.
+
+  Reference: abapGit/ADT_Backend src/zabapgit_st_repo_pull.xslt.source.xml
+             marcellourbani/abap-adt-api src/api/abapgit.ts pullRepo()
+
+  Note: The pull request body uses the same abapgitrepo:repository schema as
+  clone (zabapgit_st_repo_pull.xslt.source.xml), but with only branch,
+  transport, user, password fields.
+-->
+<abapgitrepo:repository xmlns:abapgitrepo="http://www.sap.com/adt/abapgit/repositories">
+  <abapgitrepo:branchName>refs/heads/main</abapgitrepo:branchName>
+</abapgitrepo:repository>

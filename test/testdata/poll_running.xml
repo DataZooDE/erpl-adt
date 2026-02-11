@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Async operation still running
+  GET /sap/bc/adt/operations/{operationId}
+  HTTP/1.1 200 OK
+  Content-Type: application/xml; charset=utf-8
+
+  ADT async operations (pull, activation) use a polling pattern.
+  The client polls the Location URL until status transitions from
+  "running" to "completed" or "failed".
+
+  Namespace: adtcore = http://www.sap.com/adt/core
+-->
+<adtcore:operation xmlns:adtcore="http://www.sap.com/adt/core"
+                   adtcore:id="0242AC1100021EDEB4B4BD0C4F2BAAFF"
+                   adtcore:status="running"
+                   adtcore:startedAt="2026-02-07T10:35:00Z">
+  <adtcore:description>Pull repository ZTEST_PKG</adtcore:description>
+  <adtcore:progress adtcore:percentage="45" adtcore:text="Deserializing objects..."/>
+</adtcore:operation>

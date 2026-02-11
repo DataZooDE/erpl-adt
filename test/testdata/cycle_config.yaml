@@ -1,0 +1,18 @@
+connection:
+  host: localhost
+  client: "001"
+  user: DEV
+  password: pass
+
+repos:
+  - name: alpha
+    url: https://github.com/test/alpha.git
+    package: ZALPHA
+    depends_on:
+      - bravo
+
+  - name: bravo
+    url: https://github.com/test/bravo.git
+    package: ZBRAVO
+    depends_on:
+      - alpha

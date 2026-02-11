@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mass activation request body
+  POST /sap/bc/adt/activation?method=activate&preauditRequested=true
+  Content-Type: application/xml
+  x-csrf-token: (valid token)
+
+  Reference: marcellourbani/abap-adt-api src/api/activate.ts activate()
+  Namespace: adtcore = http://www.sap.com/adt/core
+-->
+<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/zcl_test_flight"
+                           adtcore:type="CLAS/OC"
+                           adtcore:name="ZCL_TEST_FLIGHT"
+                           adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/ddic/tables/ztest_flight_t"
+                           adtcore:type="TABL/DT"
+                           adtcore:name="ZTEST_FLIGHT_T"
+                           adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+  <adtcore:objectReference adtcore:uri="/sap/bc/adt/ddic/ddl/sources/ztest_i_flight"
+                           adtcore:type="DDLS/DF"
+                           adtcore:name="ZTEST_I_FLIGHT"
+                           adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+</adtcore:objectReferences>

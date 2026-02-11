@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<class:abapClass xmlns:class="http://www.sap.com/adt/oo/classes"
+                 xmlns:adtcore="http://www.sap.com/adt/core"
+                 adtcore:name="ZCL_NEW_CLASS"
+                 adtcore:type="CLAS/OC"
+                 adtcore:uri="/sap/bc/adt/oo/classes/zcl_new_class"
+                 adtcore:description="A new test class"
+                 adtcore:language="EN"
+                 adtcore:responsible="DEVELOPER"
+                 adtcore:version="inactive"
+                 adtcore:createdAt="2026-02-07T10:30:00Z"
+                 adtcore:changedAt="2026-02-07T10:30:00Z">
+  <adtcore:packageRef adtcore:name="ZTEST_PKG"/>
+</class:abapClass>

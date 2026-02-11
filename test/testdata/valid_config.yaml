@@ -1,0 +1,21 @@
+connection:
+  host: localhost
+  port: 50000
+  https: false
+  client: "001"
+  user: DEVELOPER
+  password_env: SAP_PASSWORD
+
+repos:
+  - name: flight
+    url: https://github.com/SAP-samples/abap-platform-refscen-flight.git
+    branch: main
+    package: /DMO/FLIGHT
+    depends_on: []
+
+  - name: rap-generator
+    url: https://github.com/SAP-samples/cloud-abap-rap.git
+    branch: main
+    package: ZRAP_GENERATOR
+    depends_on:
+      - flight

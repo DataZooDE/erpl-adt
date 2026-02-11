@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux-x86_64
+            triplet: x64-linux
+          - os: macos-14
+            name: macos-arm64
+            triplet: arm64-osx
+          - os: macos-13
+            name: macos-x86_64
+            triplet: x64-osx
+          - os: windows-2022
+            name: windows-x64
+            triplet: x64-windows-static
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg
+            ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ matrix.name }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ matrix.name }}-
+
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "${{ github.workspace }}/vcpkg"
+          cd "${{ github.workspace }}/vcpkg"
+          git checkout ${{ env.VCPKG_BASELINE }}
+        env:
+          VCPKG_BASELINE: 11bbc873e00e9e58d4e9dffb30b7a5493a030e0b
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        run: $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: $env:VCPKG_ROOT\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+          cmake --build build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build
+
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: cd build && ctest --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: cd build && ctest --output-on-failure
+
+      - name: Upload binary (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: erpl-adt-${{ matrix.name }}
+          path: build/erpl-adt
+
+      - name: Upload binary (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: erpl-adt-${{ matrix.name }}
+          path: build/erpl-adt.exe

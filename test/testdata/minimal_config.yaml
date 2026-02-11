@@ -1,0 +1,10 @@
+connection:
+  host: sap.example.com
+  client: "100"
+  user: ADMIN
+  password: secret123
+
+repos:
+  - name: myrepo
+    url: https://github.com/test/repo.git
+    package: ZTEST_PKG

@@ -1,0 +1,3395 @@
+openapi: 3.0.3
+info:
+  title: SAP ADT REST API
+  version: 1.0.0
+  description: |
+    OpenAPI definition for the SAP ABAP Development Tools (ADT) REST protocol.
+    Reverse-engineered from Eclipse ADT plugin decompilation, the abap-adt-api
+    TypeScript library, and captured live ADT traffic. See the full protocol
+    specification at docs/adt-protocol-spec.md for XML namespace references,
+    content-type catalogs, and behavioral details.
+
+    ## Authentication
+    HTTP Basic Auth over HTTPS. Bearer tokens supported on some systems.
+
+    ## CSRF Tokens
+    Every mutating request (POST, PUT, DELETE) requires a valid `x-csrf-token`
+    header. Fetch via any GET with `x-csrf-token: fetch`. On 403 with response
+    header `x-csrf-token: Required`, re-fetch and retry once.
+
+    ## Async Operations
+    Long-running operations return 202 Accepted with a `Location` header.
+    Poll that URL (minimum 10 s interval) until status is `completed` or `failed`.
+
+    ## XML Namespaces
+    Most request/response bodies are XML with SAP vendor namespaces. The
+    `application/xml` media type is used in this spec; actual vendor types are
+    noted in operation descriptions.
+  contact:
+    name: Datazoo ERPL
+  license:
+    name: MIT
+
+servers:
+  - url: https://{host}:{port}/sap/bc/adt
+    description: SAP ADT base URL
+    variables:
+      host:
+        default: localhost
+        description: SAP system hostname
+      port:
+        default: "44300"
+        description: SAP ICM HTTPS port
+
+security:
+  - basicAuth: []
+
+tags:
+  - name: discovery
+    description: "Section 5 -- Discovery & Compatibility"
+  - name: search
+    description: "Section 6 -- Repository Search & Navigation"
+  - name: objects
+    description: "Section 7 -- Object Metadata"
+  - name: source
+    description: "Section 8 -- Source Code Read/Write"
+  - name: locking
+    description: "Section 9 -- Locking"
+  - name: creation
+    description: "Section 10 -- Object Creation"
+  - name: deletion
+    description: "Section 11 -- Object Deletion"
+  - name: activation
+    description: "Section 12 -- Activation"
+  - name: syntax-check
+    description: "Section 13 -- Syntax Check & Code Quality"
+  - name: unit-test
+    description: "Section 14 -- ABAP Unit Testing"
+  - name: atc
+    description: "Section 15 -- ATC Checks"
+  - name: transports
+    description: "Section 16 -- Transport Management"
+  - name: packages
+    description: "Section 17 -- Package Management"
+  - name: code-intelligence
+    description: "Section 18 -- Code Intelligence"
+  - name: where-used
+    description: "Section 19 -- Where-Used / Usage References"
+  - name: refactoring
+    description: "Section 20 -- Refactoring"
+  - name: cds
+    description: "Section 21 -- CDS / Data Dictionary"
+  - name: abapgit
+    description: "Section 22 -- abapGit Integration"
+  - name: system
+    description: "Section 23 -- Feeds, Traces & System Info"
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  # =========================================================================
+  # Discovery & Compatibility (Section 5)
+  # =========================================================================
+
+  /discovery:
+    get:
+      operationId: getDiscovery
+      summary: ADT service catalog
+      description: |
+        Returns an Atom Publishing Protocol service document listing all
+        available workspaces and collections.
+        Accept: `application/atomsvc+xml`
+      tags: [discovery]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - $ref: "#/components/parameters/sapLanguage"
+      responses:
+        "200":
+          description: Atom service document
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: APP service document (application/atomsvc+xml)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /core/discovery:
+    get:
+      operationId: getCoreDiscovery
+      summary: Core ADT service catalog
+      tags: [discovery]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Core Atom service document
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /compatibility/graph:
+    get:
+      operationId: getCompatibilityGraph
+      summary: Compatibility graph (also used for login, keep-alive, session drop)
+      description: |
+        Primary endpoint for CSRF token fetch. Send `x-csrf-token: fetch` header
+        to obtain a token. Also used for session keep-alive (every 120 s) and to
+        drop a stateful session by switching to `X-sap-adt-sessiontype: stateless`.
+      tags: [discovery]
+      parameters:
+        - $ref: "#/components/parameters/csrfTokenFetch"
+        - $ref: "#/components/parameters/sapClient"
+        - name: X-sap-adt-sessiontype
+          in: header
+          schema:
+            type: string
+            enum: [stateful, stateless, ""]
+      responses:
+        "200":
+          description: Compatibility graph XML
+          headers:
+            x-csrf-token:
+              description: CSRF token (when fetched)
+              schema:
+                type: string
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /repository/informationsystem/objecttypes:
+    get:
+      operationId: getObjectTypes
+      summary: List registered object types
+      tags: [discovery]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - name: maxItemCount
+          in: query
+          schema:
+            type: integer
+        - name: name
+          in: query
+          schema:
+            type: string
+            description: "Filter pattern (e.g. *)"
+        - name: data
+          in: query
+          schema:
+            type: string
+            description: "e.g. usedByProvider"
+      responses:
+        "200":
+          description: Named item list of object types
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: "nameditem:namedItemList XML"
+
+  # =========================================================================
+  # Search (Section 6)
+  # =========================================================================
+
+  /repository/informationsystem/search:
+    get:
+      operationId: quickSearch
+      summary: Quick search for repository objects
+      tags: [search]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - $ref: "#/components/parameters/sapLanguage"
+        - name: operation
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [quickSearch]
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: maxResults
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: objectType
+          in: query
+          schema:
+            type: string
+            description: "e.g. PROG, CLAS, INTF"
+      responses:
+        "200":
+          description: Object references matching the query
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/ObjectReferences"
+
+  /repository/nodepath:
+    post:
+      operationId: findNodePath
+      summary: Find object path in repository tree
+      description: "CSRF required."
+      tags: [search]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Node path XML
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /repository/nodestructure:
+    post:
+      operationId: getNodeStructure
+      summary: Repository tree node expansion
+      description: |
+        CSRF required. Returns tree content as asx:abap serialized data.
+        Request body (optional) contains node keys to expand.
+      tags: [search]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: parent_type
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "DEVC/K, PROG/P, FUGR/F, PROG/PI"
+        - name: parent_name
+          in: query
+          schema:
+            type: string
+        - name: parent_tech_name
+          in: query
+          schema:
+            type: string
+        - name: user_name
+          in: query
+          schema:
+            type: string
+        - name: withShortDescriptions
+          in: query
+          required: true
+          schema:
+            type: boolean
+            default: true
+        - name: rebuild_tree
+          in: query
+          schema:
+            type: string
+            description: "X to force rebuild"
+      requestBody:
+        description: Optional asx:abap with node keys to expand
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/AbapXmlWrapper"
+      responses:
+        "200":
+          description: Tree content
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/AbapXmlWrapper"
+
+  /docu/abap/langu:
+    post:
+      operationId: getAbapDocumentation
+      summary: ABAP documentation lookup
+      description: "CSRF required. Request body is plain text ABAP source."
+      tags: [search]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "{objectUri}#start={line},{column}"
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: format
+          in: query
+          schema:
+            type: string
+            description: "e.g. eclipse"
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: HTML documentation
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /packages/valuehelps/{type}:
+    get:
+      operationId: getPackageValueHelp
+      summary: Package value help lists
+      tags: [search]
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - applicationcomponents
+              - softwarecomponents
+              - transportlayers
+              - translationrelevances
+              - abaplanguageversions
+        - name: name
+          in: query
+          schema:
+            type: string
+            default: "*"
+      responses:
+        "200":
+          description: Named item list
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: "nameditem:namedItemList"
+
+  # =========================================================================
+  # Objects (Section 7)
+  # =========================================================================
+
+  /oo/classes/{name}:
+    get:
+      operationId: getClass
+      summary: Get ABAP class metadata
+      tags: [objects]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Class structure
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/AbapClass"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /oo/interfaces/{name}:
+    get:
+      operationId: getInterface
+      summary: Get ABAP interface metadata
+      tags: [objects]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Interface structure
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "intf:abapInterface XML"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /programs/programs/{name}:
+    get:
+      operationId: getProgram
+      summary: Get ABAP program metadata
+      tags: [objects]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Program structure
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "program:abapProgram XML"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /programs/includes/{name}:
+    get:
+      operationId: getInclude
+      summary: Get ABAP include metadata
+      tags: [objects]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Include structure
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "include:abapInclude XML"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /functions/groups/{name}:
+    get:
+      operationId: getFunctionGroup
+      summary: Get function group metadata
+      tags: [objects]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Function group structure
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "group:abapFunctionGroup XML"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /functions/groups/{group}/fmodules/{name}:
+    get:
+      operationId: getFunctionModule
+      summary: Get function module metadata
+      tags: [objects]
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Function module structure
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "fmodule:abapFunctionModule XML"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /packages/{packageName}:
+    get:
+      operationId: getPackage
+      summary: Get package metadata
+      description: |
+        Accept: `application/vnd.sap.adt.packages.v1+xml` or v2.
+      tags: [packages]
+      parameters:
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Package XML
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/Package"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # =========================================================================
+  # Source Code (Section 8)
+  # =========================================================================
+
+  /programs/programs/{name}/source/main:
+    get:
+      operationId: readProgramSource
+      summary: Read program source code
+      tags: [source]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: ABAP source code
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      operationId: writeProgramSource
+      summary: Write program source code
+      description: |
+        CSRF required. Requires a stateful session and a lock handle.
+        Content-Type: `text/plain; charset=utf-8`
+      tags: [source]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: lockHandle
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Source saved
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /oo/classes/{name}/source/main:
+    get:
+      operationId: readClassSource
+      summary: Read class source code
+      tags: [source]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/objectVersion"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: ABAP source code
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      operationId: writeClassSource
+      summary: Write class source code
+      description: |
+        CSRF required. Requires a stateful session and a lock handle.
+      tags: [source]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: lockHandle
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Source saved
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Locking (Section 9) -- uses /oo/classes/{name} path with _action param
+  # =========================================================================
+  # Note: Lock/Unlock reuse the object URL with _action query parameter.
+  # Documented here separately for clarity; the path is shared with GET.
+
+  /oo/classes/{name}#lock:
+    post:
+      operationId: lockObject
+      summary: Lock an object for editing
+      description: |
+        CSRF required. Requires a stateful session (`X-sap-adt-sessiontype: stateful`).
+        The path is the object URL (e.g. `/oo/classes/{name}`). The `_action=LOCK`
+        query parameter triggers locking. This applies to any object type -- classes,
+        programs, includes, etc. -- using the respective object URL.
+
+        Accept: `application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result`
+      tags: [locking]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: _action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [LOCK]
+        - name: accessMode
+          in: query
+          schema:
+            type: string
+            default: MODIFY
+      responses:
+        "200":
+          description: Lock handle
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/LockResult"
+        "409":
+          description: Object already locked by another user
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/Exception"
+
+  /oo/classes/{name}#unlock:
+    post:
+      operationId: unlockObject
+      summary: Unlock an object
+      description: |
+        CSRF required. Stateful session. Pass the lock handle from the lock response.
+        Applicable to any object type using its respective URL.
+      tags: [locking]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: _action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [UNLOCK]
+        - name: lockHandle
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object unlocked
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Object Creation (Section 10)
+  # =========================================================================
+
+  /programs/programs:
+    post:
+      operationId: createProgram
+      summary: Create a new ABAP program
+      description: |
+        CSRF required. Body: `program:abapProgram` XML.
+        Content-Type: `application/*`
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              description: "program:abapProgram XML"
+      responses:
+        "201":
+          description: Program created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /oo/classes:
+    post:
+      operationId: createClass
+      summary: Create a new ABAP class
+      description: |
+        CSRF required. Body: `class:abapClass` XML.
+        ```xml
+        <class:abapClass xmlns:class="http://www.sap.com/adt/oo/classes"
+          xmlns:adtcore="http://www.sap.com/adt/core"
+          adtcore:description="My class" adtcore:name="ZCL_MY"
+          adtcore:type="CLAS/OC" adtcore:responsible="DEVELOPER">
+          <adtcore:packageRef adtcore:name="ZPACKAGE"/>
+        </class:abapClass>
+        ```
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/AbapClass"
+      responses:
+        "201":
+          description: Class created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /oo/interfaces:
+    post:
+      operationId: createInterface
+      summary: Create a new ABAP interface
+      description: "CSRF required. Body: `intf:abapInterface` XML."
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Interface created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /programs/includes:
+    post:
+      operationId: createInclude
+      summary: Create a new ABAP include
+      description: "CSRF required. Body: `include:abapInclude` XML."
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Include created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /functions/groups:
+    post:
+      operationId: createFunctionGroup
+      summary: Create a new function group
+      description: "CSRF required. Body: `group:abapFunctionGroup` XML."
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Function group created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /functions/groups/{group}/fmodules:
+    post:
+      operationId: createFunctionModule
+      summary: Create a new function module
+      description: "CSRF required. Body: `fmodule:abapFunctionModule` XML."
+      tags: [creation]
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Function module created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /packages:
+    post:
+      operationId: createPackage
+      summary: Create a new ABAP package
+      description: |
+        CSRF required. Body: `pak:package` XML.
+        ```xml
+        <pak:package xmlns:pak="http://www.sap.com/adt/packages"
+                     xmlns:adtcore="http://www.sap.com/adt/core"
+                     adtcore:description="My package"
+                     adtcore:name="ZPACKAGE" adtcore:type="DEVC/K"
+                     adtcore:version="active" adtcore:responsible="DEVELOPER">
+          <adtcore:packageRef adtcore:name="$TMP"/>
+          <pak:attributes pak:packageType="development"/>
+          <pak:superPackage adtcore:name="$TMP"/>
+          <pak:applicationComponent/>
+          <pak:transport>
+            <pak:softwareComponent pak:name="LOCAL"/>
+            <pak:transportLayer pak:name=""/>
+          </pak:transport>
+          <pak:translation/>
+          <pak:useAccesses/>
+          <pak:packageInterfaces/>
+          <pak:subPackages/>
+        </pak:package>
+        ```
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/Package"
+      responses:
+        "201":
+          description: Package created
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/Package"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /ddic/ddl/sources:
+    post:
+      operationId: createDdlSource
+      summary: Create a CDS data definition (DDL source)
+      description: "CSRF required. Body: `ddl:ddlSource` XML."
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: DDL source created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /ddic/tables:
+    post:
+      operationId: createTable
+      summary: Create a database table
+      description: "CSRF required. Body: `blue:blueSource` XML."
+      tags: [creation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Table created
+          headers:
+            Location:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  # =========================================================================
+  # Deletion (Section 11)
+  # =========================================================================
+
+  /oo/classes/{name}#delete:
+    delete:
+      operationId: deleteClass
+      summary: Delete an ABAP class
+      description: |
+        CSRF required. Requires stateful session and a lock handle.
+      tags: [deletion]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: lockHandle
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Class deleted (empty body)
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /programs/programs/{name}#delete:
+    delete:
+      operationId: deleteProgram
+      summary: Delete an ABAP program
+      description: "CSRF required. Requires stateful session and a lock handle."
+      tags: [deletion]
+      parameters:
+        - $ref: "#/components/parameters/objectName"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: lockHandle
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: corrNr
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Program deleted (empty body)
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Activation (Section 12)
+  # =========================================================================
+
+  /activation:
+    post:
+      operationId: activateObjects
+      summary: Activate (mass activation) one or more objects
+      description: |
+        CSRF required. Body: `adtcore:objectReferences` listing objects to activate.
+        ```xml
+        <adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
+          <adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/zcl_example"
+            adtcore:type="CLAS/OC" adtcore:name="ZCL_EXAMPLE"
+            adtcore:parentUri="/sap/bc/adt/packages/zpackage"/>
+        </adtcore:objectReferences>
+        ```
+        Success: empty body or no error messages with type in [E, A, X].
+      tags: [activation]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [activate]
+        - name: preauditRequested
+          in: query
+          required: true
+          schema:
+            type: boolean
+            default: true
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/ActivationRequest"
+      responses:
+        "200":
+          description: Activation result (may contain warnings)
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/ActivationResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /activation/inactiveobjects:
+    get:
+      operationId: getInactiveObjects
+      summary: List inactive objects
+      description: |
+        Accept: `application/vnd.sap.adt.inactivectsobjects.v1+xml`
+      tags: [activation]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Inactive objects list
+          content:
+            application/xml:
+              schema:
+                type: object
+                description: "ioc:inactiveObjects XML"
+
+  # =========================================================================
+  # Syntax Check (Section 13)
+  # =========================================================================
+
+  /checkruns/reporters:
+    get:
+      operationId: getCheckRunReporters
+      summary: List available syntax check reporters
+      tags: [syntax-check]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Reporter list
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /checkruns:
+    post:
+      operationId: runCheckRun
+      summary: Run a syntax check
+      description: |
+        CSRF required. Content-Type: `application/*`.
+        Body: `chkrun:checkObjectList` XML with optional base64-encoded source artifacts.
+      tags: [syntax-check]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: reporters
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "Comma-separated reporter names (e.g. abapCheckRun)"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/CheckRunRequest"
+      responses:
+        "200":
+          description: Check run results
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/CheckRunResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Unit Testing (Section 14)
+  # =========================================================================
+
+  /abapunit/testruns:
+    post:
+      operationId: runUnitTests
+      summary: Run ABAP Unit tests
+      description: |
+        CSRF required.
+        Content-Type/Accept: `application/*`
+        Body: `aunit:runConfiguration` XML.
+      tags: [unit-test]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/AunitConfig"
+      responses:
+        "200":
+          description: Test run results
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/AunitResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # ATC Checks (Section 15)
+  # =========================================================================
+
+  /atc/customizing:
+    get:
+      operationId: getAtcCustomizing
+      summary: Get ATC customizing settings
+      tags: [atc]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: ATC customizing XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /atc/worklists:
+    post:
+      operationId: createAtcWorklist
+      summary: Create an ATC worklist
+      description: |
+        CSRF required. Accept: `text/plain`. Response is the worklist ID.
+      tags: [atc]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: checkVariant
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Worklist ID (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /atc/runs:
+    post:
+      operationId: createAtcRun
+      summary: Start an ATC run
+      description: |
+        CSRF required. May return 202 for async execution.
+        Body: `atc:run` XML with object references.
+      tags: [atc]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+        - name: worklistId
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/AtcRun"
+      responses:
+        "200":
+          description: ATC run completed synchronously
+          content:
+            application/xml:
+              schema:
+                type: string
+        "202":
+          $ref: "#/components/responses/AsyncAccepted"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /atc/worklists/{worklistId}:
+    get:
+      operationId: getAtcWorklist
+      summary: Get ATC worklist results
+      description: |
+        Accept: `application/atc.worklist.v1+xml`
+      tags: [atc]
+      parameters:
+        - name: worklistId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/sapClient"
+        - name: timestamp
+          in: query
+          schema:
+            type: integer
+        - name: includeExemptedFindings
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: ATC worklist findings
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: "atc.worklist.v1+xml"
+
+  # =========================================================================
+  # Transports (Section 16)
+  # =========================================================================
+
+  /cts/transportchecks:
+    post:
+      operationId: checkTransport
+      summary: Check transport for an object
+      description: |
+        CSRF required.
+        Content-Type: `application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.transport.service.checkData`
+      tags: [transports]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/TransportCheck"
+      responses:
+        "200":
+          description: Transport check result
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/AbapXmlWrapper"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /cts/transports:
+    post:
+      operationId: createTransport
+      summary: Create a correction request (transport)
+      description: |
+        CSRF required.
+        Content-Type: `application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.CreateCorrectionRequest`
+        Response: plain text with the transport number as last path segment.
+      tags: [transports]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/AbapXmlWrapper"
+      responses:
+        "200":
+          description: Transport number (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /cts/transportrequests:
+    get:
+      operationId: listTransportRequests
+      summary: List user transport requests
+      description: |
+        Accept: `application/vnd.sap.adt.transportorganizer.v1+xml`
+      tags: [transports]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: targets
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: Transport request list
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: "transportorganizer XML"
+
+  /cts/transportrequests/{number}/{action}:
+    post:
+      operationId: releaseTransport
+      summary: Release or act on a transport request
+      description: "CSRF required."
+      tags: [transports]
+      parameters:
+        - name: number
+          in: path
+          required: true
+          schema:
+            type: string
+            description: "Transport number (e.g. NPLK900001)"
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [newreleasejobs, relwithignlock, relObjigchkatc]
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Transport action completed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /cts/transportrequests/{number}:
+    delete:
+      operationId: deleteTransport
+      summary: Delete a transport request
+      description: "CSRF required."
+      tags: [transports]
+      parameters:
+        - name: number
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Transport deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Packages (Section 17) -- GET already defined above under /packages/{packageName}
+  # =========================================================================
+
+  /packages/settings:
+    get:
+      operationId: getPackageSettings
+      summary: Get package settings
+      tags: [packages]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Package settings XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  # =========================================================================
+  # Code Intelligence (Section 18)
+  # =========================================================================
+
+  /abapsource/codecompletion/proposal:
+    post:
+      operationId: getCodeCompletionProposals
+      summary: Get code completion proposals
+      description: "CSRF required. Body: ABAP source code as text."
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "{sourceUrl}#start={line},{offset}"
+        - name: signalCompleteness
+          in: query
+          required: true
+          schema:
+            type: boolean
+            default: true
+      requestBody:
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Completion proposals
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapsource/codecompletion/insertion:
+    post:
+      operationId: insertCodeCompletion
+      summary: Apply a code completion insertion
+      description: "CSRF required."
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: patternKey
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Insertion result
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapsource/codecompletion/elementinfo:
+    post:
+      operationId: getCodeElementInfo
+      summary: Get element info at cursor position
+      description: "Body: ABAP source code as plain text."
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Element info XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /navigation/target:
+    post:
+      operationId: navigateToTarget
+      summary: Find definition or implementation of a symbol
+      description: |
+        CSRF required. Body: ABAP source code as plain text.
+        Response: `adtcore:objectReference` with target URI.
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "{url}#start={line},{firstCol};end={line},{lastCol}"
+        - name: filter
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [definition, implementation]
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Navigation target
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/ObjectReference"
+
+  /abapsource/prettyprinter/settings:
+    get:
+      operationId: getPrettyPrinterSettings
+      summary: Get pretty printer settings
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Pretty printer settings XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /abapsource/prettyprinter:
+    post:
+      operationId: prettyPrintSource
+      summary: Format ABAP source code
+      description: "Body and response: plain text ABAP source."
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Formatted source code
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /abapsource/typehierarchy:
+    post:
+      operationId: getTypeHierarchy
+      summary: Get type hierarchy (super/sub types)
+      description: "Body: ABAP source code as plain text."
+      tags: [code-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [superTypes, subTypes]
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Type hierarchy XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  # =========================================================================
+  # Where-Used (Section 19)
+  # =========================================================================
+
+  /repository/informationsystem/usageReferences:
+    post:
+      operationId: findUsageReferences
+      summary: Where-used list for an object or symbol
+      description: |
+        CSRF required.
+        Body: `usagereferences:usageReferenceRequest` XML.
+      tags: [where-used]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              description: |
+                ```xml
+                <usagereferences:usageReferenceRequest
+                  xmlns:usagereferences="http://www.sap.com/adt/ris/usageReferences">
+                  <usagereferences:affectedObjects/>
+                </usagereferences:usageReferenceRequest>
+                ```
+      responses:
+        "200":
+          description: Usage references
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /repository/informationsystem/usageSnippets:
+    post:
+      operationId: getUsageSnippets
+      summary: Get source snippets for usage references
+      description: "CSRF required."
+      tags: [where-used]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+      requestBody:
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Usage snippets
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # Refactoring (Section 20)
+  # =========================================================================
+
+  /quickfixes/evaluation:
+    post:
+      operationId: evaluateQuickFixes
+      summary: Get quick fix proposals for a code location
+      description: "CSRF required."
+      tags: [refactoring]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: uri
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "{uri}#start={line},{column}"
+      requestBody:
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Quick fix proposals
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /refactorings:
+    post:
+      operationId: executeRefactoring
+      summary: Evaluate, preview, or execute a refactoring
+      description: |
+        CSRF required. Supports rename, extract method, change package.
+        The `rel` parameter selects the refactoring type:
+        - `http://www.sap.com/adt/relations/refactoring/rename`
+        - `http://www.sap.com/adt/relations/refactoring/extractmethod`
+        - `http://www.sap.com/adt/relations/refactoring/changepackage`
+      tags: [refactoring]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: step
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [evaluate, preview, execute]
+        - name: rel
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: uri
+          in: query
+          schema:
+            type: string
+            description: "Required for evaluate. {uri}#start={line},{startCol};end={line},{endCol}"
+      requestBody:
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Refactoring result (varies by step)
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # CDS / DDIC (Section 21)
+  # =========================================================================
+
+  /ddic/cds/annotation/definitions:
+    get:
+      operationId: getCdsAnnotationDefinitions
+      summary: Get CDS annotation definitions
+      description: |
+        Accept: `application/vnd.sap.adt.cds.annotation.definitions.v1+xml` or v2.
+      tags: [cds]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Annotation definitions XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /ddic/ddl/elementinfo:
+    get:
+      operationId: getDdlElementInfo
+      summary: Get DDIC element info for a CDS entity
+      tags: [cds]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - name: getTargetForAssociation
+          in: query
+          schema:
+            type: boolean
+        - name: getExtensionViews
+          in: query
+          schema:
+            type: boolean
+        - name: getSecondaryObjects
+          in: query
+          schema:
+            type: boolean
+        - name: path
+          in: query
+          schema:
+            type: string
+            description: "Can be repeated for multiple paths"
+      responses:
+        "200":
+          description: DDL element info XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /ddic/ddl/ddicrepositoryaccess:
+    get:
+      operationId: getDdicRepositoryAccess
+      summary: Access DDIC repository for DDL objects
+      tags: [cds]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: DDIC repository access XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /businessservices/odatav2/publishjobs:
+    post:
+      operationId: publishServiceBinding
+      summary: Publish an OData v2 service binding
+      description: |
+        CSRF required. Body: `adtcore:objectReferences` with the binding name.
+      tags: [cds]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - name: servicename
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: serviceversion
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/ObjectReferences"
+      responses:
+        "200":
+          description: Service published
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # abapGit (Section 22)
+  # =========================================================================
+
+  /abapgit/repos:
+    get:
+      operationId: listAbapgitRepos
+      summary: List linked abapGit repositories
+      description: |
+        Accept: `application/abapgit.adt.repos.v2+xml`
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Repository list
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/RepositoryList"
+    post:
+      operationId: cloneAbapgitRepo
+      summary: Clone (link) a Git repository into a package
+      description: |
+        CSRF required.
+        Content-Type: `application/abapgit.adt.repo.v3+xml`
+        ```xml
+        <abapgitrepo:repository xmlns:abapgitrepo="http://www.sap.com/adt/abapgit/repositories">
+          <abapgitrepo:package>ZPACKAGE</abapgitrepo:package>
+          <abapgitrepo:url>https://github.com/org/repo.git</abapgitrepo:url>
+          <abapgitrepo:branchName>refs/heads/main</abapgitrepo:branchName>
+          <abapgitrepo:transportRequest></abapgitrepo:transportRequest>
+          <abapgitrepo:remoteUser></abapgitrepo:remoteUser>
+          <abapgitrepo:remotePassword></abapgitrepo:remotePassword>
+        </abapgitrepo:repository>
+        ```
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/CloneRequest"
+      responses:
+        "200":
+          description: Clone completed synchronously (deserialized objects)
+          content:
+            application/xml:
+              schema:
+                type: string
+                description: "abapObjects:abapObjects XML"
+        "202":
+          $ref: "#/components/responses/AsyncAccepted"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapgit/externalrepoinfo:
+    post:
+      operationId: getExternalRepoInfo
+      summary: Get external repository info (branches)
+      description: |
+        CSRF required.
+        Content-Type: `application/abapgit.adt.repo.info.ext.request.v2+xml`
+        Accept: `application/abapgit.adt.repo.info.ext.response.v2+xml`
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: object
+              description: |
+                ```xml
+                <abapgitexternalrepo:externalRepoInfoRequest
+                  xmlns:abapgitexternalrepo="http://www.sap.com/adt/abapgit/externalRepo">
+                  <abapgitexternalrepo:url>{repoUrl}</abapgitexternalrepo:url>
+                  <abapgitexternalrepo:user>{user}</abapgitexternalrepo:user>
+                  <abapgitexternalrepo:password>{password}</abapgitexternalrepo:password>
+                </abapgitexternalrepo:externalRepoInfoRequest>
+                ```
+              properties:
+                url:
+                  type: string
+                user:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: External repo info with branches
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapgit/repos/{repoKey}/pull:
+    post:
+      operationId: pullAbapgitRepo
+      summary: Pull (update) a linked repository
+      description: |
+        CSRF required. Async operation -- returns 202 with Location header.
+        Content-Type: `application/abapgit.adt.repo.v3+xml`
+        Poll the Location URL until status is `completed` or `failed`.
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/repoKey"
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: "#/components/schemas/PullRequest"
+      responses:
+        "200":
+          description: Pull completed synchronously
+          content:
+            application/xml:
+              schema:
+                type: string
+        "202":
+          $ref: "#/components/responses/AsyncAccepted"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapgit/repos/{repoKey}:
+    delete:
+      operationId: unlinkAbapgitRepo
+      summary: Unlink (delete) a repository
+      description: "CSRF required."
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/repoKey"
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Repository unlinked
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /abapgit/repos/{repoKey}/stage:
+    get:
+      operationId: getAbapgitStaging
+      summary: Get staging (changed objects) for a repository
+      description: |
+        Accept: `application/abapgit.adt.repo.stage.v1+xml`.
+        Optional headers: `Username`, `Password` (base64-encoded).
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/repoKey"
+        - $ref: "#/components/parameters/sapClient"
+        - name: Username
+          in: header
+          schema:
+            type: string
+        - name: Password
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Staging XML
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /abapgit/repos/{repoKey}/push:
+    post:
+      operationId: pushAbapgitRepo
+      summary: Push (commit) staged objects to the remote
+      description: |
+        CSRF required.
+        Content-Type: `application/abapgit.adt.repo.stage.v1+xml`
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/repoKey"
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              description: "abapgitstaging XML"
+      responses:
+        "200":
+          description: Push completed
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /abapgit/repos/{repoKey}/branches/{branch}:
+    post:
+      operationId: switchAbapgitBranch
+      summary: Switch or create a branch on a linked repository
+      description: "CSRF required."
+      tags: [abapgit]
+      parameters:
+        - $ref: "#/components/parameters/repoKey"
+        - name: branch
+          in: path
+          required: true
+          schema:
+            type: string
+            description: "URL-encoded branch ref (e.g. refs%2Fheads%2Fmain)"
+        - $ref: "#/components/parameters/csrfToken"
+        - name: create
+          in: query
+          schema:
+            type: boolean
+            description: "true to create a new branch"
+      responses:
+        "200":
+          description: Branch switched/created
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # =========================================================================
+  # System (Section 23)
+  # =========================================================================
+
+  /feeds:
+    get:
+      operationId: listFeeds
+      summary: List available Atom feeds
+      tags: [system]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Atom feed list
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /runtime/dumps:
+    get:
+      operationId: getRuntimeDumps
+      summary: List runtime dumps (short dumps)
+      description: "Accept: `application/atom+xml;type=feed`"
+      tags: [system]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - name: $query
+          in: query
+          schema:
+            type: string
+            description: "Filter expression"
+      responses:
+        "200":
+          description: Atom feed of runtime dumps
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /runtime/traces/abaptraces:
+    get:
+      operationId: listAbapTraces
+      summary: List ABAP traces for a user
+      tags: [system]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "Username (uppercase)"
+      responses:
+        "200":
+          description: Trace list
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /runtime/traces/abaptraces/{traceId}/hitlist:
+    get:
+      operationId: getTraceHitList
+      summary: Get hit list for a trace
+      tags: [system]
+      parameters:
+        - name: traceId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Trace hit list
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /system/users:
+    get:
+      operationId: listSystemUsers
+      summary: List system users
+      description: "Accept: `application/atom+xml;type=feed`"
+      tags: [system]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Atom feed of users
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /system/information:
+    get:
+      operationId: getSystemInformation
+      summary: Get system information
+      tags: [system]
+      parameters:
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: System information (JSON or XML)
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /security/reentranceticket:
+    get:
+      operationId: getReentranceTicket
+      summary: Get a reentrance ticket
+      tags: [system]
+      responses:
+        "200":
+          description: Plain text ticket
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /oo/classrun/{className}:
+    post:
+      operationId: runClass
+      summary: Run a class as a console application
+      description: "CSRF required. Response is plain text output."
+      tags: [system]
+      parameters:
+        - name: className
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfToken"
+        - $ref: "#/components/parameters/sapClient"
+      responses:
+        "200":
+          description: Console output
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+# ---------------------------------------------------------------------------
+# Components
+# ---------------------------------------------------------------------------
+components:
+
+  # =========================================================================
+  # Security Schemes
+  # =========================================================================
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Authentication over HTTPS
+
+  # =========================================================================
+  # Parameters
+  # =========================================================================
+  parameters:
+
+    sapClient:
+      name: sap-client
+      in: query
+      description: SAP client number (e.g. 100)
+      schema:
+        type: string
+
+    sapLanguage:
+      name: sap-language
+      in: query
+      description: SAP language key (e.g. EN)
+      schema:
+        type: string
+
+    csrfToken:
+      name: x-csrf-token
+      in: header
+      description: "CSRF token obtained via GET with x-csrf-token: fetch header"
+      required: true
+      schema:
+        type: string
+
+    csrfTokenFetch:
+      name: x-csrf-token
+      in: header
+      description: "Set to `fetch` to obtain a CSRF token"
+      schema:
+        type: string
+        enum: [fetch]
+
+    objectName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Object name (e.g. ZCL_EXAMPLE)
+
+    objectVersion:
+      name: version
+      in: query
+      schema:
+        type: string
+        enum: [active, inactive, workingArea]
+      description: Object version to retrieve
+
+    repoKey:
+      name: repoKey
+      in: path
+      required: true
+      schema:
+        type: string
+      description: abapGit repository key (hex GUID)
+
+  # =========================================================================
+  # Responses
+  # =========================================================================
+  responses:
+
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/Exception"
+
+    Forbidden:
+      description: |
+        Forbidden. If the response header `x-csrf-token` is `Required`,
+        the token has expired -- re-fetch via GET with `x-csrf-token: fetch`
+        and retry the request once.
+      headers:
+        x-csrf-token:
+          description: "Value `Required` indicates token expiry"
+          schema:
+            type: string
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/Exception"
+
+    NotFound:
+      description: Object does not exist
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/Exception"
+
+    AsyncAccepted:
+      description: |
+        Async operation started. Poll the URL in the `Location` header
+        (minimum interval 10 seconds) until status is `completed` or `failed`.
+      headers:
+        Location:
+          description: Polling URL for the async operation
+          required: true
+          schema:
+            type: string
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/AsyncOperation"
+
+    Error:
+      description: Error response
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/Exception"
+
+  # =========================================================================
+  # Schemas
+  # =========================================================================
+  schemas:
+
+    ObjectReference:
+      type: object
+      description: |
+        adtcore:objectReference -- a reference to an ABAP repository object.
+        Namespace: http://www.sap.com/adt/core
+      xml:
+        name: objectReference
+        namespace: http://www.sap.com/adt/core
+        prefix: adtcore
+      properties:
+        uri:
+          type: string
+          description: Object URI (relative to /sap/bc/adt)
+          xml:
+            attribute: true
+            prefix: adtcore
+        type:
+          type: string
+          description: "Object type code (e.g. CLAS/OC, PROG/P, DEVC/K)"
+          xml:
+            attribute: true
+            prefix: adtcore
+        name:
+          type: string
+          description: Object name (uppercase)
+          xml:
+            attribute: true
+            prefix: adtcore
+        description:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        packageName:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        parentUri:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+
+    ObjectReferences:
+      type: object
+      description: |
+        adtcore:objectReferences -- a list of object references.
+        Namespace: http://www.sap.com/adt/core
+      xml:
+        name: objectReferences
+        namespace: http://www.sap.com/adt/core
+        prefix: adtcore
+      properties:
+        objectReference:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectReference"
+          xml:
+            wrapped: false
+
+    Exception:
+      type: object
+      description: |
+        exc:exception -- ADT error response.
+        Namespace: http://www.sap.com/adt/exceptions
+        (also http://www.sap.com/abapxml/types/communicationframework)
+      xml:
+        name: exception
+        namespace: http://www.sap.com/adt/exceptions
+        prefix: exc
+      properties:
+        namespace:
+          type: object
+          properties:
+            id:
+              type: string
+              description: "e.g. /SAP/BC/ADT"
+              xml:
+                attribute: true
+          xml:
+            name: namespace
+            prefix: exc
+        type:
+          type: string
+          description: "Error type (e.g. not_found)"
+          xml:
+            prefix: exc
+        message:
+          type: string
+          description: Error message
+          xml:
+            prefix: exc
+        localizedMessage:
+          type: string
+          xml:
+            prefix: exc
+
+    AbapXmlWrapper:
+      type: object
+      description: |
+        asx:abap -- Generic ABAP XML serialization envelope.
+        Namespace: http://www.sap.com/abapxml
+        ```xml
+        <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+          <asx:values>
+            <DATA>
+              <!-- ABAP-structure fields in uppercase -->
+            </DATA>
+          </asx:values>
+        </asx:abap>
+        ```
+      xml:
+        name: abap
+        namespace: http://www.sap.com/abapxml
+        prefix: asx
+      properties:
+        values:
+          type: object
+          description: Wrapper element containing DATA
+          xml:
+            prefix: asx
+          properties:
+            DATA:
+              type: object
+              description: ABAP structure fields (uppercase names)
+              additionalProperties: true
+
+    LockResult:
+      type: object
+      description: |
+        Lock handle response within asx:abap envelope.
+        Content-Type: `application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result`
+      xml:
+        name: abap
+        namespace: http://www.sap.com/abapxml
+        prefix: asx
+      properties:
+        LOCK_HANDLE:
+          type: string
+          description: Lock handle token -- pass as lockHandle query parameter on subsequent operations
+        CORRNR:
+          type: string
+          description: Transport number
+        CORRUSER:
+          type: string
+          description: Transport owner username
+        CORRTEXT:
+          type: string
+          description: Transport description
+        IS_LOCAL:
+          type: string
+          description: "'X' if local package (no transport required)"
+        IS_LINK_UP:
+          type: string
+        MODIFICATION_SUPPORT:
+          type: string
+
+    ActivationRequest:
+      type: object
+      description: |
+        Object references for mass activation. Same as ObjectReferences.
+        ```xml
+        <adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">
+          <adtcore:objectReference adtcore:uri="..." adtcore:type="..."
+            adtcore:name="..." adtcore:parentUri="..."/>
+        </adtcore:objectReferences>
+        ```
+      xml:
+        name: objectReferences
+        namespace: http://www.sap.com/adt/core
+        prefix: adtcore
+      properties:
+        objectReference:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectReference"
+
+    ActivationResponse:
+      type: object
+      description: |
+        chkl:activationResponse -- activation result with messages and inactive objects.
+        Namespace: http://www.sap.com/abapxml/checklist
+        Message types: E=Error, W=Warning, I=Info, A=Abort, X=Exception, S=Success.
+        Activation succeeded if body is empty, or no inactive objects and no messages
+        with type in [E, A, X].
+      xml:
+        name: activationResponse
+        namespace: http://www.sap.com/abapxml/checklist
+        prefix: chkl
+      properties:
+        messages:
+          type: array
+          description: Activation messages
+          items:
+            type: object
+            properties:
+              objDescr:
+                type: string
+                xml:
+                  attribute: true
+              type:
+                type: string
+                description: "Message type: E, W, I, A, X, S"
+                xml:
+                  attribute: true
+              line:
+                type: integer
+                xml:
+                  attribute: true
+              href:
+                type: string
+                xml:
+                  attribute: true
+              shortText:
+                type: string
+        inactiveObjects:
+          type: array
+          description: Objects that remain inactive after activation
+          items:
+            $ref: "#/components/schemas/ObjectReference"
+
+    AunitConfig:
+      type: object
+      description: |
+        aunit:runConfiguration -- ABAP Unit test run configuration.
+        Namespace: http://www.sap.com/adt/aunit
+        ```xml
+        <aunit:runConfiguration xmlns:aunit="http://www.sap.com/adt/aunit">
+          <external>
+            <coverage active="false"/>
+          </external>
+          <options>
+            <uriType value="semantic"/>
+            <testDeterminationStrategy sameProgram="true" assignedTests="false"/>
+            <testRiskLevels harmless="true" dangerous="true" critical="true"/>
+            <testDurations short="true" medium="true" long="true"/>
+            <withNavigationUri enabled="true"/>
+          </options>
+          <adtcore:objectSets xmlns:adtcore="http://www.sap.com/adt/core">
+            <objectSet kind="inclusive">
+              <adtcore:objectReferences>
+                <adtcore:objectReference adtcore:uri="{objectUrl}"/>
+              </adtcore:objectReferences>
+            </objectSet>
+          </adtcore:objectSets>
+        </aunit:runConfiguration>
+        ```
+      xml:
+        name: runConfiguration
+        namespace: http://www.sap.com/adt/aunit
+        prefix: aunit
+      properties:
+        coverageActive:
+          type: boolean
+          default: false
+        testRiskLevels:
+          type: object
+          properties:
+            harmless:
+              type: boolean
+            dangerous:
+              type: boolean
+            critical:
+              type: boolean
+        testDurations:
+          type: object
+          properties:
+            short:
+              type: boolean
+            medium:
+              type: boolean
+            long:
+              type: boolean
+        objectReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectReference"
+
+    AunitResult:
+      type: object
+      description: |
+        aunit:runResult -- ABAP Unit test results.
+        Namespace: http://www.sap.com/adt/aunit
+      xml:
+        name: runResult
+        namespace: http://www.sap.com/adt/aunit
+        prefix: aunit
+      properties:
+        programs:
+          type: array
+          items:
+            type: object
+            properties:
+              testClasses:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    uri:
+                      type: string
+                    name:
+                      type: string
+                    durationCategory:
+                      type: string
+                    riskLevel:
+                      type: string
+                    testMethods:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          name:
+                            type: string
+                          executionTime:
+                            type: integer
+                            description: "Execution time in ms"
+                          alerts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                kind:
+                                  type: string
+                                  description: "e.g. failedAssertion"
+                                severity:
+                                  type: string
+                                  description: "e.g. critical, tolerable"
+                                title:
+                                  type: string
+                                details:
+                                  type: string
+
+    AtcRun:
+      type: object
+      description: |
+        atc:run -- ATC run request.
+        Namespace: http://www.sap.com/adt/atc
+        ```xml
+        <atc:run maximumVerdicts="100" xmlns:atc="http://www.sap.com/adt/atc">
+          <objectSets xmlns:adtcore="http://www.sap.com/adt/core">
+            <objectSet kind="inclusive">
+              <adtcore:objectReferences>
+                <adtcore:objectReference adtcore:uri="/sap/bc/adt/packages/zpackage"/>
+              </adtcore:objectReferences>
+            </objectSet>
+          </objectSets>
+        </atc:run>
+        ```
+      xml:
+        name: run
+        namespace: http://www.sap.com/adt/atc
+        prefix: atc
+      properties:
+        maximumVerdicts:
+          type: integer
+          default: 100
+          xml:
+            attribute: true
+        objectReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectReference"
+
+    TransportCheck:
+      type: object
+      description: |
+        Transport check request in asx:abap envelope.
+        Content-Type: `application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.transport.service.checkData`
+        ```xml
+        <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+          <asx:values>
+            <DATA>
+              <DEVCLASS>ZPACKAGE</DEVCLASS>
+              <OPERATION>I</OPERATION>
+              <URI>/sap/bc/adt/oo/classes/zcl_example</URI>
+            </DATA>
+          </asx:values>
+        </asx:abap>
+        ```
+      xml:
+        name: abap
+        namespace: http://www.sap.com/abapxml
+        prefix: asx
+      properties:
+        DEVCLASS:
+          type: string
+          description: Package name
+        OPERATION:
+          type: string
+          description: "Operation code (e.g. I for insert)"
+        URI:
+          type: string
+          description: Object URI
+
+    Repository:
+      type: object
+      description: |
+        abapgitrepo:repository -- an abapGit repository link.
+        Namespace: http://www.sap.com/adt/abapgit/repositories
+      xml:
+        name: repository
+        namespace: http://www.sap.com/adt/abapgit/repositories
+        prefix: abapgitrepo
+      properties:
+        key:
+          type: string
+          description: Repository key (hex GUID)
+          xml:
+            prefix: abapgitrepo
+        package:
+          type: string
+          description: ABAP package name
+          xml:
+            prefix: abapgitrepo
+        url:
+          type: string
+          description: Git remote URL
+          xml:
+            prefix: abapgitrepo
+        branchName:
+          type: string
+          description: "Git branch ref (e.g. refs/heads/main)"
+          xml:
+            prefix: abapgitrepo
+        createdBy:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        createdAt:
+          type: string
+          description: "Creation timestamp (YYYYMMDDHHmmss)"
+          xml:
+            prefix: abapgitrepo
+        deserializedBy:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        deserializedAt:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        status:
+          type: string
+          description: "Status code (e.g. A=Active)"
+          xml:
+            prefix: abapgitrepo
+        statusText:
+          type: string
+          xml:
+            prefix: abapgitrepo
+
+    RepositoryList:
+      type: object
+      description: |
+        abapgitrepo:repositories -- list of abapGit repositories.
+        Content-Type: `application/abapgit.adt.repos.v2+xml`
+      xml:
+        name: repositories
+        namespace: http://www.sap.com/adt/abapgit/repositories
+        prefix: abapgitrepo
+      properties:
+        repository:
+          type: array
+          items:
+            $ref: "#/components/schemas/Repository"
+          xml:
+            wrapped: false
+
+    CloneRequest:
+      type: object
+      description: |
+        abapGit clone (link) request.
+        Content-Type: `application/abapgit.adt.repo.v3+xml`
+      xml:
+        name: repository
+        namespace: http://www.sap.com/adt/abapgit/repositories
+        prefix: abapgitrepo
+      required:
+        - package
+        - url
+        - branchName
+      properties:
+        package:
+          type: string
+          description: Target ABAP package
+          xml:
+            prefix: abapgitrepo
+        url:
+          type: string
+          description: Git remote URL
+          xml:
+            prefix: abapgitrepo
+        branchName:
+          type: string
+          description: "Branch ref (e.g. refs/heads/main)"
+          xml:
+            prefix: abapgitrepo
+        transportRequest:
+          type: string
+          description: Transport number (empty for local packages)
+          xml:
+            prefix: abapgitrepo
+        remoteUser:
+          type: string
+          description: Git remote username (for private repos)
+          xml:
+            prefix: abapgitrepo
+        remotePassword:
+          type: string
+          description: Git remote password/token
+          xml:
+            prefix: abapgitrepo
+
+    PullRequest:
+      type: object
+      description: |
+        abapGit pull request body.
+        Content-Type: `application/abapgit.adt.repo.v3+xml`
+      xml:
+        name: repository
+        namespace: http://www.sap.com/adt/abapgit/repositories
+        prefix: abapgitrepo
+      required:
+        - branchName
+      properties:
+        branchName:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        transportRequest:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        remoteUser:
+          type: string
+          xml:
+            prefix: abapgitrepo
+        remotePassword:
+          type: string
+          xml:
+            prefix: abapgitrepo
+
+    AsyncOperation:
+      type: object
+      description: |
+        adtcore:operation -- async operation polling response.
+        Namespace: http://www.sap.com/adt/core
+      xml:
+        name: operation
+        namespace: http://www.sap.com/adt/core
+        prefix: adtcore
+      properties:
+        id:
+          type: string
+          description: Operation ID (hex GUID)
+          xml:
+            attribute: true
+            prefix: adtcore
+        status:
+          type: string
+          description: "running, completed, or failed"
+          enum: [running, completed, failed]
+          xml:
+            attribute: true
+            prefix: adtcore
+        startedAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        finishedAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        description:
+          type: string
+          xml:
+            prefix: adtcore
+        progress:
+          type: object
+          properties:
+            percentage:
+              type: integer
+              minimum: 0
+              maximum: 100
+              xml:
+                attribute: true
+                prefix: adtcore
+            text:
+              type: string
+              xml:
+                attribute: true
+                prefix: adtcore
+          xml:
+            prefix: adtcore
+        result:
+          type: object
+          description: Operation-specific result payload (present when completed)
+          xml:
+            prefix: adtcore
+
+    Package:
+      type: object
+      description: |
+        pak:package -- ABAP package.
+        Namespace: http://www.sap.com/adt/packages
+      xml:
+        name: package
+        namespace: http://www.sap.com/adt/packages
+        prefix: pak
+      properties:
+        name:
+          type: string
+          description: Package name (uppercase)
+          xml:
+            attribute: true
+            prefix: adtcore
+        type:
+          type: string
+          description: "Always DEVC/K"
+          xml:
+            attribute: true
+            prefix: adtcore
+        uri:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        description:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        language:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        responsible:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        version:
+          type: string
+          description: "active or inactive"
+          xml:
+            attribute: true
+            prefix: adtcore
+        masterLanguage:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        createdAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        changedAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        packageRef:
+          $ref: "#/components/schemas/ObjectReference"
+        attributes:
+          type: object
+          properties:
+            packageType:
+              type: string
+              description: "e.g. development"
+              xml:
+                attribute: true
+                prefix: pak
+          xml:
+            prefix: pak
+        superPackage:
+          type: object
+          properties:
+            name:
+              type: string
+              xml:
+                attribute: true
+                prefix: adtcore
+            uri:
+              type: string
+              xml:
+                attribute: true
+                prefix: adtcore
+          xml:
+            prefix: pak
+        transport:
+          type: object
+          properties:
+            softwareComponent:
+              type: object
+              properties:
+                name:
+                  type: string
+                  xml:
+                    attribute: true
+                    prefix: pak
+              xml:
+                prefix: pak
+            transportLayer:
+              type: object
+              properties:
+                name:
+                  type: string
+                  xml:
+                    attribute: true
+                    prefix: pak
+              xml:
+                prefix: pak
+          xml:
+            prefix: pak
+
+    AbapClass:
+      type: object
+      description: |
+        class:abapClass -- ABAP class metadata.
+        Namespace: http://www.sap.com/adt/oo/classes
+      xml:
+        name: abapClass
+        namespace: http://www.sap.com/adt/oo/classes
+        prefix: class
+      properties:
+        name:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        type:
+          type: string
+          description: "CLAS/OC"
+          xml:
+            attribute: true
+            prefix: adtcore
+        description:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        language:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        responsible:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        version:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        changedAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        changedBy:
+          type: string
+          xml:
+            attribute: true
+            prefix: adtcore
+        createdAt:
+          type: string
+          format: date-time
+          xml:
+            attribute: true
+            prefix: adtcore
+        final:
+          type: string
+          description: "'true' or 'false'"
+          xml:
+            attribute: true
+            prefix: class
+        abstract:
+          type: string
+          xml:
+            attribute: true
+            prefix: class
+        visibility:
+          type: string
+          enum: [public, protected, private]
+          xml:
+            attribute: true
+            prefix: class
+        category:
+          type: string
+          xml:
+            attribute: true
+            prefix: class
+        sourceUri:
+          type: string
+          description: Relative path to source (e.g. source/main)
+          xml:
+            attribute: true
+            prefix: abapsource
+        packageRef:
+          $ref: "#/components/schemas/ObjectReference"
+        includes:
+          type: array
+          description: Class includes (main, definitions, implementations, etc.)
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                xml:
+                  attribute: true
+                  prefix: adtcore
+              includeType:
+                type: string
+                description: "main, definitions, implementations, testclasses, macros"
+                xml:
+                  attribute: true
+                  prefix: class
+              type:
+                type: string
+                xml:
+                  attribute: true
+                  prefix: adtcore
+              sourceUri:
+                type: string
+                xml:
+                  attribute: true
+                  prefix: abapsource
+            xml:
+              name: include
+              prefix: class
+
+    CheckRunRequest:
+      type: object
+      description: |
+        chkrun:checkObjectList -- syntax check request.
+        Namespace: http://www.sap.com/adt/checkrun
+        ```xml
+        <chkrun:checkObjectList xmlns:chkrun="http://www.sap.com/adt/checkrun"
+          xmlns:adtcore="http://www.sap.com/adt/core">
+          <chkrun:checkObject adtcore:uri="{sourceUrl}" chkrun:version="active">
+            <chkrun:artifacts>
+              <chkrun:artifact chkrun:contentType="text/plain; charset=utf-8"
+                chkrun:uri="{includeUrl}">
+                <chkrun:content>{base64_encoded_source}</chkrun:content>
+              </chkrun:artifact>
+            </chkrun:artifacts>
+          </chkrun:checkObject>
+        </chkrun:checkObjectList>
+        ```
+      xml:
+        name: checkObjectList
+        namespace: http://www.sap.com/adt/checkrun
+        prefix: chkrun
+      properties:
+        checkObjects:
+          type: array
+          items:
+            type: object
+            properties:
+              uri:
+                type: string
+                xml:
+                  attribute: true
+                  prefix: adtcore
+              version:
+                type: string
+                xml:
+                  attribute: true
+                  prefix: chkrun
+              artifacts:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    contentType:
+                      type: string
+                      xml:
+                        attribute: true
+                        prefix: chkrun
+                    uri:
+                      type: string
+                      xml:
+                        attribute: true
+                        prefix: chkrun
+                    content:
+                      type: string
+                      description: Base64-encoded source code
+                      xml:
+                        prefix: chkrun
+
+    CheckRunResult:
+      type: object
+      description: |
+        chkrun:checkRunReports -- syntax check result.
+        Namespace: http://www.sap.com/adt/checkrun
+      xml:
+        name: checkRunReports
+        namespace: http://www.sap.com/adt/checkrun
+        prefix: chkrun
+      properties:
+        reports:
+          type: array
+          items:
+            type: object
+            properties:
+              messages:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    uri:
+                      type: string
+                      description: "URI with fragment: {uri}#start={line},{offset}"
+                      xml:
+                        attribute: true
+                        prefix: chkrun
+                    type:
+                      type: string
+                      description: "Message type (E=Error, W=Warning, I=Info)"
+                      xml:
+                        attribute: true
+                        prefix: chkrun
+                    shortText:
+                      type: string
+                      xml:
+                        attribute: true
+                        prefix: chkrun

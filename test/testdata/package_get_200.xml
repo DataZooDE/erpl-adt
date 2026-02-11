@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Package details response (package exists)
+  GET /sap/bc/adt/packages/ZTEST_PKG
+  Accept: application/vnd.sap.adt.packages.v1+xml
+  Content-Type: application/vnd.sap.adt.packages.v1+xml; charset=utf-8
+
+  Reference: marcellourbani/abap-adt-api src/api/objectcreator.ts
+  Namespace: pak = http://www.sap.com/adt/packages
+             adtcore = http://www.sap.com/adt/core
+-->
+<pak:package xmlns:pak="http://www.sap.com/adt/packages"
+             xmlns:adtcore="http://www.sap.com/adt/core"
+             adtcore:name="ZTEST_PKG"
+             adtcore:type="DEVC/K"
+             adtcore:uri="/sap/bc/adt/packages/ztest_pkg"
+             adtcore:description="Test Package for erpl-adt"
+             adtcore:language="EN"
+             adtcore:responsible="DEVELOPER"
+             adtcore:version="active">
+  <adtcore:packageRef adtcore:uri="/sap/bc/adt/packages/%24tmp" adtcore:name="$TMP"/>
+  <pak:attributes pak:packageType="development"/>
+  <pak:superPackage adtcore:name="$TMP" adtcore:uri="/sap/bc/adt/packages/%24tmp"/>
+  <pak:applicationComponent/>
+  <pak:transport>
+    <pak:softwareComponent pak:name="LOCAL"/>
+    <pak:transportLayer pak:name=""/>
+  </pak:transport>
+  <pak:translation/>
+  <pak:useAccesses/>
+  <pak:packageInterfaces/>
+  <pak:subPackages/>
+</pak:package>

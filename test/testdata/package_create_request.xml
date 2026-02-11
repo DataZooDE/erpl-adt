@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Package creation request body
+  POST /sap/bc/adt/packages
+  Content-Type: application/*
+  x-csrf-token: (valid token)
+
+  Reference: marcellourbani/abap-adt-api src/api/objectcreator.ts createBodyPackage()
+  Namespace: pak = http://www.sap.com/adt/packages
+             adtcore = http://www.sap.com/adt/core
+-->
+<pak:package xmlns:pak="http://www.sap.com/adt/packages"
+             xmlns:adtcore="http://www.sap.com/adt/core"
+             adtcore:description="Test Package for erpl-adt"
+             adtcore:name="ZTEST_PKG"
+             adtcore:type="DEVC/K"
+             adtcore:version="active"
+             adtcore:responsible="DEVELOPER">
+  <adtcore:packageRef adtcore:name="$TMP"/>
+  <pak:attributes pak:packageType="development"/>
+  <pak:superPackage adtcore:name="$TMP"/>
+  <pak:applicationComponent/>
+  <pak:transport>
+    <pak:softwareComponent pak:name="LOCAL"/>
+    <pak:transportLayer pak:name=""/>
+  </pak:transport>
+  <pak:translation/>
+  <pak:useAccesses/>
+  <pak:packageInterfaces/>
+  <pak:subPackages/>
+</pak:package>

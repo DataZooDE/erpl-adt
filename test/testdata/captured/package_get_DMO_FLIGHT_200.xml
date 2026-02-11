@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<pak:package xmlns:pak="http://www.sap.com/adt/packages" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:responsible="DEVELOPER" adtcore:masterLanguage="EN" adtcore:masterSystem="A4H" adtcore:name="/DMO/FLIGHT" adtcore:type="DEVC/K" adtcore:changedAt="2024-07-10T00:00:00Z" adtcore:version="active" adtcore:createdAt="2024-03-22T00:00:00Z" adtcore:changedBy="DEVELOPER" adtcore:createdBy="DEVELOPER" adtcore:description="Flight Reference Scenario" adtcore:descriptionTextLimit="60" adtcore:language="EN">
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="versions" rel="http://www.sap.com/adt/relations/versions" title="Historic versions"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/repository/informationsystem/abaplanguageversions?uri=%2Fsap%2Fbc%2Fadt%2Fpackages%2F%252fdmo%252fflight" rel="http://www.sap.com/adt/relations/informationsystem/abaplanguageversions" type="application/vnd.sap.adt.nameditems.v1+xml" title="Allowed ABAP language versions"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/vit/wb/object_type/devck/object_name/%2fDMO%2fFLIGHT" rel="self" type="application/vnd.sap.sapgui" title="Representation in SAP Gui"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/packages/valuehelps/applicationcomponents" rel="applicationcomponents" type="application/vnd.sap.adt.nameditems.v1+xml" title="Application Components Value Help"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/packages/valuehelps/softwarecomponents" rel="softwarecomponents" type="application/vnd.sap.adt.nameditems.v1+xml" title="Software Components Value Help"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/packages/valuehelps/transportlayers" rel="transportlayers" type="application/vnd.sap.adt.nameditems.v1+xml" title="Transport Layers Value Help"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/packages/valuehelps/translationrelevances" rel="translationrelevances" type="application/vnd.sap.adt.nameditems.v1+xml" title="Transport Relevances Value Help"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/packages/valuehelps/abaplanguageversions" rel="abaplanguageversions" type="application/vnd.sap.adt.nameditems.v1+xml" title="ABAP Language Version Value Help"/>
+  <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="/sap/bc/adt/checkruns{?reporters}" rel="supportsPackageCheckActions" type="application/vnd.sap.adt.checkobjects+xml" title="Supports Package Check actions"/>
+  <adtcore:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT" adtcore:description="Flight Reference Scenario"/>
+  <pak:attributes pak:packageType="main" pak:isPackageTypeEditable="true" pak:isAddingObjectsAllowed="true" pak:isAddingObjectsAllowedEditable="false" pak:isEncapsulated="false" pak:isEncapsulationEditable="true" pak:isEncapsulationVisible="true" pak:recordChanges="true" pak:isRecordChangesEditable="false" pak:isSwitchVisible="false" pak:languageVersion="" pak:isLanguageVersionVisible="true" pak:isLanguageVersionEditable="true"/>
+  <pak:superPackage/>
+  <pak:applicationComponent pak:name="BC-SRV-NWD-XBR" pak:description="HANA Reference Applications" pak:isVisible="true" pak:isEditable="true"/>
+  <pak:transport>
+    <pak:softwareComponent pak:name="HOME" pak:description="Customer Developments" pak:isVisible="true" pak:isEditable="true"/>
+    <pak:transportLayer pak:name="" pak:description="" pak:isVisible="true" pak:isEditable="true"/>
+  </pak:transport>
+  <pak:useAccesses pak:isVisible="true">
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/SABP_MAIN_PUBLIC" adtcore:type="PINF/KI" adtcore:name="SABP_MAIN_PUBLIC"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/sabp_main" adtcore:type="DEVC/K" adtcore:name="SABP_MAIN"/>
+    </pak:useAccess>
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/SABP_MAIN_PUBLIC_AMDP" adtcore:type="PINF/KI" adtcore:name="SABP_MAIN_PUBLIC_AMDP"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/sabp_main" adtcore:type="DEVC/K" adtcore:name="SABP_MAIN"/>
+    </pak:useAccess>
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/SABP_UNIT_DOUBLE_FRWK_PUBLIC" adtcore:type="PINF/KI" adtcore:name="SABP_UNIT_DOUBLE_FRWK_PUBLIC"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/sabp_unit_double_frwk" adtcore:type="DEVC/K" adtcore:name="SABP_UNIT_DOUBLE_FRWK"/>
+    </pak:useAccess>
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/DDIC_MAIN_PUBLIC" adtcore:type="PINF/KI" adtcore:name="DDIC_MAIN_PUBLIC"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/sdictionary_main" adtcore:type="DEVC/K" adtcore:name="SDICTIONARY_MAIN"/>
+    </pak:useAccess>
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/SEO_MAIN_PUBLIC" adtcore:type="PINF/KI" adtcore:name="SEO_MAIN_PUBLIC"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/seo_main" adtcore:type="DEVC/K" adtcore:name="SEO_MAIN"/>
+    </pak:useAccess>
+    <pak:useAccess pak:severity="none">
+      <pak:packageInterfaceRef adtcore:uri="/sap/bc/adt/vit/wb/object_type/pinfki/object_name/S_BUSINESS_LOGIC_EXTENSION" adtcore:type="PINF/KI" adtcore:name="S_BUSINESS_LOGIC_EXTENSION"/>
+      <pak:packageRef adtcore:uri="/sap/bc/adt/packages/s_business_logic_extension" adtcore:type="DEVC/K" adtcore:name="S_BUSINESS_LOGIC_EXTENSION"/>
+    </pak:useAccess>
+  </pak:useAccesses>
+  <pak:packageInterfaces pak:isVisible="true"/>
+  <pak:subPackages>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_draft" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_DRAFT" adtcore:description="Flight Reference Scenario: Draft Guide"/>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_legacy" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_LEGACY" adtcore:description="Flight Reference Scenario: Legacy Objects"/>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_managed" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_MANAGED" adtcore:description="Flight Reference Scenario: TX managed E2E Guide"/>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_readonly" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_READONLY" adtcore:description="Flight Reference Scenario: Read-Only E2E Guide"/>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_reuse" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_REUSE" adtcore:description="Flight Reference Scenario: Reused Entities"/>
+    <pak:packageRef adtcore:uri="/sap/bc/adt/packages/%2fdmo%2fflight_unmanaged" adtcore:type="DEVC/K" adtcore:name="/DMO/FLIGHT_UNMANAGED" adtcore:description="Flight Reference Scenario: TX unmanaged E2E Guide"/>
+  </pak:subPackages>
+</pak:package>

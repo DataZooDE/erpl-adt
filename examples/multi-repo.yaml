@@ -1,0 +1,44 @@
+# erpl-adt config — Multi-repo deployment with dependency ordering
+#
+# Repos are deployed in topological order based on depends_on.
+# In this example: foundation -> app -> tests
+#
+# Usage:
+#   export SAP_PASSWORD="your-password-here"
+#   erpl-adt deploy -c examples/multi-repo.yaml
+
+connection:
+  host: trial.sap.example.com
+  port: 443
+  https: true
+  client: "001"
+  user: DEVELOPER
+  password_env: SAP_PASSWORD
+
+timeout: 900
+json_output: false
+verbose: true
+
+repos:
+  - name: foundation
+    url: https://github.com/example/abap-foundation.git
+    branch: main
+    package: ZFOUNDATION
+    activate: true
+    depends_on: []
+
+  - name: app
+    url: https://github.com/example/abap-app.git
+    branch: main
+    package: ZAPP
+    activate: true
+    depends_on:
+      - foundation
+
+  - name: tests
+    url: https://github.com/example/abap-tests.git
+    branch: main
+    package: ZTESTS
+    activate: false
+    depends_on:
+      - app

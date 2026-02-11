@@ -1,0 +1,20 @@
+# erpl-adt config — SAP Flight Reference Scenario (single repo)
+#
+# Usage:
+#   export SAP_PASSWORD="your-password-here"
+#   erpl-adt deploy -c examples/flight.yaml
+
+connection:
+  host: localhost
+  port: 50000
+  https: false
+  client: "001"
+  user: DEVELOPER
+  password_env: SAP_PASSWORD
+
+repos:
+  - name: flight
+    url: https://github.com/SAP-samples/abap-platform-refscen-flight.git
+    branch: main
+    package: /DMO/FLIGHT
+    activate: true

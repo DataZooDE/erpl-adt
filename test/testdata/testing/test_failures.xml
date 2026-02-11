@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<aunit:runResult xmlns:aunit="http://www.sap.com/adt/aunit"
+  xmlns:adtcore="http://www.sap.com/adt/core">
+  <program adtcore:uri="/sap/bc/adt/oo/classes/zcl_test" adtcore:name="ZCL_TEST">
+    <testClasses>
+      <testClass adtcore:uri="/sap/bc/adt/oo/classes/zcl_test"
+        adtcore:name="LTC_MATH" durationCategory="short" riskLevel="harmless">
+        <testMethods>
+          <testMethod adtcore:name="test_add" executionTime="5" unit="ms">
+          </testMethod>
+          <testMethod adtcore:name="test_divide" executionTime="10" unit="ms">
+            <alerts>
+              <alert kind="failedAssertion" severity="critical">
+                <title>Assertion failed</title>
+                <details>
+                  <detail text="Expected 5 but got 0"/>
+                </details>
+                <stack>
+                  <stackEntry adtcore:uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=42,1"
+                    adtcore:description="ZCL_TEST=>LTC_MATH->TEST_DIVIDE line 42"/>
+                </stack>
+              </alert>
+            </alerts>
+          </testMethod>
+        </testMethods>
+      </testClass>
+      <testClass adtcore:uri="/sap/bc/adt/oo/classes/zcl_test"
+        adtcore:name="LTC_STRING" durationCategory="short" riskLevel="harmless">
+        <testMethods>
+          <testMethod adtcore:name="test_concat" executionTime="2" unit="ms">
+            <alerts>
+              <alert kind="failedAssertion" severity="critical">
+                <title>CX_AUNIT_ASSERT_FAILED</title>
+                <details>
+                  <detail text="Expected 'hello world' but got 'hello'"/>
+                </details>
+                <stack>
+                  <stackEntry adtcore:uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=60,1"
+                    adtcore:description="ZCL_TEST=>LTC_STRING->TEST_CONCAT line 60"/>
+                </stack>
+              </alert>
+            </alerts>
+          </testMethod>
+        </testMethods>
+      </testClass>
+    </testClasses>
+  </program>
+</aunit:runResult>

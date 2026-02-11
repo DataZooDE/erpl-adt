@@ -1,0 +1,5 @@
+#pragma once
+
+namespace erpl_adt {
+inline constexpr const char* kVersion = "@ERPL_ADT_VERSION@";
+} // namespace erpl_adt

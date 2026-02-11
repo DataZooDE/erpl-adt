@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Inactive objects response
+  GET /sap/bc/adt/activation/inactiveobjects
+  Accept: application/vnd.sap.adt.inactivectsobjects.v1+xml, application/xml;q=0.8
+  Content-Type: application/vnd.sap.adt.inactivectsobjects.v1+xml; charset=utf-8
+
+  Reference: marcellourbani/abap-adt-api src/api/activate.ts inactiveObjects()
+  Namespace: ioc = http://www.sap.com/abapxml/inactiveCtsObjects
+             adtcore = http://www.sap.com/adt/core
+-->
+<ioc:inactiveObjects xmlns:ioc="http://www.sap.com/abapxml/inactiveCtsObjects"
+                     xmlns:adtcore="http://www.sap.com/adt/core">
+  <ioc:entry>
+    <ioc:object>
+      <ioc:ref adtcore:uri="/sap/bc/adt/oo/classes/zcl_test_flight"
+               adtcore:type="CLAS/OC"
+               adtcore:name="ZCL_TEST_FLIGHT"
+               adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+    </ioc:object>
+  </ioc:entry>
+  <ioc:entry>
+    <ioc:object>
+      <ioc:ref adtcore:uri="/sap/bc/adt/ddic/tables/ztest_flight_t"
+               adtcore:type="TABL/DT"
+               adtcore:name="ZTEST_FLIGHT_T"
+               adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+    </ioc:object>
+  </ioc:entry>
+  <ioc:entry>
+    <ioc:object>
+      <ioc:ref adtcore:uri="/sap/bc/adt/ddic/ddl/sources/ztest_i_flight"
+               adtcore:type="DDLS/DF"
+               adtcore:name="ZTEST_I_FLIGHT"
+               adtcore:parentUri="/sap/bc/adt/packages/ztest_pkg"/>
+    </ioc:object>
+  </ioc:entry>
+</ioc:inactiveObjects>

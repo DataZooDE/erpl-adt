@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist xmlns="http://www.sap.com/adt/atc" id="wl_002">
+  <objects>
+    <object uri="/sap/bc/adt/oo/classes/zcl_clean" type="CLAS" name="ZCL_CLEAN">
+      <findings/>
+    </object>
+  </objects>
+</worklist>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Clone repository response (list of deserialized objects)
+  POST /sap/bc/adt/abapgit/repos
+  HTTP/1.1 200 OK
+  Content-Type: application/abapgit.adt.repo.v3+xml; charset=utf-8
+
+  Reference: abapGit/ADT_Backend src/zabapgit_st_repo_post_res.xslt.source.xml
+             marcellourbani/abap-adt-api src/api/abapgit.ts parseObjects()
+  Namespace: abapObjects = http://www.sap.com/adt/abapgit/abapObjects
+-->
+<abapObjects:abapObjects xmlns:abapObjects="http://www.sap.com/adt/abapgit/abapObjects">
+  <abapObjects:abapObject>
+    <abapObjects:type>CLAS</abapObjects:type>
+    <abapObjects:name>ZCL_TEST_FLIGHT</abapObjects:name>
+    <abapObjects:package>ZTEST_PKG</abapObjects:package>
+    <abapObjects:status>A</abapObjects:status>
+    <abapObjects:msgType>S</abapObjects:msgType>
+    <abapObjects:msgText>Object deserialized successfully</abapObjects:msgText>
+  </abapObjects:abapObject>
+  <abapObjects:abapObject>
+    <abapObjects:type>TABL</abapObjects:type>
+    <abapObjects:name>ZTEST_FLIGHT_T</abapObjects:name>
+    <abapObjects:package>ZTEST_PKG</abapObjects:package>
+    <abapObjects:status>A</abapObjects:status>
+    <abapObjects:msgType>S</abapObjects:msgType>
+    <abapObjects:msgText>Object deserialized successfully</abapObjects:msgText>
+  </abapObjects:abapObject>
+  <abapObjects:abapObject>
+    <abapObjects:type>DDLS</abapObjects:type>
+    <abapObjects:name>ZTEST_I_FLIGHT</abapObjects:name>
+    <abapObjects:package>ZTEST_PKG</abapObjects:package>
+    <abapObjects:status>A</abapObjects:status>
+    <abapObjects:msgType>S</abapObjects:msgType>
+    <abapObjects:msgText>Object deserialized successfully</abapObjects:msgText>
+  </abapObjects:abapObject>
+</abapObjects:abapObjects>

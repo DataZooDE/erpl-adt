@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<chkrun:checkRunReports xmlns:chkrun="http://www.sap.com/adt/checkrun"
+  xmlns:adtcore="http://www.sap.com/adt/core">
+  <chkrun:checkReport>
+    <chkrun:checkMessageList>
+      <chkrun:checkMessage
+        chkrun:uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=10,5"
+        chkrun:type="E"
+        chkrun:shortText="Variable LV_UNDEFINED is not defined"/>
+      <chkrun:checkMessage
+        chkrun:uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=25,1"
+        chkrun:type="W"
+        chkrun:shortText="Variable LV_UNUSED is never used"/>
+      <chkrun:checkMessage
+        chkrun:uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=30,1"
+        chkrun:type="I"
+        chkrun:shortText="Consider using inline declaration"/>
+    </chkrun:checkMessageList>
+  </chkrun:checkReport>
+</chkrun:checkRunReports>

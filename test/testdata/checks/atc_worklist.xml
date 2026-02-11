@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist xmlns="http://www.sap.com/adt/atc" id="wl_001">
+  <objects>
+    <object uri="/sap/bc/adt/oo/classes/zcl_test" type="CLAS" name="ZCL_TEST">
+      <findings>
+        <finding uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=15,1"
+          priority="1" checkTitle="Functional DB Check"
+          messageTitle="SELECT in loop" message="SELECT statement inside LOOP detected"/>
+        <finding uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=30,1"
+          priority="2" checkTitle="Naming Convention"
+          messageTitle="Variable naming" message="Variable does not follow naming convention"/>
+        <finding uri="/sap/bc/adt/oo/classes/zcl_test/source/main#start=45,1"
+          priority="3" checkTitle="Code Style"
+          messageTitle="Magic number" message="Consider using a constant instead of magic number"/>
+      </findings>
+    </object>
+  </objects>
+</worklist>

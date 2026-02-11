@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mass activation response (with mixed results)
+  POST /sap/bc/adt/activation?method=activate&preauditRequested=true
+  HTTP/1.1 200 OK
+  Content-Type: application/xml; charset=utf-8
+
+  Reference: marcellourbani/abap-adt-api src/api/activate.ts activate()
+  Contains:
+    - chkl:messages: Activation result messages (errors, warnings)
+    - ioc:inactiveObjects: Objects that remain inactive after activation attempt
+
+  Namespace: chkl = http://www.sap.com/abapxml/checklist
+             ioc = http://www.sap.com/abapxml/inactiveCtsObjects
+             adtcore = http://www.sap.com/adt/core
+-->
+<chkl:activationResponse xmlns:chkl="http://www.sap.com/abapxml/checklist"
+                         xmlns:ioc="http://www.sap.com/abapxml/inactiveCtsObjects"
+                         xmlns:adtcore="http://www.sap.com/adt/core">
+  <chkl:messages>
+    <msg objDescr="Class ZCL_TEST_FLIGHT"
+         type="W"
+         line="0"
+         href="/sap/bc/adt/oo/classes/zcl_test_flight"
+         forceSupported="false">
+      <shortText>
+        <txt>Warning: Some method implementations are empty</txt>
+      </shortText>
+    </msg>
+  </chkl:messages>
+  <ioc:inactiveObjects/>
+</chkl:activationResponse>

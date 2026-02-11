@@ -1,0 +1,24 @@
+# bv (beads viewer) local config and caches
+.bv/
+
+# Build
+build/
+vcpkg_installed/
+
+# IDE / tools
+.cache/
+.vscode/
+.idea/
+CMakeUserPresets.json
+compile_commands.json
+
+# SQLite (beads)
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+.adt.creds
