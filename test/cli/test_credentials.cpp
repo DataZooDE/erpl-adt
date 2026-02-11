@@ -27,12 +27,12 @@ struct TempDirGuard {
         auto* p = ::getcwd(cwd, sizeof(cwd));
         if (p) { original_dir = p; }
         temp_dir = dir;
-        (void)::chdir(temp_dir.c_str());
+        if (::chdir(temp_dir.c_str()) != 0) { /* best-effort */ }
     }
     ~TempDirGuard() {
         // Clean up .adt.creds if it exists.
         std::remove(".adt.creds");
-        (void)::chdir(original_dir.c_str());
+        if (::chdir(original_dir.c_str()) != 0) { /* best-effort */ }
     }
 };
 

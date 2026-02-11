@@ -3,8 +3,8 @@
 #include <erpl_adt/adt/adt_session.hpp>
 
 #include <cstdio>
-#include <fstream>
 #include <string>
+#include <unistd.h>
 
 using namespace erpl_adt;
 
@@ -16,12 +16,23 @@ AdtSession MakeDummySession() {
     return AdtSession("127.0.0.1", 1, false, "user", "pass", client);
 }
 
-// Helper: write arbitrary content to a temp file.
+// Helper: write arbitrary content to a temp file using mkstemp.
 std::string WriteTempFile(const std::string& content) {
-    auto path = std::string(std::tmpnam(nullptr));
-    std::ofstream ofs(path);
-    ofs << content;
-    return path;
+    char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
+    int fd = ::mkstemp(tmpl);
+    if (fd >= 0) {
+        (void)::write(fd, content.c_str(), content.size());
+        ::close(fd);
+    }
+    return std::string(tmpl);
+}
+
+// Helper: create a unique temp file path (no content).
+std::string MakeTempPath() {
+    char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
+    int fd = ::mkstemp(tmpl);
+    if (fd >= 0) { ::close(fd); }
+    return std::string(tmpl);
 }
 
 } // namespace
@@ -48,7 +59,7 @@ TEST_CASE("SaveSession writes JSON that LoadSession can restore",
     CHECK(session1.IsStateful());
 
     // Save to a new file.
-    auto save_path = std::string(std::tmpnam(nullptr));
+    auto save_path = MakeTempPath();
     auto save_result = session1.SaveSession(save_path);
     REQUIRE(save_result.IsOk());
 

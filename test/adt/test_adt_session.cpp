@@ -594,8 +594,8 @@ TEST_CASE("AdtSession: Basic Auth is sent on every request", "[adt][session][liv
     LocalServer server(svr);
     auto session = MakeTestSession(server.Port());
 
-    session->FetchCsrfToken();
-    session->Get("/sap/bc/adt/second");
+    [[maybe_unused]] auto r1 = session->FetchCsrfToken();
+    [[maybe_unused]] auto r2 = session->Get("/sap/bc/adt/second");
 
     // Both requests should have the same Authorization header
     REQUIRE(auth_headers.size() == 2);
@@ -664,8 +664,8 @@ TEST_CASE("AdtSession: CSRF token is cached across requests", "[adt][session][li
     auto session = MakeTestSession(server.Port());
 
     // Two POSTs — CSRF should only be fetched once
-    session->Post("/sap/bc/adt/packages", "<xml1/>", "application/xml");
-    session->Post("/sap/bc/adt/abapgit/repos", "<xml2/>", "application/xml");
+    [[maybe_unused]] auto r1 = session->Post("/sap/bc/adt/packages", "<xml1/>", "application/xml");
+    [[maybe_unused]] auto r2 = session->Post("/sap/bc/adt/abapgit/repos", "<xml2/>", "application/xml");
 
     CHECK(discovery_count.load() == 1);
 }
