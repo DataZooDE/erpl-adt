@@ -76,7 +76,8 @@ jobs:
       - name: Bootstrap vcpkg (Windows)
         if: runner.os == 'Windows'
         shell: cmd
-        run: "%VCPKG_ROOT%\\bootstrap-vcpkg.bat" -disableMetrics
+        run: |
+          call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
