@@ -113,6 +113,22 @@ TEST_CASE("CommandRouter: dispatch with args", "[cli][router]") {
     CHECK(captured_uri == "/sap/bc/adt/oo/classes/ZCL_TEST");
 }
 
+TEST_CASE("CommandRouter: default action with flags before positional",
+          "[cli][router]") {
+    CommandRouter router;
+    router.Register("search", "query", "Search", [](const CommandArgs& args) {
+        CHECK(args.action == "query");
+        REQUIRE(args.positional.size() == 1);
+        CHECK(args.positional[0] == "Z*");
+        CHECK(args.flags.at("max") == "10");
+        return 0;
+    });
+    router.SetDefaultAction("search", "query");
+
+    const char* argv[] = {"erpl-adt", "search", "--max=10", "Z*"};
+    CHECK(router.Dispatch(4, argv) == 0);
+}
+
 TEST_CASE("CommandRouter: unknown command returns 1", "[cli][router]") {
     CommandRouter router;
     router.Register("search", "objects", "Search", [](const CommandArgs&) { return 0; });

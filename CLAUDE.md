@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Commits
+
+Do NOT include `Co-Authored-By` or any AI attribution lines in commit messages.
+
 ## Project Overview
 
 `erpl-adt` is a CLI and MCP server for the SAP ADT REST API — a single C++ binary that talks the same HTTP endpoints Eclipse ADT uses. It enables AI coding agents and human developers to search, read/write source code, run tests, manage transports, and more against ABAP systems. No Eclipse, no SAP NW RFC SDK, no JVM.

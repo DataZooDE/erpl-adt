@@ -25,8 +25,8 @@ TEST_CASE("IsNewStyleCommand: object group recognized",
 
 TEST_CASE("IsNewStyleCommand: flags before group are skipped",
           "[cli][executor]") {
-    // Note: --json=true syntax required because --json without = consumes next arg as value.
-    const char* argv[] = {"erpl-adt", "--host", "myhost", "--json=true", "search", "query", "X"};
+    // --json is a boolean flag and does not consume the next arg.
+    const char* argv[] = {"erpl-adt", "--host", "myhost", "--json", "search", "query", "X"};
     CHECK(IsNewStyleCommand(7, argv));
 }
 

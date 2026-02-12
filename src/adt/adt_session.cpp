@@ -9,6 +9,10 @@
 #include <map>
 #include <thread>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace erpl_adt {
 
 namespace {
@@ -126,11 +130,21 @@ struct AdtSession::Impl {
         hdrs.emplace("X-sap-adt-sessiontype", "stateful");
     }
 
+    static bool IsSensitiveHeader(std::string_view key) {
+        std::string lower_key(key);
+        std::transform(lower_key.begin(), lower_key.end(),
+                       lower_key.begin(), ::tolower);
+        return lower_key == "cookie" ||
+               lower_key == "authorization" ||
+               lower_key == "sap-contextid" ||
+               lower_key == "x-csrf-token";
+    }
+
     // Log request headers at DEBUG level.
     static void LogRequestHeaders(const httplib::Headers& hdrs) {
         for (const auto& [k, v] : hdrs) {
-            if (k == "Cookie") {
-                LogDebug("http", "  > " + k + ": " + v.substr(0, 60) + "...");
+            if (IsSensitiveHeader(k)) {
+                LogDebug("http", "  > " + k + ": <redacted>");
             } else {
                 LogDebug("http", "  > " + k + ": " + v);
             }
@@ -142,8 +156,8 @@ struct AdtSession::Impl {
                             const std::string& body) {
         LogInfo("http", "  < " + std::to_string(status));
         for (const auto& [k, v] : hdrs) {
-            if (k == "set-cookie" || k == "sap-contextid" || k == "x-csrf-token") {
-                LogDebug("http", "  < " + k + ": " + v.substr(0, 80));
+            if (k == "set-cookie" || IsSensitiveHeader(k)) {
+                LogDebug("http", "  < " + k + ": <redacted>");
             }
         }
         // Log response body at debug level for error responses.
@@ -521,6 +535,10 @@ Result<void, Error> AdtSession::SaveSession(const std::string& path) const {
                              "Failed to open file for writing"));
     }
     ofs << j.dump(2);
+#ifndef _WIN32
+    // Set file permissions to owner read/write only (chmod 600).
+    chmod(path.c_str(), S_IRUSR | S_IWUSR);
+#endif
     return Result<void, Error>::Ok();
 }
 

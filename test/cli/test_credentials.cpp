@@ -131,6 +131,42 @@ TEST_CASE("login: missing --password returns 99", "[cli][credentials]") {
     CHECK(rc == 99);
 }
 
+TEST_CASE("login: invalid --port returns 99", "[cli][credentials]") {
+    auto tmp = MakeTempDir();
+    TempDirGuard guard(tmp);
+
+    const char* argv[] = {
+        "erpl-adt", "login",
+        "--host", "myhost",
+        "--user", "DEV",
+        "--password", "pass",
+        "--port", "not-a-number"
+    };
+    int rc = HandleLogin(10, argv);
+    CHECK(rc == 99);
+
+    std::ifstream ifs(".adt.creds");
+    CHECK_FALSE(ifs.good());
+}
+
+TEST_CASE("login: invalid --client returns 99", "[cli][credentials]") {
+    auto tmp = MakeTempDir();
+    TempDirGuard guard(tmp);
+
+    const char* argv[] = {
+        "erpl-adt", "login",
+        "--host", "myhost",
+        "--user", "DEV",
+        "--password", "pass",
+        "--client", "12"
+    };
+    int rc = HandleLogin(10, argv);
+    CHECK(rc == 99);
+
+    std::ifstream ifs(".adt.creds");
+    CHECK_FALSE(ifs.good());
+}
+
 TEST_CASE("logout: deletes .adt.creds file", "[cli][credentials]") {
     auto tmp = MakeTempDir();
     TempDirGuard guard(tmp);

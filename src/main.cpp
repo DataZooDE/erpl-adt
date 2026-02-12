@@ -12,9 +12,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -31,6 +33,64 @@ constexpr int kExitPull       = 4;
 constexpr int kExitActivation = 5;
 constexpr int kExitTimeout    = 10;
 constexpr int kExitInternal   = 99;
+
+bool ParseIntInRange(std::string_view raw,
+                     int min_value,
+                     int max_value,
+                     const char* field_name,
+                     int* out,
+                     std::string* error) {
+    if (raw.empty()) {
+        if (error) {
+            *error = std::string("Missing ") + field_name;
+        }
+        return false;
+    }
+    std::string s(raw);
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(s.c_str(), &end, 10);
+    if (end == s.c_str() || *end != '\0' || errno == ERANGE ||
+        value < min_value || value > max_value) {
+        if (error) {
+            *error = std::string("Invalid ") + field_name + ": " + s;
+        }
+        return false;
+    }
+    if (out) {
+        *out = static_cast<int>(value);
+    }
+    return true;
+}
+
+bool ParsePort(std::string_view raw, uint16_t* out, std::string* error) {
+    int value = 0;
+    if (!ParseIntInRange(raw, 1, 65535, "--port", &value, error)) {
+        return false;
+    }
+    if (out) {
+        *out = static_cast<uint16_t>(value);
+    }
+    return true;
+}
+
+void PrintMcpHelp(std::ostream& out) {
+    out << "erpl-adt mcp - Start MCP server (JSON-RPC over stdio)\n\n";
+    out << "USAGE\n";
+    out << "  erpl-adt mcp [global-flags]\n\n";
+    out << "GLOBAL FLAGS\n";
+    out << "  --host <host>        SAP hostname (default: localhost)\n";
+    out << "  --port <port>        SAP port (default: 50000)\n";
+    out << "  --user <user>        SAP username (default: DEVELOPER)\n";
+    out << "  --password <pass>    SAP password\n";
+    out << "  --password-env <var> Read password from env var (default: SAP_PASSWORD)\n";
+    out << "  --client <num>       SAP client (default: 001)\n";
+    out << "  --https              Use HTTPS\n";
+    out << "  --insecure           Skip TLS verification (with --https)\n";
+    out << "  --timeout <sec>      Request timeout in seconds\n";
+    out << "  -v                   Verbose logging (INFO level)\n";
+    out << "  -vv                  Debug logging (DEBUG level)\n";
+}
 
 // Map an Error to an exit code based on the operation field.
 int ExitCodeFromError(const erpl_adt::Error& error) {
@@ -279,6 +339,10 @@ int HandleMcpServer(int argc, const char* const* argv) {
         if (arg == "mcp" || arg == "-v" || arg == "-vv") {
             continue;
         }
+        if (arg == "-h" || arg == "--help") {
+            PrintMcpHelp(std::cout);
+            return 0;
+        }
         if (arg.substr(0, 2) == "--") {
             auto eq = arg.find('=');
             if (eq != std::string_view::npos) {
@@ -332,7 +396,12 @@ int HandleMcpServer(int argc, const char* const* argv) {
     auto host = get("host", saved_host.empty() ? "localhost" : saved_host);
     auto port_str = get("port",
                         saved_port != 50000 ? std::to_string(saved_port) : "50000");
-    auto port = static_cast<uint16_t>(std::stoi(port_str));
+    uint16_t port = 0;
+    std::string parse_error;
+    if (!ParsePort(port_str, &port, &parse_error)) {
+        std::cerr << "Error: " << parse_error << "\n";
+        return kExitInternal;
+    }
     auto use_https = flags.count("https")
                          ? get("https") == "true"
                          : saved_https;
@@ -352,11 +421,26 @@ int HandleMcpServer(int argc, const char* const* argv) {
         password = saved_password;
     }
 
-    auto sap_client = SapClient::Create(client_str).Value();
+    auto client_result = SapClient::Create(client_str);
+    if (client_result.IsErr()) {
+        std::cerr << "Error: Invalid --client: " << client_result.Error() << "\n";
+        return kExitInternal;
+    }
+    auto sap_client = std::move(client_result).Value();
 
     AdtSessionOptions opts;
     if (!get("timeout").empty()) {
-        opts.read_timeout = std::chrono::seconds(std::stoi(get("timeout")));
+        int timeout_seconds = 0;
+        if (!ParseIntInRange(get("timeout"),
+                             1,
+                             std::numeric_limits<int>::max(),
+                             "--timeout",
+                             &timeout_seconds,
+                             &parse_error)) {
+            std::cerr << "Error: " << parse_error << "\n";
+            return kExitInternal;
+        }
+        opts.read_timeout = std::chrono::seconds(timeout_seconds);
     }
     if (use_https && get("insecure") == "true") {
         opts.disable_tls_verify = true;

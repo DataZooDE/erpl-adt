@@ -6,6 +6,16 @@
 
 namespace erpl_adt {
 
+namespace {
+
+bool IsBooleanFlag(std::string_view arg) {
+    return arg == "--color" || arg == "--no-color" ||
+           arg == "--json" || arg == "--https" || arg == "--insecure" ||
+           arg == "--help";
+}
+
+} // namespace
+
 void CommandRouter::Register(const std::string& group,
                              const std::string& action,
                              const std::string& description,
@@ -75,6 +85,29 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
     }
 
     auto args = std::move(parse_result).Value();
+
+    if (args.action.empty()) {
+        if (args.flags.count("help") > 0) {
+            if (HasGroup(args.group)) {
+                PrintGroupHelp(args.group, std::cout);
+            } else {
+                std::cerr << "Error: unknown command group '" << args.group << "'\n";
+                PrintHelp(std::cerr);
+                return 1;
+            }
+            return 0;
+        }
+        auto def_it = default_actions_.find(args.group);
+        if (def_it != default_actions_.end()) {
+            args.action = def_it->second;
+        } else {
+            std::cerr << "Error: Missing action for group '" << args.group
+                      << "'. Usage: erpl-adt " << args.group
+                      << " <action> [args]\n";
+            PrintHelp(std::cerr);
+            return 1;
+        }
+    }
 
     // If action is --help, -h, or "help" → show group help.
     if (args.action == "--help" || args.action == "-h" || args.action == "help") {
@@ -159,7 +192,11 @@ Result<CommandArgs, std::string> CommandRouter::Parse(
                 ++i;
             } else {
                 auto key = std::string(arg.substr(2));
-                if (i + 1 < argc && std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
+                if (IsBooleanFlag(arg)) {
+                    args.flags[key] = "true";
+                    ++i;
+                } else if (i + 1 < argc &&
+                           std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
                     args.flags[key] = argv[i + 1];
                     i += 2;
                 } else {
@@ -183,7 +220,11 @@ Result<CommandArgs, std::string> CommandRouter::Parse(
             "Missing action for group '" + args.group +
             "'. Usage: erpl-adt " + args.group + " <action> [args]");
     }
-    args.action = argv[i++];
+    if (std::string_view{argv[i]}.substr(0, 2) == "--") {
+        args.action = "";
+    } else {
+        args.action = argv[i++];
+    }
 
     // Remaining args: flags and positional.
     while (i < argc) {
@@ -197,7 +238,11 @@ Result<CommandArgs, std::string> CommandRouter::Parse(
                 ++i;
             } else {
                 auto key = std::string(arg.substr(2));
-                if (i + 1 < argc && std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
+                if (IsBooleanFlag(arg)) {
+                    args.flags[key] = "true";
+                    ++i;
+                } else if (i + 1 < argc &&
+                           std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
                     args.flags[key] = argv[i + 1];
                     i += 2;
                 } else {

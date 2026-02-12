@@ -5,7 +5,10 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include <cerrno>
 #include <cctype>
+#include <cstdlib>
+#include <limits>
 #include <string>
 
 namespace erpl_adt {
@@ -17,6 +20,20 @@ ftxui::ComponentDecorator DigitsOnly() {
     return ftxui::CatchEvent([](ftxui::Event event) {
         return event.is_character() && !std::isdigit(event.character()[0]);
     });
+}
+
+uint16_t ParsePortOrDefault(const std::string& port_str, uint16_t default_port) {
+    if (port_str.empty()) {
+        return default_port;
+    }
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(port_str.c_str(), &end, 10);
+    if (end == port_str.c_str() || *end != '\0' || errno == ERANGE ||
+        value <= 0 || value > std::numeric_limits<uint16_t>::max()) {
+        return default_port;
+    }
+    return static_cast<uint16_t>(value);
 }
 
 } // namespace
@@ -117,9 +134,7 @@ std::optional<LoginCredentials> RunLoginWizard(
 
     LoginCredentials creds;
     creds.host = host;
-    creds.port = port_str.empty()
-                     ? static_cast<uint16_t>(50000)
-                     : static_cast<uint16_t>(std::stoi(port_str));
+    creds.port = ParsePortOrDefault(port_str, 50000);
     creds.user = user;
     creds.password = password;
     creds.client = client.empty() ? "001" : client;

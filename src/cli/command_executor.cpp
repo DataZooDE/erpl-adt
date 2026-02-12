@@ -20,8 +20,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <string>
 
@@ -125,14 +127,50 @@ Error MakeValidationError(const std::string& message) {
     return Error{"Validation", "", std::nullopt, message, std::nullopt};
 }
 
+Result<int, Error> ParseIntInRange(std::string_view raw,
+                                   int min_value,
+                                   int max_value,
+                                   const std::string& field_name) {
+    if (raw.empty()) {
+        return Result<int, Error>::Err(
+            MakeValidationError("Missing " + field_name));
+    }
+
+    std::string s(raw);
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(s.c_str(), &end, 10);
+    if (end == s.c_str() || *end != '\0' || errno == ERANGE ||
+        value < min_value || value > max_value) {
+        return Result<int, Error>::Err(
+            MakeValidationError("Invalid " + field_name + ": " + s));
+    }
+
+    return Result<int, Error>::Ok(static_cast<int>(value));
+}
+
+Result<uint16_t, Error> ParsePort(std::string_view raw) {
+    auto result = ParseIntInRange(raw, 1, 65535, "--port");
+    if (result.IsErr()) {
+        return Result<uint16_t, Error>::Err(std::move(result).Error());
+    }
+    return Result<uint16_t, Error>::Ok(
+        static_cast<uint16_t>(std::move(result).Value()));
+}
+
 // Create an AdtSession from CommandArgs flags.
-std::unique_ptr<AdtSession> CreateSession(const CommandArgs& args) {
+Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args) {
     auto creds = LoadCredentials();
 
     auto host = GetFlag(args, "host", creds ? creds->host : "localhost");
     auto port_str = GetFlag(args, "port",
                             creds ? std::to_string(creds->port) : "50000");
-    auto port = static_cast<uint16_t>(std::stoi(port_str));
+    auto port_result = ParsePort(port_str);
+    if (port_result.IsErr()) {
+        return Result<std::unique_ptr<AdtSession>, Error>::Err(
+            std::move(port_result).Error());
+    }
+    auto port = port_result.Value();
     auto use_https = HasFlag(args, "https")
                          ? GetFlag(args, "https") == "true"
                          : (creds ? creds->use_https : false);
@@ -153,12 +191,25 @@ std::unique_ptr<AdtSession> CreateSession(const CommandArgs& args) {
         password = creds->password;
     }
 
-    auto sap_client = SapClient::Create(client_str).Value();
+    auto client_result = SapClient::Create(client_str);
+    if (client_result.IsErr()) {
+        return Result<std::unique_ptr<AdtSession>, Error>::Err(
+            MakeValidationError("Invalid --client: " + client_result.Error()));
+    }
+    auto sap_client = std::move(client_result).Value();
 
     AdtSessionOptions opts;
     if (HasFlag(args, "timeout")) {
-        opts.read_timeout =
-            std::chrono::seconds(std::stoi(GetFlag(args, "timeout")));
+        auto timeout_result = ParseIntInRange(
+            GetFlag(args, "timeout"),
+            1,
+            std::numeric_limits<int>::max(),
+            "--timeout");
+        if (timeout_result.IsErr()) {
+            return Result<std::unique_ptr<AdtSession>, Error>::Err(
+                std::move(timeout_result).Error());
+        }
+        opts.read_timeout = std::chrono::seconds(timeout_result.Value());
     }
     if (use_https) {
         opts.disable_tls_verify = GetFlag(args, "insecure") == "true";
@@ -176,7 +227,17 @@ std::unique_ptr<AdtSession> CreateSession(const CommandArgs& args) {
         }
     }
 
-    return session;
+    return Result<std::unique_ptr<AdtSession>, Error>::Ok(std::move(session));
+}
+
+std::unique_ptr<AdtSession> RequireSession(const CommandArgs& args,
+                                           OutputFormatter& fmt) {
+    auto session_result = CreateSession(args);
+    if (session_result.IsErr()) {
+        fmt.PrintError(session_result.Error());
+        return nullptr;
+    }
+    return std::move(session_result).Value();
 }
 
 // Save session file after stateful operations.
@@ -206,11 +267,23 @@ int HandleSearchQuery(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     SearchOptions opts;
     opts.query = args.positional[0];
     if (HasFlag(args, "max")) {
-        opts.max_results = std::stoi(GetFlag(args, "max"));
+        auto max_result = ParseIntInRange(
+            GetFlag(args, "max"),
+            1,
+            std::numeric_limits<int>::max(),
+            "--max");
+        if (max_result.IsErr()) {
+            fmt.PrintError(max_result.Error());
+            return 99;
+        }
+        opts.max_results = max_result.Value();
     }
     if (HasFlag(args, "type")) {
         opts.object_type = GetFlag(args, "type");
@@ -265,7 +338,10 @@ int HandleObjectRead(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = GetObjectStructure(*session, uri_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -332,7 +408,10 @@ int HandleObjectCreate(const CommandArgs& args) {
         params.transport_number = GetFlag(args, "transport");
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = CreateObject(*session, params);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -371,7 +450,10 @@ int HandleObjectDelete(const CommandArgs& args) {
         transport = GetFlag(args, "transport");
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto handle_str = GetFlag(args, "handle");
 
     if (!handle_str.empty()) {
@@ -427,7 +509,10 @@ int HandleObjectLock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     session->SetStateful(true);
 
     auto result = LockObject(*session, uri_result.Value());
@@ -483,7 +568,10 @@ int HandleObjectUnlock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = UnlockObject(*session, uri_result.Value(), handle_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -507,7 +595,10 @@ int HandleSourceRead(const CommandArgs& args) {
     }
 
     auto version = GetFlag(args, "version", "active");
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = ReadSource(*session, args.positional[0], version);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -554,7 +645,10 @@ int HandleSourceWrite(const CommandArgs& args) {
         transport = GetFlag(args, "transport");
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto handle_str = GetFlag(args, "handle");
 
     if (!handle_str.empty()) {
@@ -620,7 +714,10 @@ int HandleSourceCheck(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = CheckSyntax(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -664,7 +761,10 @@ int HandleTestRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = RunTests(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -727,7 +827,10 @@ int HandleCheckRun(const CommandArgs& args) {
     }
 
     auto variant = GetFlag(args, "variant", "DEFAULT");
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = RunAtcCheck(*session, args.positional[0], variant);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -769,7 +872,10 @@ int HandleTransportList(const CommandArgs& args) {
 
     auto user = GetFlag(args, "user", "DEVELOPER");
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = ListTransports(*session, user);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -819,7 +925,10 @@ int HandleTransportCreate(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = CreateTransport(*session, desc, pkg);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -847,7 +956,10 @@ int HandleTransportRelease(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = ReleaseTransport(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -869,7 +981,10 @@ int HandleDdicTable(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = GetTableDefinition(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -914,7 +1029,10 @@ int HandleDdicCds(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = GetCdsSource(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -942,7 +1060,10 @@ int HandlePackageList(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = ListPackageContents(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -992,10 +1113,22 @@ int HandlePackageTree(const CommandArgs& args) {
         opts.type_filter = GetFlag(args, "type");
     }
     if (HasFlag(args, "max-depth")) {
-        opts.max_depth = std::stoi(GetFlag(args, "max-depth"));
+        auto depth_result = ParseIntInRange(
+            GetFlag(args, "max-depth"),
+            1,
+            std::numeric_limits<int>::max(),
+            "--max-depth");
+        if (depth_result.IsErr()) {
+            fmt.PrintError(depth_result.Error());
+            return 99;
+        }
+        opts.max_depth = depth_result.Value();
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     auto result = ListPackageTree(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -1045,7 +1178,10 @@ int HandlePackageExists(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     XmlCodec codec;
     auto result = PackageExists(*session, codec, pkg_result.Value());
     if (result.IsErr()) {
@@ -1074,7 +1210,10 @@ int HandlePackageExists(const CommandArgs& args) {
 int HandleDiscoverServices(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
-    auto session = CreateSession(args);
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
     XmlCodec codec;
     auto result = Discover(*session, codec);
     if (result.IsErr()) {
@@ -1436,7 +1575,8 @@ void PrintLogoutHelp(std::ostream& out, bool color) {
 // Boolean flags that don't consume a following value argument.
 bool IsBooleanFlag(std::string_view arg) {
     return arg == "--color" || arg == "--no-color" ||
-           arg == "--json" || arg == "--https" || arg == "--insecure";
+           arg == "--json" || arg == "--https" || arg == "--insecure" ||
+           arg == "--help";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -1994,12 +2134,24 @@ int HandleLogin(int argc, const char* const* argv) {
         return 99;
     }
 
+    auto port_result = ParsePort(port_str);
+    if (port_result.IsErr()) {
+        std::cerr << "Error: " << port_result.Error().message << "\n";
+        return 99;
+    }
+
+    auto client_result = SapClient::Create(client);
+    if (client_result.IsErr()) {
+        std::cerr << "Error: Invalid --client: " << client_result.Error() << "\n";
+        return 99;
+    }
+
     SavedCredentials creds;
     creds.host = host;
-    creds.port = static_cast<uint16_t>(std::stoi(port_str));
+    creds.port = port_result.Value();
     creds.user = user;
     creds.password = password;
-    creds.client = client;
+    creds.client = std::move(client_result).Value().Value();
     creds.use_https = use_https;
 
     if (!SaveCredentials(creds)) {
