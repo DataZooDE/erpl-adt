@@ -22,7 +22,10 @@ TEST_CASE("Discover: returns parsed discovery result on 200", "[adt][discovery]"
     expected.has_abapgit_support = true;
     expected.has_packages_support = true;
     expected.has_activation_support = true;
-    expected.services = {{"abapgit", "/sap/bc/adt/abapgit/repos", "application/xml"}};
+    Workspace ws;
+    ws.title = "abapGit";
+    ws.services = {{"abapgit", "/sap/bc/adt/abapgit/repos", "application/xml", {}, "", ""}};
+    expected.workspaces = {ws};
     codec.SetParseDiscoveryResponse(
         Result<DiscoveryResult, Error>::Ok(expected));
 
@@ -32,8 +35,9 @@ TEST_CASE("Discover: returns parsed discovery result on 200", "[adt][discovery]"
     CHECK(result.Value().has_abapgit_support);
     CHECK(result.Value().has_packages_support);
     CHECK(result.Value().has_activation_support);
-    CHECK(result.Value().services.size() == 1);
-    CHECK(result.Value().services[0].title == "abapgit");
+    CHECK(result.Value().workspaces.size() == 1);
+    CHECK(result.Value().workspaces[0].services.size() == 1);
+    CHECK(result.Value().workspaces[0].services[0].title == "abapgit");
 
     REQUIRE(session.GetCallCount() == 1);
     CHECK(session.GetCalls()[0].path == "/sap/bc/adt/discovery");

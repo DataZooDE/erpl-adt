@@ -1083,25 +1083,58 @@ int HandleDiscoverServices(const CommandArgs& args) {
     }
 
     const auto& disc = result.Value();
+    auto workspace_filter = GetFlag(args, "workspace");
+
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
-        nlohmann::json services = nlohmann::json::array();
-        for (const auto& s : disc.services) {
-            services.push_back({{"title", s.title},
-                                {"href", s.href},
-                                {"type", s.type}});
+        nlohmann::json workspaces = nlohmann::json::array();
+        for (const auto& ws : disc.workspaces) {
+            if (!workspace_filter.empty() && ws.title != workspace_filter) {
+                continue;
+            }
+            nlohmann::json ws_json;
+            ws_json["title"] = ws.title;
+            nlohmann::json services = nlohmann::json::array();
+            for (const auto& s : ws.services) {
+                nlohmann::json svc = {{"title", s.title},
+                                      {"href", s.href},
+                                      {"type", s.type}};
+                if (!s.media_types.empty()) {
+                    svc["media_types"] = s.media_types;
+                }
+                if (!s.category_term.empty()) {
+                    svc["category_term"] = s.category_term;
+                    svc["category_scheme"] = s.category_scheme;
+                }
+                services.push_back(std::move(svc));
+            }
+            ws_json["services"] = services;
+            workspaces.push_back(std::move(ws_json));
         }
-        j["services"] = services;
+        j["workspaces"] = workspaces;
         j["has_abapgit"] = disc.has_abapgit_support;
         j["has_packages"] = disc.has_packages_support;
         j["has_activation"] = disc.has_activation_support;
         fmt.PrintJson(j.dump());
     } else {
-        std::cout << "ADT Services:\n";
-        for (const auto& s : disc.services) {
-            std::cout << "  " << s.title << " → " << s.href << "\n";
+        for (const auto& ws : disc.workspaces) {
+            if (!workspace_filter.empty() && ws.title != workspace_filter) {
+                continue;
+            }
+            std::cout << ws.title << " (" << ws.services.size()
+                      << (ws.services.size() == 1 ? " service" : " services")
+                      << ")\n";
+            for (const auto& s : ws.services) {
+                std::cout << "  " << s.title;
+                // Pad to align hrefs.
+                auto pad = (s.title.size() < 30)
+                    ? std::string(30 - s.title.size(), ' ')
+                    : std::string(2, ' ');
+                std::cout << pad << s.href << "\n";
+            }
+            std::cout << "\n";
         }
-        std::cout << "\nCapabilities:\n";
+        std::cout << "Capabilities:\n";
         std::cout << "  abapGit: " << (disc.has_abapgit_support ? "yes" : "no") << "\n";
         std::cout << "  Packages: " << (disc.has_packages_support ? "yes" : "no") << "\n";
         std::cout << "  Activation: " << (disc.has_activation_support ? "yes" : "no") << "\n";
@@ -1844,10 +1877,14 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt discover services";
-        help.long_description = "Lists all ADT REST API services and capabilities (abapGit, packages, activation).";
+        help.usage = "erpl-adt discover services [flags]";
+        help.long_description = "Lists all ADT REST API services grouped by workspace, with capabilities (abapGit, packages, activation).";
+        help.flags = {
+            {"workspace", "<name>", "Filter by workspace name (e.g., \"Object Repository\")", false},
+        };
         help.examples = {
             "erpl-adt discover services",
+            "erpl-adt discover services --workspace=\"Sources\"",
             "erpl-adt --json discover services",
         };
         router.Register("discover", "services", "Discover ADT services",

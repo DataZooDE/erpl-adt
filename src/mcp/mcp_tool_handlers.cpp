@@ -394,20 +394,40 @@ ToolResult HandlePackageExists(IAdtSession& session,
 
 // adt_discover
 ToolResult HandleDiscover(IAdtSession& session,
-                          const nlohmann::json& /*params*/) {
+                          const nlohmann::json& params) {
     XmlCodec codec;
     auto result = Discover(session, codec);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     const auto& disc = result.Value();
+    auto workspace_filter = OptString(params, "workspace");
+
     nlohmann::json j;
-    nlohmann::json services = nlohmann::json::array();
-    for (const auto& s : disc.services) {
-        services.push_back({{"title", s.title},
-                            {"href", s.href},
-                            {"type", s.type}});
+    nlohmann::json workspaces = nlohmann::json::array();
+    for (const auto& ws : disc.workspaces) {
+        if (!workspace_filter.empty() && ws.title != workspace_filter) {
+            continue;
+        }
+        nlohmann::json ws_json;
+        ws_json["title"] = ws.title;
+        nlohmann::json services = nlohmann::json::array();
+        for (const auto& s : ws.services) {
+            nlohmann::json svc = {{"title", s.title},
+                                  {"href", s.href},
+                                  {"type", s.type}};
+            if (!s.media_types.empty()) {
+                svc["media_types"] = s.media_types;
+            }
+            if (!s.category_term.empty()) {
+                svc["category_term"] = s.category_term;
+                svc["category_scheme"] = s.category_scheme;
+            }
+            services.push_back(std::move(svc));
+        }
+        ws_json["services"] = services;
+        workspaces.push_back(std::move(ws_json));
     }
-    j["services"] = services;
+    j["workspaces"] = workspaces;
     j["has_abapgit"] = disc.has_abapgit_support;
     j["has_packages"] = disc.has_packages_support;
     j["has_activation"] = disc.has_activation_support;
@@ -775,9 +795,11 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "adt_discover",
-        "Discover available ADT services and capabilities. "
-        "Returns service list and feature flags (abapGit, packages, activation).",
-        MakeSchema({}, nlohmann::json::array()),
+        "Discover available ADT services and capabilities grouped by workspace. "
+        "Returns workspace-grouped service list and feature flags (abapGit, packages, activation).",
+        MakeSchema(
+            {{"workspace", StringProp("Filter by workspace name (e.g., \"Sources\")")}},
+            nlohmann::json::array()),
         [&session](const nlohmann::json& params) {
             return HandleDiscover(session, params);
         });

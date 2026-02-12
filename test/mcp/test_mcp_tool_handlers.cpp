@@ -765,11 +765,29 @@ TEST_CASE("adt_discover: happy path", "[mcp][handlers][discover]") {
                            nlohmann::json::object());
     auto j = ParseContent(result);
 
-    CHECK(j.contains("services"));
-    CHECK(j["services"].is_array());
+    CHECK(j.contains("workspaces"));
+    CHECK(j["workspaces"].is_array());
+    CHECK(j["workspaces"].size() == 5);
+    CHECK(j["workspaces"][0]["title"] == "Discovery");
+    CHECK(j["workspaces"][0]["services"].is_array());
     CHECK(j.contains("has_abapgit"));
     CHECK(j.contains("has_packages"));
     CHECK(j.contains("has_activation"));
+}
+
+TEST_CASE("adt_discover: workspace filter", "[mcp][handlers][discover]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("discovery_response.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_discover",
+                           {{"workspace", "Sources"}});
+    auto j = ParseContent(result);
+
+    CHECK(j["workspaces"].size() == 1);
+    CHECK(j["workspaces"][0]["title"] == "Sources");
+    CHECK(j["workspaces"][0]["services"].size() == 4);
 }
 
 // ===========================================================================

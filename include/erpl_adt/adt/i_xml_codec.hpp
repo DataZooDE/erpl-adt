@@ -22,11 +22,29 @@ namespace erpl_adt {
 struct ServiceInfo {
     std::string title;
     std::string href;
-    std::string type;
+    std::string type;                        // primary media type
+    std::vector<std::string> media_types;    // all <app:accept> alternatives
+    std::string category_term;               // from <atom:category term="...">
+    std::string category_scheme;             // from <atom:category scheme="...">
+};
+
+struct Workspace {
+    std::string title;
+    std::vector<ServiceInfo> services;
 };
 
 struct DiscoveryResult {
-    std::vector<ServiceInfo> services;
+    std::vector<Workspace> workspaces;
+
+    // Convenience: flat view (backward-compat with existing code).
+    [[nodiscard]] std::vector<ServiceInfo> AllServices() const {
+        std::vector<ServiceInfo> all;
+        for (const auto& ws : workspaces) {
+            all.insert(all.end(), ws.services.begin(), ws.services.end());
+        }
+        return all;
+    }
+
     bool has_abapgit_support = false;
     bool has_packages_support = false;
     bool has_activation_support = false;

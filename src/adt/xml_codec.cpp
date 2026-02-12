@@ -218,6 +218,12 @@ Result<DiscoveryResult, Error> XmlCodec::ParseDiscoveryResponse(
     for (auto* ws = root->FirstChildElement("app:workspace"); ws;
          ws = ws->NextSiblingElement("app:workspace")) {
 
+        Workspace workspace;
+        const auto* ws_title = ws->FirstChildElement("atom:title");
+        workspace.title = (ws_title && ws_title->GetText())
+                              ? ws_title->GetText()
+                              : "";
+
         // Iterate <app:collection> elements within each workspace.
         for (auto* coll = ws->FirstChildElement("app:collection"); coll;
              coll = coll->NextSiblingElement("app:collection")) {
@@ -230,6 +236,22 @@ Result<DiscoveryResult, Error> XmlCodec::ParseDiscoveryResponse(
             service.title = title_elem && title_elem->GetText()
                                 ? title_elem->GetText()
                                 : "";
+
+            // Collect all <app:accept> media types.
+            for (auto* accept = coll->FirstChildElement("app:accept"); accept;
+                 accept = accept->NextSiblingElement("app:accept")) {
+                const char* text = accept->GetText();
+                if (text && *text) {
+                    service.media_types.push_back(text);
+                }
+            }
+
+            // Extract <atom:category> term and scheme.
+            const auto* category = coll->FirstChildElement("atom:category");
+            if (category) {
+                service.category_term = Attr(category, "term");
+                service.category_scheme = Attr(category, "scheme");
+            }
 
             // Try to get type from templateLinks if present.
             const auto* tmpl_links = coll->FirstChildElement("adtcomp:templateLinks");
@@ -251,8 +273,10 @@ Result<DiscoveryResult, Error> XmlCodec::ParseDiscoveryResponse(
                 result.has_activation_support = true;
             }
 
-            result.services.push_back(std::move(service));
+            workspace.services.push_back(std::move(service));
         }
+
+        result.workspaces.push_back(std::move(workspace));
     }
 
     return Result<DiscoveryResult, Error>::Ok(std::move(result));

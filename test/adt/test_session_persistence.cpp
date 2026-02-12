@@ -21,7 +21,7 @@ std::string WriteTempFile(const std::string& content) {
     char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
     int fd = ::mkstemp(tmpl);
     if (fd >= 0) {
-        (void)::write(fd, content.c_str(), content.size());
+        if (::write(fd, content.c_str(), content.size()) < 0) { /* best-effort */ }
         ::close(fd);
     }
     return std::string(tmpl);

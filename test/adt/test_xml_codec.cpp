@@ -173,19 +173,30 @@ TEST_CASE("ParseDiscoveryResponse: parses fixture correctly", "[xml][parse]") {
 
     const auto& discovery = result.Value();
 
-    // Should find multiple services.
-    CHECK(discovery.services.size() > 5);
+    // Should find multiple workspaces.
+    CHECK(discovery.workspaces.size() == 5);
+
+    // Should find multiple services across all workspaces.
+    auto all_services = discovery.AllServices();
+    CHECK(all_services.size() > 5);
 
     // Capability flags.
     CHECK(discovery.has_abapgit_support);
     CHECK(discovery.has_packages_support);
     CHECK(discovery.has_activation_support);
 
+    // Check workspace titles.
+    CHECK(discovery.workspaces[0].title == "Discovery");
+    CHECK(discovery.workspaces[1].title == "Object Repository");
+    CHECK(discovery.workspaces[2].title == "Sources");
+    CHECK(discovery.workspaces[3].title == "Activation");
+    CHECK(discovery.workspaces[4].title == "abapGit");
+
     // Check some known services are present.
     bool found_packages = false;
     bool found_abapgit = false;
     bool found_activation = false;
-    for (const auto& svc : discovery.services) {
+    for (const auto& svc : all_services) {
         if (svc.href == "/sap/bc/adt/packages") found_packages = true;
         if (svc.href == "/sap/bc/adt/abapgit/repos") found_abapgit = true;
         if (svc.href == "/sap/bc/adt/activation") found_activation = true;
@@ -193,6 +204,13 @@ TEST_CASE("ParseDiscoveryResponse: parses fixture correctly", "[xml][parse]") {
     CHECK(found_packages);
     CHECK(found_abapgit);
     CHECK(found_activation);
+
+    // Check that packages service has type from templateLink.
+    for (const auto& svc : discovery.workspaces[1].services) {
+        if (svc.href == "/sap/bc/adt/packages") {
+            CHECK(svc.type == "application/vnd.sap.adt.packages.v1+xml");
+        }
+    }
 }
 
 TEST_CASE("ParseDiscoveryResponse: invalid XML returns error", "[xml][parse]") {
