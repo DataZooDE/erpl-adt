@@ -1,5 +1,6 @@
 #include <erpl_adt/core/terminal.hpp>
 
+#include <cstdio>
 #include <cstdlib>
 
 #ifdef _WIN32
