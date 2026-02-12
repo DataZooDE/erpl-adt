@@ -197,7 +197,7 @@ TEST_CASE("Logger: concurrent logging does not crash", "[log]") {
     std::vector<std::thread> threads;
     threads.reserve(kThreads);
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([&logger, t]() {
+        threads.emplace_back([&logger, t, kMessagesPerThread]() {
             for (int i = 0; i < kMessagesPerThread; ++i) {
                 logger.Info("thread-" + std::to_string(t),
                             "msg-" + std::to_string(i));
@@ -306,7 +306,7 @@ TEST_CASE("ColorConsoleSink: thread safety with color", "[log]") {
     std::vector<std::thread> threads;
     threads.reserve(kThreads);
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([&logger, t]() {
+        threads.emplace_back([&logger, t, kMessages]() {
             for (int i = 0; i < kMessages; ++i) {
                 logger.Info("thread-" + std::to_string(t),
                             "msg-" + std::to_string(i));
