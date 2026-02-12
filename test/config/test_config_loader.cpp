@@ -6,7 +6,29 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <stdlib.h>  // _putenv_s
+#endif
+
 using namespace erpl_adt;
+
+namespace {
+void SetEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void UnsetEnv(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+} // namespace
 
 // ===========================================================================
 // Helper: path to test data files
@@ -292,7 +314,7 @@ TEST_CASE("MergeConfigs: YAML values preserved when CLI not set", "[config][merg
 
 TEST_CASE("ResolvePasswordEnv: resolves from environment", "[config][env]") {
     // Set a test env var
-    setenv("TEST_SAP_PASSWORD", "env_password_123", 1);
+    SetEnv("TEST_SAP_PASSWORD", "env_password_123");
 
     auto yaml_result = LoadFromYaml(TestDataPath("valid_config.yaml"));
     REQUIRE(yaml_result.IsOk());
@@ -304,7 +326,7 @@ TEST_CASE("ResolvePasswordEnv: resolves from environment", "[config][env]") {
     REQUIRE(result.IsOk());
     CHECK(result.Value().connection.password == "env_password_123");
 
-    unsetenv("TEST_SAP_PASSWORD");
+    UnsetEnv("TEST_SAP_PASSWORD");
 }
 
 TEST_CASE("ResolvePasswordEnv: error when env var not set", "[config][env]") {

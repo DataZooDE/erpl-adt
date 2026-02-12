@@ -5,9 +5,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
-#include <unistd.h>
+
+#ifdef _WIN32
+#include <stdlib.h>  // _putenv_s
+#endif
 
 using namespace erpl_adt;
 
@@ -17,29 +21,49 @@ using namespace erpl_adt;
 
 namespace {
 
+namespace fs = std::filesystem;
+
 // Change to a temp directory and restore on destruction.
 struct TempDirGuard {
-    std::string original_dir;
-    std::string temp_dir;
+    fs::path original_dir;
+    fs::path temp_dir;
 
-    explicit TempDirGuard(const std::string& dir) {
-        char cwd[4096];
-        auto* p = ::getcwd(cwd, sizeof(cwd));
-        if (p) { original_dir = p; }
+    explicit TempDirGuard(const fs::path& dir) {
+        original_dir = fs::current_path();
         temp_dir = dir;
-        if (::chdir(temp_dir.c_str()) != 0) { /* best-effort */ }
+        fs::current_path(temp_dir);
     }
     ~TempDirGuard() {
         // Clean up .adt.creds if it exists.
         std::remove(".adt.creds");
-        if (::chdir(original_dir.c_str()) != 0) { /* best-effort */ }
+        fs::current_path(original_dir);
     }
 };
 
-std::string MakeTempDir() {
-    char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
-    auto* dir = ::mkdtemp(tmpl);
-    return std::string(dir);
+fs::path MakeTempDir() {
+    auto base = fs::temp_directory_path() / "erpl_adt_test";
+    fs::create_directories(base);
+    // Use a unique subdir per call.
+    static int counter = 0;
+    auto dir = base / std::to_string(++counter);
+    fs::create_directories(dir);
+    return dir;
+}
+
+void SetEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void UnsetEnv(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
 }
 
 } // namespace
@@ -120,7 +144,7 @@ TEST_CASE("login: missing --password returns 99", "[cli][credentials]") {
     TempDirGuard guard(tmp);
 
     // Ensure SAP_PASSWORD env var doesn't interfere.
-    unsetenv("SAP_PASSWORD");
+    UnsetEnv("SAP_PASSWORD");
 
     const char* argv[] = {
         "erpl-adt", "login",
@@ -197,7 +221,7 @@ TEST_CASE("login: password-env fallback works", "[cli][credentials]") {
     auto tmp = MakeTempDir();
     TempDirGuard guard(tmp);
 
-    setenv("TEST_LOGIN_PW", "envpass", 1);
+    SetEnv("TEST_LOGIN_PW", "envpass");
 
     const char* argv[] = {
         "erpl-adt", "login",
@@ -213,7 +237,7 @@ TEST_CASE("login: password-env fallback works", "[cli][credentials]") {
     auto j = nlohmann::json::parse(ifs);
     CHECK(j["password"] == "envpass");
 
-    unsetenv("TEST_LOGIN_PW");
+    UnsetEnv("TEST_LOGIN_PW");
 }
 
 // ===========================================================================

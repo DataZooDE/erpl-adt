@@ -3,12 +3,15 @@
 #include <erpl_adt/adt/adt_session.hpp>
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
 using namespace erpl_adt;
 
 namespace {
+
+namespace fs = std::filesystem;
 
 // Helper: create an AdtSession that won't actually connect anywhere.
 AdtSession MakeDummySession() {
@@ -18,17 +21,19 @@ AdtSession MakeDummySession() {
 
 // Helper: write arbitrary content to a temp file.
 std::string WriteTempFile(const std::string& content) {
-    auto path = std::string(std::tmpnam(nullptr));
+    static int counter = 0;
+    auto path = fs::temp_directory_path() / ("erpl_adt_sess_" + std::to_string(++counter));
     std::ofstream ofs(path);
     ofs << content;
-    return path;
+    return path.string();
 }
 
 // Helper: create a unique temp file path (no content).
 std::string MakeTempPath() {
-    auto path = std::string(std::tmpnam(nullptr));
+    static int counter = 0;
+    auto path = fs::temp_directory_path() / ("erpl_adt_sessp_" + std::to_string(++counter));
     std::ofstream ofs(path);  // touch
-    return path;
+    return path.string();
 }
 
 } // namespace
