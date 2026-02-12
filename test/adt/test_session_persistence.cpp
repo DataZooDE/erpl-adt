@@ -3,8 +3,8 @@
 #include <erpl_adt/adt/adt_session.hpp>
 
 #include <cstdio>
+#include <fstream>
 #include <string>
-#include <unistd.h>
 
 using namespace erpl_adt;
 
@@ -16,23 +16,19 @@ AdtSession MakeDummySession() {
     return AdtSession("127.0.0.1", 1, false, "user", "pass", client);
 }
 
-// Helper: write arbitrary content to a temp file using mkstemp.
+// Helper: write arbitrary content to a temp file.
 std::string WriteTempFile(const std::string& content) {
-    char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
-    int fd = ::mkstemp(tmpl);
-    if (fd >= 0) {
-        if (::write(fd, content.c_str(), content.size()) < 0) { /* best-effort */ }
-        ::close(fd);
-    }
-    return std::string(tmpl);
+    auto path = std::string(std::tmpnam(nullptr));
+    std::ofstream ofs(path);
+    ofs << content;
+    return path;
 }
 
 // Helper: create a unique temp file path (no content).
 std::string MakeTempPath() {
-    char tmpl[] = "/tmp/erpl_adt_test_XXXXXX";
-    int fd = ::mkstemp(tmpl);
-    if (fd >= 0) { ::close(fd); }
-    return std::string(tmpl);
+    auto path = std::string(std::tmpnam(nullptr));
+    std::ofstream ofs(path);  // touch
+    return path;
 }
 
 } // namespace
