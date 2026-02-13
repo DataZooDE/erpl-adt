@@ -18,9 +18,9 @@ namespace {
 
 std::string TestDataPath(const std::string& filename) {
     std::string this_file = __FILE__;
-    auto last_slash = this_file.rfind('/');
+    auto last_slash = this_file.find_last_of("/\\");
     auto test_dir = this_file.substr(0, last_slash);
-    auto test_root = test_dir.substr(0, test_dir.rfind('/'));
+    auto test_root = test_dir.substr(0, test_dir.find_last_of("/\\"));
     return test_root + "/testdata/" + filename;
 }
 

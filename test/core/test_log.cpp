@@ -191,13 +191,13 @@ TEST_CASE("Logger: concurrent logging does not crash", "[log]") {
     auto* sink_ptr = sink.get();
     Logger logger(std::move(sink), LogLevel::Debug);
 
-    constexpr int kThreads = 8;
-    constexpr int kMessagesPerThread = 100;
+    static constexpr int kThreads = 8;
+    static constexpr int kMessagesPerThread = 100;
 
     std::vector<std::thread> threads;
     threads.reserve(kThreads);
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([&logger, t, kMessagesPerThread]() {
+        threads.emplace_back([&logger, t]() {
             for (int i = 0; i < kMessagesPerThread; ++i) {
                 logger.Info("thread-" + std::to_string(t),
                             "msg-" + std::to_string(i));
@@ -300,13 +300,13 @@ TEST_CASE("ColorConsoleSink: thread safety with color", "[log]") {
     auto sink = std::make_unique<ColorConsoleSink>(true, oss);
     Logger logger(std::move(sink), LogLevel::Debug);
 
-    constexpr int kThreads = 8;
-    constexpr int kMessages = 50;
+    static constexpr int kThreads = 8;
+    static constexpr int kMessages = 50;
 
     std::vector<std::thread> threads;
     threads.reserve(kThreads);
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([&logger, t, kMessages]() {
+        threads.emplace_back([&logger, t]() {
             for (int i = 0; i < kMessages; ++i) {
                 logger.Info("thread-" + std::to_string(t),
                             "msg-" + std::to_string(i));
