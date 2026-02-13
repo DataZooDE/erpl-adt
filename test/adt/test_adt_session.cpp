@@ -135,7 +135,7 @@ TEST_CASE("Mock: 403 retry pattern", "[adt][session]") {
     CHECK(mock.CsrfCallCount() == 1);
 }
 
-TEST_CASE("Mock: PollUntilComplete — running then completed", "[adt][session]") {
+TEST_CASE("Mock: PollUntilComplete - running then completed", "[adt][session]") {
     MockAdtSession mock;
     mock.EnqueuePoll(Result<PollResult, Error>::Ok(
         PollResult{PollStatus::Running, "<running/>", std::chrono::milliseconds{500}}));
@@ -160,7 +160,7 @@ TEST_CASE("Mock: PollUntilComplete — running then completed", "[adt][session]"
     CHECK(mock.PollCallCount() == 3);
 }
 
-TEST_CASE("Mock: PollUntilComplete — running then failed", "[adt][session]") {
+TEST_CASE("Mock: PollUntilComplete - running then failed", "[adt][session]") {
     MockAdtSession mock;
     mock.EnqueuePoll(Result<PollResult, Error>::Ok(
         PollResult{PollStatus::Running, "<running/>", std::chrono::milliseconds{500}}));
@@ -177,7 +177,7 @@ TEST_CASE("Mock: PollUntilComplete — running then failed", "[adt][session]") {
     CHECK(r2.Value().body == "<error/>");
 }
 
-TEST_CASE("Mock: PollUntilComplete — timeout error", "[adt][session]") {
+TEST_CASE("Mock: PollUntilComplete - timeout error", "[adt][session]") {
     MockAdtSession mock;
     mock.EnqueuePoll(Result<PollResult, Error>::Err(
         Error{"PollUntilComplete", "/poll/loc", std::nullopt,
@@ -451,7 +451,7 @@ TEST_CASE("AdtSession: GET 403 triggers CSRF re-fetch and retry", "[adt][session
     CHECK(get_count.load() == 2); // Two GET attempts
 }
 
-TEST_CASE("AdtSession: PollUntilComplete — 202 then 200", "[adt][session][live]") {
+TEST_CASE("AdtSession: PollUntilComplete - 202 then 200", "[adt][session][live]") {
     httplib::Server svr;
 
     std::atomic<int> poll_count{0};
@@ -487,7 +487,7 @@ TEST_CASE("AdtSession: PollUntilComplete — 202 then 200", "[adt][session][live
     CHECK(poll_count.load() == 3);
 }
 
-TEST_CASE("AdtSession: PollUntilComplete — failure status", "[adt][session][live]") {
+TEST_CASE("AdtSession: PollUntilComplete - failure status", "[adt][session][live]") {
     httplib::Server svr;
 
     svr.Get("/sap/bc/adt/discovery", [](const httplib::Request&,
@@ -514,7 +514,7 @@ TEST_CASE("AdtSession: PollUntilComplete — failure status", "[adt][session][li
     CHECK(result.Value().body.find("activation failed") != std::string::npos);
 }
 
-TEST_CASE("AdtSession: PollUntilComplete — timeout", "[adt][session][live]") {
+TEST_CASE("AdtSession: PollUntilComplete - timeout", "[adt][session][live]") {
     httplib::Server svr;
 
     svr.Get("/sap/bc/adt/discovery", [](const httplib::Request&,
