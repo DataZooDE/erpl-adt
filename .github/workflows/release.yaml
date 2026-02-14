@@ -190,7 +190,7 @@ jobs:
 
       - name: Build wheels for each platform
         run: |
-          pip install ./bin-to-wheel
+          pip install "bin-to-wheel @ git+https://github.com/DataZooDE/bin-to-wheel.git@main"
 
           mkdir -p dist
 
