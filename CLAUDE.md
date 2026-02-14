@@ -183,6 +183,21 @@ Never use bare `python` or `pip` commands — always `uv run`.
 | macOS x86_64 | Apple Clang 15+ | Same as arm64 |
 | Windows x64 | MSVC 17+ | `/MT` (static CRT), triplet `x64-windows-static` |
 
+## Release Process
+
+Versioning: `v{YYYY}.{MM}.{DD}` date-based tags. Bugfix same-day releases append a suffix (e.g., `v2026.02.14.1`).
+
+1. Ensure all CI builds pass on `main` (`gh run list`)
+2. Tag: `git tag v{YYYY}.{MM}.{DD} && git push origin v{YYYY}.{MM}.{DD}`
+3. The `.github/workflows/release.yaml` triggers on `v*` tag push:
+   - Builds on 4 platforms (linux-x86_64, macos-arm64, macos-x86_64, windows-x64)
+   - Runs all unit tests on each platform
+   - Validates `--version` output matches tag (linux only)
+   - Packages archives (`.tar.gz` for Unix, `.zip` for Windows) with SHA256 checksums
+   - Creates GitHub Release via `softprops/action-gh-release@v2` with `generate_release_notes: true`
+4. After the workflow completes, edit the release body with a hand-written changelog:
+   `gh release edit v{tag} --notes-file release-notes.md`
+
 ## Issue Tracking
 
 This project uses `bd` (beads) for issue tracking. See `AGENTS.md` for workflow.
