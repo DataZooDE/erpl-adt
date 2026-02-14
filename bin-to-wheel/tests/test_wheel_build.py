@@ -42,6 +42,7 @@ def test_is_valid_zip(fake_binary, output_dir):
 
 
 def test_contains_binary(fake_binary, output_dir):
+    """Binary is stored with its original filename from disk."""
     path = build_wheel(
         binary_path=fake_binary,
         output_dir=output_dir,
@@ -52,7 +53,28 @@ def test_contains_binary(fake_binary, output_dir):
     )
     with zipfile.ZipFile(path) as zf:
         names = zf.namelist()
-        assert "erpl_adt/bin/erpl-adt" in names
+        # Binary keeps its original name (fake_binary is named "fake-binary")
+        assert "erpl_adt/bin/fake-binary" in names
+
+
+def test_binary_preserves_exe_extension(tmp_path, output_dir):
+    """Windows binaries keep their .exe extension in the wheel."""
+    binary = tmp_path / "erpl-adt.exe"
+    binary.write_bytes(b"MZ\x90\x00")  # PE header stub
+    path = build_wheel(
+        binary_path=binary,
+        output_dir=output_dir,
+        name="erpl-adt",
+        version="1.0.0",
+        platform_tag="win_amd64",
+        entry_point="erpl-adt",
+    )
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        assert "erpl_adt/bin/erpl-adt.exe" in names
+        # Entry point is still "erpl-adt" (no .exe)
+        ep = zf.read("erpl_adt-1.0.0.dist-info/entry_points.txt").decode()
+        assert "erpl-adt = erpl_adt:main" in ep
 
 
 def test_contains_init_and_main(fake_binary, output_dir):
@@ -91,10 +113,9 @@ def test_binary_permissions(fake_binary, output_dir):
         name="erpl-adt",
         version="1.0.0",
         platform_tag="manylinux_2_17_x86_64",
-        entry_point="erpl-adt",
     )
     with zipfile.ZipFile(path) as zf:
-        info = zf.getinfo("erpl_adt/bin/erpl-adt")
+        info = zf.getinfo("erpl_adt/bin/fake-binary")
         unix_perms = (info.external_attr >> 16) & 0o777
         assert unix_perms & 0o755 == 0o755
 

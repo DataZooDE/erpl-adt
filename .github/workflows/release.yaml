@@ -217,13 +217,21 @@ jobs:
               --description "CLI for SAP ADT REST API" \
               --author "DataZoo GmbH" \
               --license Apache-2.0 \
-              --url https://github.com/DataZooDE/erpl-adt
+              --url https://github.com/DataZooDE/erpl-adt \
+              --readme README.md
 
             echo "Built wheel for $platform"
           done
 
           echo "Wheels built:"
           ls -la dist/*.whl
+
+          # Verify all 4 platform wheels were produced
+          wheel_count=$(ls dist/*.whl 2>/dev/null | wc -l)
+          if [ "$wheel_count" -ne 4 ]; then
+            echo "::error::Expected 4 wheels, got $wheel_count"
+            exit 1
+          fi
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

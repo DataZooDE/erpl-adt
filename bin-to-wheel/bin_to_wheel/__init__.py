@@ -220,7 +220,8 @@ def build_wheel(
         raise FileNotFoundError(f"Binary not found: {binary_path}")
 
     import_name = normalize_package_name(name)
-    binary_name = entry_point or binary_path.name
+    # Binary keeps its original filename (preserves .exe on Windows)
+    binary_name = binary_path.name
     dist_info = f"{import_name}-{version}.dist-info"
 
     # Collect all files (path in zip → bytes)
@@ -243,6 +244,7 @@ def build_wheel(
     ).encode()
     wheel_files[f"{dist_info}/WHEEL"] = generate_wheel_metadata(platform_tag).encode()
 
+    # entry_point controls console_scripts name only (e.g., "erpl-adt")
     if entry_point:
         wheel_files[f"{dist_info}/entry_points.txt"] = generate_entry_points(
             entry_point, import_name
