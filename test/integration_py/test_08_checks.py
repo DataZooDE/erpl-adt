@@ -15,6 +15,12 @@ class TestAtcChecks:
         assert "error_count" in data
         assert "warning_count" in data
 
+    def test_run_atc_check_by_name(self, cli):
+        """check with object name resolves via search."""
+        data = cli.run_ok("check", "CL_ABAP_RANDOM")
+        assert "worklist_id" in data
+        assert "error_count" in data
+
     def test_check_has_findings_list(self, cli):
         """ATC check result has a findings array."""
         data = cli.run_ok("check", "run",

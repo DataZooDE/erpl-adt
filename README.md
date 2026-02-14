@@ -32,9 +32,9 @@ erpl-adt source read /sap/bc/adt/oo/classes/zcl_my_class/source/main
 # Write source code (auto-locks, writes, unlocks)
 erpl-adt source write /sap/bc/adt/oo/classes/zcl_my_class/source/main --file impl.abap
 
-# Run unit tests and ATC checks
-erpl-adt test run /sap/bc/adt/oo/classes/zcl_my_class
-erpl-adt check run /sap/bc/adt/oo/classes/zcl_my_class --variant DEFAULT
+# Run unit tests and ATC checks (by name or URI)
+erpl-adt test ZCL_MY_CLASS
+erpl-adt check ZCL_MY_CLASS --variant DEFAULT
 
 # Create a transport request and release it
 erpl-adt transport create --desc "Feature XYZ" --package ZPACKAGE
@@ -103,10 +103,10 @@ SOURCE — Read, write, and check ABAP source code
       --session-file <path>               Session file for stateful workflow
 
 TEST — Run ABAP Unit tests
-  run <uri>                               Run ABAP unit tests
+  test <name-or-uri>                      Run ABAP unit tests
 
 CHECK — Run ATC quality checks
-  run <uri>                               Run ATC checks
+  check <name-or-uri>                     Run ATC checks
       --variant <name>                    ATC variant (default: DEFAULT)
 
 TRANSPORT — List, create, and release transports

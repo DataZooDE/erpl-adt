@@ -257,6 +257,63 @@ void MaybeDeleteSessionFile(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
+// ResolveObjectUri — resolve object name to URI via search
+// ---------------------------------------------------------------------------
+Result<std::string, Error> ResolveObjectUri(IAdtSession& session,
+                                            const std::string& name_or_uri) {
+    // Already a URI — pass through.
+    if (name_or_uri.find("/sap/bc/adt/") == 0) {
+        return Result<std::string, Error>::Ok(std::string(name_or_uri));
+    }
+
+    // Search for the object by name.
+    SearchOptions opts;
+    opts.query = name_or_uri;
+    opts.max_results = 10;
+    auto result = SearchObjects(session, opts);
+    if (result.IsErr()) {
+        return Result<std::string, Error>::Err(std::move(result).Error());
+    }
+
+    const auto& items = result.Value();
+
+    // Look for an exact name match (case-insensitive).
+    std::string upper_name = name_or_uri;
+    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+
+    for (const auto& item : items) {
+        std::string upper_item = item.name;
+        std::transform(upper_item.begin(), upper_item.end(), upper_item.begin(),
+                       [](unsigned char c) { return std::toupper(c); });
+        if (upper_item == upper_name) {
+            return Result<std::string, Error>::Ok(std::string(item.uri));
+        }
+    }
+
+    // No exact match.
+    if (items.empty()) {
+        Error err;
+        err.operation = "ResolveObjectUri";
+        err.message = "Object not found: " + name_or_uri;
+        err.category = ErrorCategory::NotFound;
+        return Result<std::string, Error>::Err(std::move(err));
+    }
+
+    // Build suggestion list.
+    std::string suggestions;
+    for (size_t i = 0; i < items.size() && i < 5; ++i) {
+        if (i > 0) suggestions += ", ";
+        suggestions += items[i].name;
+    }
+    Error err;
+    err.operation = "ResolveObjectUri";
+    err.message = "No exact match for '" + name_or_uri + "'. Did you mean: " + suggestions;
+    err.category = ErrorCategory::NotFound;
+    return Result<std::string, Error>::Err(std::move(err));
+}
+
+// ---------------------------------------------------------------------------
 // search query
 // ---------------------------------------------------------------------------
 int HandleSearchQuery(const CommandArgs& args) {
@@ -757,7 +814,8 @@ int HandleTestRun(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing test URI. Usage: erpl-adt test run <uri>"));
+        fmt.PrintError(MakeValidationError(
+            "Missing object name or URI. Usage: erpl-adt test [run] <name-or-uri>"));
         return 99;
     }
 
@@ -765,7 +823,14 @@ int HandleTestRun(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
-    auto result = RunTests(*session, args.positional[0]);
+
+    auto uri_result = ResolveObjectUri(*session, args.positional[0]);
+    if (uri_result.IsErr()) {
+        fmt.PrintError(uri_result.Error());
+        return uri_result.Error().ExitCode();
+    }
+
+    auto result = RunTests(*session, uri_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -822,7 +887,8 @@ int HandleCheckRun(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing object URI. Usage: erpl-adt check run <uri>"));
+        fmt.PrintError(MakeValidationError(
+            "Missing object name or URI. Usage: erpl-adt check [run] <name-or-uri>"));
         return 99;
     }
 
@@ -831,7 +897,14 @@ int HandleCheckRun(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
-    auto result = RunAtcCheck(*session, args.positional[0], variant);
+
+    auto uri_result = ResolveObjectUri(*session, args.positional[0]);
+    if (uri_result.IsErr()) {
+        fmt.PrintError(uri_result.Error());
+        return uri_result.Error().ExitCode();
+    }
+
+    auto result = RunAtcCheck(*session, uri_result.Value(), variant);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -1639,14 +1712,15 @@ void RegisterAllCommands(CommandRouter& router) {
 
     router.SetGroupDescription("test", "Run ABAP Unit tests");
     router.SetGroupExamples("test", {
+        "$ erpl-adt test ZCL_MY_TEST_CLASS",
         "$ erpl-adt test run /sap/bc/adt/oo/classes/ZCL_TEST",
-        "$ erpl-adt --json test run /sap/bc/adt/oo/classes/ZCL_TEST",
+        "$ erpl-adt --json test ZCL_TEST",
     });
 
     router.SetGroupDescription("check", "Run ATC quality checks");
     router.SetGroupExamples("check", {
-        "$ erpl-adt check run /sap/bc/adt/packages/ZTEST",
-        "$ erpl-adt check run /sap/bc/adt/oo/classes/ZCL_TEST --variant=FUNCTIONAL_DB_ADDITION",
+        "$ erpl-adt check ZCL_MY_CLASS",
+        "$ erpl-adt check run /sap/bc/adt/packages/ZTEST --variant=FUNCTIONAL_DB_ADDITION",
     });
 
     router.SetGroupDescription("transport", "List, create, and release transports");
@@ -1847,38 +1921,44 @@ void RegisterAllCommands(CommandRouter& router) {
     }
 
     // -----------------------------------------------------------------------
-    // test run
+    // test run (default action — "erpl-adt test <name>" works)
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt test run <uri>";
-        help.args_description = "<uri>    Object or package URI";
-        help.long_description = "Exit code 7 indicates test failures.";
+        help.usage = "erpl-adt test <name-or-uri> [flags]";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
+        help.long_description = "Accepts an object name or URI. Names are resolved via search. "
+            "Exit code 7 indicates test failures.";
         help.examples = {
+            "erpl-adt test ZCL_MY_TEST_CLASS",
             "erpl-adt test run /sap/bc/adt/oo/classes/ZCL_TEST",
-            "erpl-adt --json test run /sap/bc/adt/oo/classes/ZCL_TEST",
+            "erpl-adt --json test ZCL_TEST",
         };
         router.Register("test", "run", "Run ABAP unit tests",
                          HandleTestRun, std::move(help));
+        router.SetDefaultAction("test", "run");
     }
 
     // -----------------------------------------------------------------------
-    // check run
+    // check run (default action — "erpl-adt check <name>" works)
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt check run <uri> [flags]";
-        help.args_description = "<uri>    Object or package URI";
-        help.long_description = "Exit code 8 indicates ATC errors.";
+        help.usage = "erpl-adt check <name-or-uri> [flags]";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
+        help.long_description = "Accepts an object name or URI. Names are resolved via search. "
+            "Exit code 8 indicates ATC errors.";
         help.flags = {
             {"variant", "<name>", "ATC variant (default: DEFAULT)", false},
         };
         help.examples = {
+            "erpl-adt check ZCL_MY_CLASS",
             "erpl-adt check run /sap/bc/adt/packages/ZTEST",
             "erpl-adt check run /sap/bc/adt/oo/classes/ZCL_TEST --variant=FUNCTIONAL_DB_ADDITION",
         };
         router.Register("check", "run", "Run ATC checks",
                          HandleCheckRun, std::move(help));
+        router.SetDefaultAction("check", "run");
     }
 
     // -----------------------------------------------------------------------

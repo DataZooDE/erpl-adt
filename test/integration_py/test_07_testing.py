@@ -17,6 +17,23 @@ class TestAbapUnit:
         assert "total_methods" in data
         assert "all_passed" in data
 
+    def test_run_tests_by_name(self, cli):
+        """test with object name resolves via search."""
+        data = cli.run_ok("test", "CL_ABAP_RANDOM")
+        assert "total_methods" in data
+        assert "all_passed" in data
+
+    def test_run_tests_by_name_explicit_action(self, cli):
+        """test run with object name resolves via search."""
+        data = cli.run_ok("test", "run", "CL_ABAP_RANDOM")
+        assert "total_methods" in data
+        assert "all_passed" in data
+
+    def test_run_tests_nonexistent_object(self, cli):
+        """test with nonexistent object name returns exit code 2."""
+        result = cli.run("test", "ZZZZ_NONEXISTENT_12345")
+        assert result.returncode == 2
+
     def test_result_has_classes(self, cli):
         """Test result contains classes array."""
         data = cli.run_ok("test", "run",
