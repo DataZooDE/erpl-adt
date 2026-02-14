@@ -11,7 +11,10 @@ namespace {
 bool IsBooleanFlag(std::string_view arg) {
     return arg == "--color" || arg == "--no-color" ||
            arg == "--json" || arg == "--https" || arg == "--insecure" ||
-           arg == "--help";
+           arg == "--help" || arg == "--raw" || arg == "--datasource" ||
+           arg == "--search-desc" || arg == "--own-only" ||
+           arg == "--simulate" || arg == "--validate" ||
+           arg == "--background" || arg == "--force";
 }
 
 } // namespace

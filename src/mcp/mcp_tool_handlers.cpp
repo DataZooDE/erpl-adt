@@ -5,7 +5,11 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
+#include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
+#include <erpl_adt/adt/bw_transport_collect.hpp>
+#include <erpl_adt/adt/bw_lineage.hpp>
+#include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -959,23 +963,31 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
     registry.Register(
         "bw_read_object",
         "Read a BW object definition. Returns metadata including name, type, "
-        "description, status, package. Use version='m' for inactive version.",
+        "description, status, package. Use version='m' for inactive version. "
+        "Pass uri (from bw_search results) to read objects whose type doesn't "
+        "map directly to a REST path segment.",
         MakeSchema(
-            {{"object_type", StringProp("Object type code (ADSO, IOBJ, TRFN, etc.)")},
+            {{"object_type", StringProp("Object type code (ADSO, IOBJ, TRFN, etc.). Used for content negotiation.")},
              {"object_name", StringProp("Object name")},
-             {"version", StringProp("Version: a (active, default), m (modified), d (delivery)")}},
-            {"object_type", "object_name"}),
+             {"version", StringProp("Version: a (active, default), m (modified), d (delivery)")},
+             {"uri", StringProp("Direct URI from search results (overrides type/name path construction)")}},
+            {}),
         [&session](const nlohmann::json& params) -> ToolResult {
-            ToolResult err;
-            auto obj_type = RequireString(params, "object_type", err);
-            if (!obj_type) return err;
-            auto obj_name = RequireString(params, "object_name", err);
-            if (!obj_name) return err;
+            auto uri_val = OptString(params, "uri");
+            bool has_uri = !uri_val.empty();
 
             BwReadOptions opts;
-            opts.object_type = *obj_type;
-            opts.object_name = *obj_name;
+            opts.object_type = OptString(params, "object_type");
+            opts.object_name = OptString(params, "object_name");
+
+            if (!has_uri && (opts.object_type.empty() || opts.object_name.empty())) {
+                return MakeParamError("Either 'uri' or both 'object_type' and 'object_name' are required");
+            }
+
             opts.version = OptString(params, "version", "a");
+            if (has_uri) {
+                opts.uri = uri_val;
+            }
 
             auto result = BwReadObject(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());
@@ -1247,6 +1259,283 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["status"] = st.status;
             j["job_type"] = st.job_type;
             j["description"] = st.description;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_xref",
+        "Get cross-references (dependencies) for a BW object. Shows which objects "
+        "use or are used by the specified object. Useful for impact analysis and "
+        "data lineage exploration.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type (ADSO, IOBJ, TRFN, DTPA, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"object_version", StringProp("Version: A (active), M (modified)")},
+             {"association", StringProp("Filter by association code (001=Used by, 002=Uses, 003=Depends on)")},
+             {"associated_object_type", StringProp("Filter by related type (IOBJ, ADSO, etc.)")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            BwXrefOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            auto version = OptString(params, "object_version");
+            if (!version.empty()) opts.object_version = version;
+            auto assoc = OptString(params, "association");
+            if (!assoc.empty()) opts.association = assoc;
+            auto assoc_type = OptString(params, "associated_object_type");
+            if (!assoc_type.empty()) opts.associated_object_type = assoc_type;
+
+            auto result = BwGetXrefs(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& r : result.Value()) {
+                j.push_back({{"name", r.name},
+                             {"type", r.type},
+                             {"association_type", r.association_type},
+                             {"association_label", r.association_label},
+                             {"version", r.version},
+                             {"status", r.status},
+                             {"description", r.description},
+                             {"uri", r.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_nodes",
+        "Get child node structure of a BW object. Lists component objects "
+        "(transformations, DTPs, etc.) belonging to the specified object.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type (ADSO, IOBJ, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"datasource", {{"type", "boolean"},
+                              {"description", "Use DataSource structure path"}}},
+             {"child_name", StringProp("Filter by child name")},
+             {"child_type", StringProp("Filter by child type")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            BwNodesOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            opts.datasource = params.contains("datasource") &&
+                              params["datasource"].is_boolean() &&
+                              params["datasource"].get<bool>();
+            auto child_name = OptString(params, "child_name");
+            if (!child_name.empty()) opts.child_name = child_name;
+            auto child_type = OptString(params, "child_type");
+            if (!child_type.empty()) opts.child_type = child_type;
+
+            auto result = BwGetNodes(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& r : result.Value()) {
+                j.push_back({{"name", r.name},
+                             {"type", r.type},
+                             {"subtype", r.subtype},
+                             {"description", r.description},
+                             {"version", r.version},
+                             {"status", r.status},
+                             {"uri", r.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_transport_collect",
+        "Collect dependent objects for transport. Gathers objects related to "
+        "the specified object with dataflow grouping. Mode: 000=necessary, "
+        "001=complete, 003=dataflow above, 004=dataflow below.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type (ADSO, IOBJ, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"mode", StringProp("Collection mode: 000 (necessary), 001 (complete), 003 (above), 004 (below)")},
+             {"transport", StringProp("Transport request number (optional)")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            BwTransportCollectOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            opts.mode = OptString(params, "mode", "000");
+            auto transport = OptString(params, "transport");
+            if (!transport.empty()) opts.transport = transport;
+
+            auto result = BwTransportCollect(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& cr = result.Value();
+            nlohmann::json j;
+            nlohmann::json details = nlohmann::json::array();
+            for (const auto& d : cr.details) {
+                details.push_back({{"name", d.name},
+                                   {"type", d.type},
+                                   {"description", d.description},
+                                   {"status", d.status},
+                                   {"uri", d.uri},
+                                   {"last_changed_by", d.last_changed_by},
+                                   {"last_changed_at", d.last_changed_at}});
+            }
+            j["details"] = details;
+
+            nlohmann::json deps = nlohmann::json::array();
+            for (const auto& d : cr.dependencies) {
+                deps.push_back({{"name", d.name},
+                                {"type", d.type},
+                                {"version", d.version},
+                                {"author", d.author},
+                                {"package", d.package_name},
+                                {"association_type", d.association_type},
+                                {"associated_name", d.associated_name},
+                                {"associated_type", d.associated_type}});
+            }
+            j["dependencies"] = deps;
+            j["messages"] = cr.messages;
+            return MakeOkResult(j);
+        });
+
+    // === Structured lineage tools ===
+
+    registry.Register(
+        "bw_read_transformation",
+        "Read a BW transformation (TRFN) with parsed field mappings. Returns "
+        "source/target objects, source and target field lists, and transformation "
+        "rules (field-to-field mappings with rule types like StepDirect, StepFormula).",
+        MakeSchema(
+            {{"name", StringProp("Transformation name")},
+             {"version", StringProp("Version: a (active, default), m (modified)")}},
+            {"name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto version = OptString(params, "version", "a");
+
+            auto result = BwReadTransformation(session, *name, version);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& detail = result.Value();
+            nlohmann::json j;
+            j["name"] = detail.name;
+            j["description"] = detail.description;
+            j["source_name"] = detail.source_name;
+            j["source_type"] = detail.source_type;
+            j["target_name"] = detail.target_name;
+            j["target_type"] = detail.target_type;
+
+            nlohmann::json src_fields = nlohmann::json::array();
+            for (const auto& f : detail.source_fields) {
+                src_fields.push_back({{"name", f.name},
+                                      {"type", f.type},
+                                      {"aggregation", f.aggregation},
+                                      {"key", f.key}});
+            }
+            j["source_fields"] = src_fields;
+
+            nlohmann::json tgt_fields = nlohmann::json::array();
+            for (const auto& f : detail.target_fields) {
+                tgt_fields.push_back({{"name", f.name},
+                                      {"type", f.type},
+                                      {"aggregation", f.aggregation},
+                                      {"key", f.key}});
+            }
+            j["target_fields"] = tgt_fields;
+
+            nlohmann::json rules = nlohmann::json::array();
+            for (const auto& r : detail.rules) {
+                nlohmann::json rj;
+                rj["source_field"] = r.source_field;
+                rj["target_field"] = r.target_field;
+                rj["rule_type"] = r.rule_type;
+                if (!r.formula.empty()) rj["formula"] = r.formula;
+                if (!r.constant.empty()) rj["constant"] = r.constant;
+                rules.push_back(std::move(rj));
+            }
+            j["rules"] = rules;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_adso",
+        "Read a BW Advanced DataStore Object (ADSO) with parsed field list. "
+        "Returns metadata and all fields with data types, lengths, and key flags.",
+        MakeSchema(
+            {{"name", StringProp("ADSO name")},
+             {"version", StringProp("Version: a (active, default), m (modified)")}},
+            {"name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto version = OptString(params, "version", "a");
+
+            auto result = BwReadAdsoDetail(session, *name, version);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& detail = result.Value();
+            nlohmann::json j;
+            j["name"] = detail.name;
+            j["description"] = detail.description;
+            j["package"] = detail.package_name;
+
+            nlohmann::json fields = nlohmann::json::array();
+            for (const auto& f : detail.fields) {
+                fields.push_back({{"name", f.name},
+                                  {"data_type", f.data_type},
+                                  {"length", f.length},
+                                  {"decimals", f.decimals},
+                                  {"key", f.key},
+                                  {"description", f.description},
+                                  {"info_object", f.info_object}});
+            }
+            j["fields"] = fields;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_dtp",
+        "Read a BW Data Transfer Process (DTP) with parsed source/target. "
+        "Returns source and target object names, types, and source system info.",
+        MakeSchema(
+            {{"name", StringProp("DTP name")},
+             {"version", StringProp("Version: a (active, default), m (modified)")}},
+            {"name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto version = OptString(params, "version", "a");
+
+            auto result = BwReadDtpDetail(session, *name, version);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& detail = result.Value();
+            nlohmann::json j;
+            j["name"] = detail.name;
+            j["description"] = detail.description;
+            j["source_name"] = detail.source_name;
+            j["source_type"] = detail.source_type;
+            j["target_name"] = detail.target_name;
+            j["target_type"] = detail.target_type;
+            j["source_system"] = detail.source_system;
             return MakeOkResult(j);
         });
 }

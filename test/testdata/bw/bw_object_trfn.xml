@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<trfn:transformation xmlns:trfn="http://www.sap.com/bw/modeling/trfn"
+    description="Sales Transformation"
+    packageName="ZTEST"
+    changedBy="DEVELOPER"
+    changedAt="20260214120000">
+  <source objectName="ZSRC_SALES" objectType="RSDS" description="Sales Source"/>
+  <target objectName="ZSALES_DATA" objectType="ADSO" description="Sales Target"/>
+  <sourceFields>
+    <field name="MATNR" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="WERKS" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="QUANTITY" intType="DEC" aggregation="SUM"/>
+    <field name="AMOUNT" intType="CURR" aggregation="SUM"/>
+  </sourceFields>
+  <targetFields>
+    <field name="MATERIAL" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="PLANT" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="QUANTITY" intType="DEC" aggregation="SUM"/>
+    <field name="AMOUNT" intType="CURR" aggregation="SUM"/>
+  </targetFields>
+  <rules>
+    <group>
+      <rule sourceField="MATNR" targetField="MATERIAL" ruleType="StepDirect"/>
+      <rule sourceField="WERKS" targetField="PLANT" ruleType="StepDirect"/>
+      <rule sourceField="QUANTITY" targetField="QUANTITY" ruleType="StepDirect"/>
+      <rule sourceField="" targetField="AMOUNT" ruleType="StepFormula" formula="SOURCE_FIELDS-AMOUNT * 1.0"/>
+    </group>
+  </rules>
+</trfn:transformation>

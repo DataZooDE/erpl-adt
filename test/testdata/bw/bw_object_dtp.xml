@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dtpa:dtp xmlns:dtpa="http://www.sap.com/bw/modeling/dtpa"
+    description="Sales Data Transfer"
+    packageName="ZTEST"
+    changedBy="DEVELOPER"
+    changedAt="20260214120000">
+  <source objectName="ZSRC_SALES" objectType="RSDS" sourceSystem="ECLCLNT100"/>
+  <target objectName="ZSALES_DATA" objectType="ADSO"/>
+</dtpa:dtp>

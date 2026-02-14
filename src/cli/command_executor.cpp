@@ -11,7 +11,10 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
+#include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
+#include <erpl_adt/adt/bw_transport_collect.hpp>
+#include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -1604,10 +1607,10 @@ int HandleBwSearch(const CommandArgs& args) {
         }
         fmt.PrintJson(j.dump());
     } else {
-        std::vector<std::string> headers = {"Name", "Type", "Status", "Description"};
+        std::vector<std::string> headers = {"Name", "Type", "Status", "Description", "URI"};
         std::vector<std::vector<std::string>> rows;
         for (const auto& r : items) {
-            rows.push_back({r.name, r.type, r.status, r.description});
+            rows.push_back({r.name, r.type, r.status, r.description, r.uri});
         }
         fmt.PrintTable(headers, rows);
     }
@@ -1620,9 +1623,11 @@ int HandleBwSearch(const CommandArgs& args) {
 int HandleBwRead(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
-    if (args.positional.size() < 2) {
+    bool has_uri = HasFlag(args, "uri");
+    if (args.positional.size() < 2 && !has_uri) {
         fmt.PrintError(MakeValidationError(
-            "Usage: erpl-adt bw read <type> <name> [--version=a|m|d]"));
+            "Usage: erpl-adt bw read <type> <name> [--version=a|m|d]\n"
+            "   or: erpl-adt bw read --uri <path>"));
         return 99;
     }
 
@@ -1630,11 +1635,18 @@ int HandleBwRead(const CommandArgs& args) {
     if (!session) return 99;
 
     BwReadOptions opts;
-    opts.object_type = args.positional[0];
-    opts.object_name = args.positional[1];
+    if (args.positional.size() >= 1) {
+        opts.object_type = args.positional[0];
+    }
+    if (args.positional.size() >= 2) {
+        opts.object_name = args.positional[1];
+    }
     opts.version = GetFlag(args, "version", "a");
     if (HasFlag(args, "source-system")) {
         opts.source_system = GetFlag(args, "source-system");
+    }
+    if (has_uri) {
+        opts.uri = GetFlag(args, "uri");
     }
     opts.raw = HasFlag(args, "raw");
 
@@ -1908,14 +1920,129 @@ int HandleBwActivate(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
-// bw transport (sub-actions: check, write, list)
+// bw xref
+// ---------------------------------------------------------------------------
+int HandleBwXref(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw xref <type> <name> [flags]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwXrefOptions opts;
+    opts.object_type = args.positional[0];
+    opts.object_name = args.positional[1];
+    if (HasFlag(args, "version")) {
+        opts.object_version = GetFlag(args, "version");
+    }
+    if (HasFlag(args, "association")) {
+        opts.association = GetFlag(args, "association");
+    }
+    if (HasFlag(args, "assoc-type")) {
+        opts.associated_object_type = GetFlag(args, "assoc-type");
+    }
+
+    auto result = BwGetXrefs(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& items = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& r : items) {
+            j.push_back({{"name", r.name},
+                         {"type", r.type},
+                         {"association_type", r.association_type},
+                         {"association_label", r.association_label},
+                         {"version", r.version},
+                         {"status", r.status},
+                         {"description", r.description},
+                         {"uri", r.uri}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Name", "Type", "Association", "Description", "URI"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& r : items) {
+            rows.push_back({r.name, r.type, r.association_label, r.description, r.uri});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw nodes
+// ---------------------------------------------------------------------------
+int HandleBwNodes(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw nodes <type> <name> [flags]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwNodesOptions opts;
+    opts.object_type = args.positional[0];
+    opts.object_name = args.positional[1];
+    opts.datasource = HasFlag(args, "datasource");
+    if (HasFlag(args, "child-name")) {
+        opts.child_name = GetFlag(args, "child-name");
+    }
+    if (HasFlag(args, "child-type")) {
+        opts.child_type = GetFlag(args, "child-type");
+    }
+
+    auto result = BwGetNodes(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& items = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& r : items) {
+            j.push_back({{"name", r.name},
+                         {"type", r.type},
+                         {"subtype", r.subtype},
+                         {"description", r.description},
+                         {"version", r.version},
+                         {"status", r.status},
+                         {"uri", r.uri}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Name", "Type", "Subtype", "Status", "Description"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& r : items) {
+            rows.push_back({r.name, r.type, r.subtype, r.status, r.description});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw transport (sub-actions: check, write, list, collect)
 // ---------------------------------------------------------------------------
 int HandleBwTransport(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
-            "Usage: erpl-adt bw transport <check|write|list> [args]"));
+            "Usage: erpl-adt bw transport <check|write|list|collect> [args]"));
         return 99;
     }
 
@@ -2045,8 +2172,83 @@ int HandleBwTransport(const CommandArgs& args) {
         return 0;
     }
 
+    if (sub_action == "collect") {
+        if (args.positional.size() < 3) {
+            fmt.PrintError(MakeValidationError(
+                "Usage: erpl-adt bw transport collect <type> <name> [--mode=000]"));
+            return 99;
+        }
+
+        BwTransportCollectOptions opts;
+        opts.object_type = args.positional[1];
+        opts.object_name = args.positional[2];
+        if (HasFlag(args, "mode")) {
+            opts.mode = GetFlag(args, "mode");
+        }
+        if (HasFlag(args, "transport")) {
+            opts.transport = GetFlag(args, "transport");
+        }
+
+        auto result = BwTransportCollect(*session, opts);
+        if (result.IsErr()) {
+            fmt.PrintError(result.Error());
+            return result.Error().ExitCode();
+        }
+
+        const auto& cr = result.Value();
+        if (fmt.IsJsonMode()) {
+            nlohmann::json j;
+            nlohmann::json details = nlohmann::json::array();
+            for (const auto& d : cr.details) {
+                details.push_back({{"name", d.name},
+                                   {"type", d.type},
+                                   {"description", d.description},
+                                   {"status", d.status},
+                                   {"uri", d.uri},
+                                   {"last_changed_by", d.last_changed_by},
+                                   {"last_changed_at", d.last_changed_at}});
+            }
+            j["details"] = details;
+
+            nlohmann::json deps = nlohmann::json::array();
+            for (const auto& d : cr.dependencies) {
+                deps.push_back({{"name", d.name},
+                                {"type", d.type},
+                                {"version", d.version},
+                                {"author", d.author},
+                                {"package", d.package_name},
+                                {"association_type", d.association_type},
+                                {"associated_name", d.associated_name},
+                                {"associated_type", d.associated_type}});
+            }
+            j["dependencies"] = deps;
+            j["messages"] = cr.messages;
+            fmt.PrintJson(j.dump());
+        } else {
+            if (!cr.details.empty()) {
+                std::cout << "Collected Objects:\n";
+                for (const auto& d : cr.details) {
+                    std::cout << "  " << d.type << " " << d.name
+                              << " [" << d.status << "] " << d.description << "\n";
+                }
+            }
+            if (!cr.dependencies.empty()) {
+                std::cout << "\nDependencies:\n";
+                for (const auto& d : cr.dependencies) {
+                    std::cout << "  " << d.type << " " << d.name
+                              << " -> " << d.associated_type << " " << d.associated_name
+                              << "\n";
+                }
+            }
+            for (const auto& m : cr.messages) {
+                std::cout << "  " << m << "\n";
+            }
+        }
+        return 0;
+    }
+
     fmt.PrintError(MakeValidationError(
-        "Unknown transport action: " + sub_action + ". Use check, write, or list."));
+        "Unknown transport action: " + sub_action + ". Use check, write, list, or collect."));
     return 99;
 }
 
@@ -2489,7 +2691,10 @@ void PrintLogoutHelp(std::ostream& out, bool color) {
 bool IsBooleanFlag(std::string_view arg) {
     return arg == "--color" || arg == "--no-color" ||
            arg == "--json" || arg == "--https" || arg == "--insecure" ||
-           arg == "--help" || arg == "--activate";
+           arg == "--help" || arg == "--activate" || arg == "--raw" ||
+           arg == "--datasource" || arg == "--search-desc" ||
+           arg == "--own-only" || arg == "--simulate" ||
+           arg == "--validate" || arg == "--background" || arg == "--force";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -2987,6 +3192,8 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt bw search \"Z*\" --type=ADSO",
         "$ erpl-adt bw ZADSO*                  # shorthand (default action)",
         "$ erpl-adt bw read ADSO ZSALES_DATA",
+        "$ erpl-adt bw xref ADSO ZSALES_DATA",
+        "$ erpl-adt bw nodes ADSO ZSALES_DATA",
         "$ erpl-adt bw discover",
         "$ erpl-adt --json bw activate ADSO ZSALES_DATA",
     });
@@ -3031,19 +3238,24 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw read
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw read <type> <name> [flags]";
+        help.usage = "erpl-adt bw read <type> <name> [flags]\n"
+                     "       erpl-adt bw read --uri <path>";
         help.args_description = "<type>    Object type (ADSO, IOBJ, TRFN, ...)\n"
                                 "  <name>    Object name";
-        help.long_description = "Read a BW object definition.";
+        help.long_description = "Read a BW object definition. Use --uri to pass the URI "
+            "directly from search results (avoids type-to-path mapping issues).";
         help.flags = {
             {"version", "<v>", "Version: a (active, default), m (modified), d (delivery)", false},
             {"source-system", "<name>", "Source system (required for RSDS, APCO)", false},
+            {"uri", "<path>", "Direct URI from search results (overrides type/name path)", false},
             {"raw", "", "Output raw XML", false},
         };
         help.examples = {
             "erpl-adt bw read ADSO ZSALES_DATA",
             "erpl-adt bw read IOBJ 0MATERIAL --version=m",
             "erpl-adt bw read RSDS ZSRC --source-system=ECLCLNT100",
+            "erpl-adt bw read --uri /sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a",
+            "erpl-adt bw read ELEM NAME --uri /sap/bw/modeling/query/NAME/a",
         };
         router.Register("bw", "read", "Read BW object definition",
                          HandleBwRead, std::move(help));
@@ -3140,23 +3352,70 @@ void RegisterAllCommands(CommandRouter& router) {
                          HandleBwActivate, std::move(help));
     }
 
+    // bw xref
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw xref <type> <name> [flags]";
+        help.args_description = "<type>    Object type (ADSO, IOBJ, TRFN, ...)\n"
+                                "  <name>    Object name";
+        help.long_description = "Show cross-references (dependencies) for a BW object. "
+            "Shows which objects use or are used by the specified object.";
+        help.flags = {
+            {"version", "<v>", "Object version: A (active), M (modified)", false},
+            {"association", "<code>", "Filter by association code (001, 002, 003, ...)", false},
+            {"assoc-type", "<type>", "Filter by associated object type (IOBJ, ADSO, ...)", false},
+        };
+        help.examples = {
+            "erpl-adt bw xref ADSO ZSALES_DATA",
+            "erpl-adt bw xref ADSO ZSALES_DATA --association=001",
+            "erpl-adt --json bw xref IOBJ 0MATERIAL",
+        };
+        router.Register("bw", "xref", "Show BW cross-references",
+                         HandleBwXref, std::move(help));
+    }
+
+    // bw nodes
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw nodes <type> <name> [flags]";
+        help.args_description = "<type>    Object type (ADSO, IOBJ, TRFN, ...)\n"
+                                "  <name>    Object name";
+        help.long_description = "Show child node structure of a BW object. Lists component "
+            "objects (transformations, DTPs, etc.) belonging to the specified object.";
+        help.flags = {
+            {"datasource", "", "Use DataSource structure path instead of InfoProvider", false},
+            {"child-name", "<name>", "Filter by child name", false},
+            {"child-type", "<type>", "Filter by child type", false},
+        };
+        help.examples = {
+            "erpl-adt bw nodes ADSO ZSALES_DATA",
+            "erpl-adt bw nodes RSDS ZSOURCE --datasource",
+            "erpl-adt --json bw nodes ADSO ZSALES --child-type=TRFN",
+        };
+        router.Register("bw", "nodes", "Show BW object node structure",
+                         HandleBwNodes, std::move(help));
+    }
+
     // bw transport
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw transport <check|write|list> [args]";
-        help.args_description = "<action>    check, write, or list";
+        help.usage = "erpl-adt bw transport <check|write|list|collect> [args]";
+        help.args_description = "<action>    check, write, list, or collect";
         help.long_description = "BW transport operations. 'check' shows transport state "
-            "and changeability. 'write' adds objects to a transport. 'list' shows requests.";
+            "and changeability. 'write' adds objects to a transport. 'list' shows requests. "
+            "'collect' gathers dependent objects for transport with dataflow grouping.";
         help.flags = {
-            {"transport", "<corrnr>", "Transport number (for write)", false},
+            {"transport", "<corrnr>", "Transport number (for write/collect)", false},
             {"package", "<pkg>", "Package name (for write)", false},
             {"own-only", "", "Show only own transport requests", false},
             {"simulate", "", "Dry run (write only)", false},
+            {"mode", "<code>", "Collection mode: 000 (necessary), 001 (complete), 003 (above), 004 (below)", false},
         };
         help.examples = {
             "erpl-adt bw transport check",
             "erpl-adt bw transport list --own-only",
             "erpl-adt bw transport write ADSO ZSALES --transport=K900001",
+            "erpl-adt bw transport collect ADSO ZSALES --mode=001",
         };
         router.Register("bw", "transport", "BW transport operations",
                          HandleBwTransport, std::move(help));

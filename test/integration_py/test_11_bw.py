@@ -37,10 +37,10 @@ def bw_has_search(cli, bw_available):
     # Probe the search endpoint — discovery may list it even if not activated
     result = cli.run("bw", "search", "*", "--max", "1")
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        if "not activated" in stderr.lower() or "500" in stderr:
+        stderr = result.stderr.strip().lower()
+        if "not activated" in stderr or "not implemented" in stderr:
             pytest.skip("BW search service listed but not activated")
-        # Other errors (e.g. no results) are fine — search works
+        pytest.fail(f"BW search probe failed unexpectedly: {result.stderr.strip()}")
     return True
 
 
@@ -315,3 +315,161 @@ class TestBwCliValidation:
         """bw search with no pattern fails."""
         result = cli.run("bw", "search")
         assert result.returncode != 0
+
+    def test_xref_missing_args(self, cli):
+        """bw xref without type and name fails."""
+        result = cli.run("bw", "xref")
+        assert result.returncode != 0
+
+    def test_nodes_missing_args(self, cli):
+        """bw nodes without type and name fails."""
+        result = cli.run("bw", "nodes")
+        assert result.returncode != 0
+
+    def test_transport_collect_missing_args(self, cli):
+        """bw transport collect without type and name fails."""
+        result = cli.run("bw", "transport", "collect")
+        assert result.returncode != 0
+
+
+# ===========================================================================
+# BW Cross-References (xref)
+# ===========================================================================
+
+@pytest.mark.bw
+class TestBwXref:
+
+    @pytest.fixture(scope="class")
+    def bw_has_xref(self, cli, bw_available):
+        """Check if BW xref endpoint is accessible."""
+        # Probe with a common object type
+        result = cli.run("bw", "xref", "ADSO", "ZZZZZ_NONEXISTENT_99999")
+        if result.returncode != 0:
+            stderr = result.stderr.strip().lower()
+            if "not activated" in stderr or "not implemented" in stderr or "404" in stderr:
+                pytest.skip("BW xref service not activated")
+        return True
+
+    def test_xref_returns_results(self, cli, bw_has_search, bw_has_xref):
+        """bw xref returns cross-references for a known object."""
+        # First find a known object
+        data = cli.run_ok("bw", "search", "*", "--max", "1",
+                          "--type", "ADSO")
+        if not data:
+            pytest.skip("No ADSO objects found for xref test")
+        name = data[0]["name"]
+
+        result = cli.run("bw", "xref", "ADSO", name)
+        # xref may return 0 with empty list or non-zero if not supported
+        if result.returncode != 0:
+            pytest.skip("BW xref not fully supported on this system")
+        xrefs = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+        assert isinstance(xrefs, list)
+
+    def test_xref_result_has_fields(self, cli, bw_has_search, bw_has_xref):
+        """Xref results have expected fields."""
+        data = cli.run_ok("bw", "search", "*", "--max", "1",
+                          "--type", "ADSO")
+        if not data:
+            pytest.skip("No ADSO objects found for xref test")
+        name = data[0]["name"]
+
+        result = cli.run("bw", "xref", "ADSO", name)
+        if result.returncode != 0:
+            pytest.skip("BW xref not supported")
+        xrefs = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+        if not xrefs:
+            pytest.skip("No cross-references found")
+        r = xrefs[0]
+        assert "name" in r
+        assert "type" in r
+        assert "association_type" in r
+
+    def test_xref_json_output(self, cli, bw_has_xref):
+        """bw xref with --json produces valid JSON."""
+        result = cli.run("bw", "xref", "ADSO", "ZZZZZ_NONEXISTENT_99999")
+        if result.returncode == 0:
+            data = json.loads(result.stdout.strip())
+            assert isinstance(data, list)
+
+
+# ===========================================================================
+# BW Node Structure (nodes)
+# ===========================================================================
+
+@pytest.mark.bw
+class TestBwNodes:
+
+    @pytest.fixture(scope="class")
+    def bw_has_nodes(self, cli, bw_available):
+        """Check if BW nodes endpoint is accessible."""
+        result = cli.run("bw", "nodes", "ADSO", "ZZZZZ_NONEXISTENT_99999")
+        if result.returncode != 0:
+            stderr = result.stderr.strip().lower()
+            if "not activated" in stderr or "not implemented" in stderr or "404" in stderr:
+                pytest.skip("BW nodes service not activated")
+        return True
+
+    def test_nodes_returns_results(self, cli, bw_has_search, bw_has_nodes):
+        """bw nodes returns child nodes for a known object."""
+        data = cli.run_ok("bw", "search", "*", "--max", "1",
+                          "--type", "ADSO")
+        if not data:
+            pytest.skip("No ADSO objects found for nodes test")
+        name = data[0]["name"]
+
+        result = cli.run("bw", "nodes", "ADSO", name)
+        if result.returncode != 0:
+            pytest.skip("BW nodes not fully supported on this system")
+        nodes = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+        assert isinstance(nodes, list)
+
+    def test_nodes_result_has_fields(self, cli, bw_has_search, bw_has_nodes):
+        """Node results have expected fields."""
+        data = cli.run_ok("bw", "search", "*", "--max", "1",
+                          "--type", "ADSO")
+        if not data:
+            pytest.skip("No ADSO objects found for nodes test")
+        name = data[0]["name"]
+
+        result = cli.run("bw", "nodes", "ADSO", name)
+        if result.returncode != 0:
+            pytest.skip("BW nodes not supported")
+        nodes = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+        if not nodes:
+            pytest.skip("No child nodes found")
+        n = nodes[0]
+        assert "name" in n
+        assert "type" in n
+
+
+# ===========================================================================
+# BW Transport Collection
+# ===========================================================================
+
+@pytest.mark.bw
+class TestBwTransportCollect:
+
+    def test_transport_collect(self, cli, bw_has_search, bw_has_cto):
+        """bw transport collect returns collection results."""
+        data = cli.run_ok("bw", "search", "*", "--max", "1",
+                          "--type", "ADSO")
+        if not data:
+            pytest.skip("No ADSO objects found for collect test")
+        name = data[0]["name"]
+
+        result = cli.run("bw", "transport", "collect", "ADSO", name)
+        if result.returncode != 0:
+            pytest.skip("BW transport collect not supported on this system")
+        cr = json.loads(result.stdout.strip())
+        assert "details" in cr
+        assert "dependencies" in cr
+
+    def test_transport_collect_json(self, cli, bw_has_cto):
+        """bw transport collect with --json produces valid JSON."""
+        result = cli.run("bw", "transport", "collect", "ADSO",
+                         "ZZZZZ_NONEXISTENT_99999")
+        # May fail with object not found - that's fine
+        if result.returncode == 0:
+            cr = json.loads(result.stdout.strip())
+            assert isinstance(cr, dict)

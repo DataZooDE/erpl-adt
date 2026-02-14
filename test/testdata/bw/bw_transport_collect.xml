@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<trCollect:objects xmlns:trCollect="http://www.sap.com/bw/trcollect">
+  <details>
+    <object name="ZSALES_DATA" type="ADSO" status="ACT"
+            description="Sales DataStore" uri="/sap/bw/modeling/adso/ZSALES_DATA/a"
+            lastChangedBy="DEVELOPER" lastChangedAt="20260214120000"/>
+    <object name="ZTRFN_SALES" type="TRFN" status="ACT"
+            description="Sales Transformation" uri="/sap/bw/modeling/trfn/ZTRFN_SALES/a"
+            lastChangedBy="DEVELOPER" lastChangedAt="20260214110000"/>
+  </details>
+  <dependencies>
+    <dependency name="0MATERIAL" type="IOBJ" version="A" author="SAP"
+                packageName="$INFOCUBE" associationType="002"
+                associatedName="ZSALES_DATA" associatedType="ADSO"/>
+    <dependency name="0CALDAY" type="IOBJ" version="A" author="SAP"
+                packageName="$INFOCUBE" associationType="002"
+                associatedName="ZSALES_DATA" associatedType="ADSO"/>
+  </dependencies>
+  <messages>
+    <message>Collection completed successfully</message>
+  </messages>
+</trCollect:objects>

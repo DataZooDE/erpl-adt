@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:bwModel="http://www.sap.com/bw/modeling">
+  <title>BW Cross-References</title>
+  <entry>
+    <title>Transformation for ZSALES_DATA</title>
+    <id>/sap/bw/modeling/trfn/ZTRFN_SALES/a</id>
+    <content type="application/xml">
+      <bwModel:xrefResult objectName="ZTRFN_SALES" objectType="TRFN"
+          objectVersion="A" objectStatus="ACT"
+          objectDesc="Transformation for ZSALES_DATA"
+          associationType="001" associatedObjectType="ADSO"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/trfn/ZTRFN_SALES/a"/>
+  </entry>
+  <entry>
+    <title>DTP for ZSALES_DATA</title>
+    <id>/sap/bw/modeling/dtpa/ZDTP_SALES/a</id>
+    <content type="application/xml">
+      <bwModel:xrefResult objectName="ZDTP_SALES" objectType="DTPA"
+          objectVersion="A" objectStatus="ACT"
+          objectDesc="DTP for ZSALES_DATA"
+          associationType="003" associatedObjectType="ADSO"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/dtpa/ZDTP_SALES/a"/>
+  </entry>
+  <entry>
+    <title>InfoObject 0MATERIAL</title>
+    <id>/sap/bw/modeling/iobj/0MATERIAL/a</id>
+    <content type="application/xml">
+      <bwModel:xrefResult objectName="0MATERIAL" objectType="IOBJ"
+          objectVersion="A" objectStatus="ACT"
+          objectDesc="InfoObject 0MATERIAL"
+          associationType="002" associatedObjectType="IOBJ"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/iobj/0MATERIAL/a"/>
+  </entry>
+</feed>
