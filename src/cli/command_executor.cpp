@@ -2262,7 +2262,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     // Group ordering.
     const std::vector<std::string> group_order = {
         "search", "object", "source", "activate", "test", "check",
-        "transport", "ddic", "package", "discover"};
+        "transport", "ddic", "package", "discover", "bw"};
 
     // Group display names and short descriptions (overrides for cleaner display).
     struct GroupMeta {
@@ -2280,6 +2280,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"ddic",      {"DATA DICTIONARY", "Tables and CDS views"}},
         {"package",   {"PACKAGE", ""}},
         {"discover",  {"DISCOVER", ""}},
+        {"bw",        {"BW", "SAP BW/4HANA Modeling operations"}},
     };
 
     // Pre-compute max left-column width across ALL groups for alignment.
@@ -3083,11 +3084,11 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw save
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw save <type> <name> --lock-handle=... < file.xml";
+        help.usage = "erpl-adt bw save <type> <name> [flags]";
         help.args_description = "<type>    Object type\n  <name>    Object name";
         help.long_description = "Save modified BW object XML. Reads content from stdin.";
         help.flags = {
-            {"lock-handle", "<handle>", "Lock handle from bw lock (required)", true},
+            {"lock-handle", "<handle>", "Lock handle from bw lock", true},
             {"transport", "<corrnr>", "Transport request number", false},
             {"timestamp", "<ts>", "Server timestamp from lock response", false},
         };
@@ -3101,11 +3102,11 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw delete
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw delete <type> <name> --lock-handle=...";
+        help.usage = "erpl-adt bw delete <type> <name> [flags]";
         help.args_description = "<type>    Object type\n  <name>    Object name";
         help.long_description = "Delete a BW object.";
         help.flags = {
-            {"lock-handle", "<handle>", "Lock handle (required)", true},
+            {"lock-handle", "<handle>", "Lock handle", true},
             {"transport", "<corrnr>", "Transport request number", false},
         };
         help.examples = {
