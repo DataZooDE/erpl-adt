@@ -223,3 +223,193 @@ TEST_CASE("ActivateAll: returns error on unexpected status", "[adt][activation]"
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status.value() == 500);
 }
+
+// ===========================================================================
+// ActivateObject (new-style, no IXmlCodec)
+// ===========================================================================
+
+namespace {
+
+// Sample activation response XML with no errors.
+const char* kActivationSuccessXml =
+    R"(<?xml version="1.0" encoding="utf-8"?>
+<chkl:activationResultList xmlns:chkl="http://www.sap.com/adt/checklistresult">
+</chkl:activationResultList>)";
+
+// Sample activation response XML with error messages.
+const char* kActivationWithErrorsXml =
+    R"(<?xml version="1.0" encoding="utf-8"?>
+<chkl:activationResultList xmlns:chkl="http://www.sap.com/adt/checklistresult">
+  <chkl:messages>
+    <msg type="E">
+      <shortText>
+        <txt>Syntax error in class ZCL_BROKEN</txt>
+      </shortText>
+    </msg>
+    <msg type="W">
+      <shortText>
+        <txt>Unused variable X</txt>
+      </shortText>
+    </msg>
+  </chkl:messages>
+</chkl:activationResultList>)";
+
+} // namespace
+
+TEST_CASE("ActivateObject: sync 200 success with empty response", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("csrf-123")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+    params.type = "CLAS/OC";
+    params.name = "ZCL_TEST";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed == 0);
+    CHECK(result.Value().error_messages.empty());
+
+    REQUIRE(session.PostCallCount() == 1);
+    CHECK(session.PostCalls()[0].path ==
+          "/sap/bc/adt/activation?method=activate&preauditRequested=true");
+    CHECK(session.PostCalls()[0].content_type ==
+          "application/vnd.sap.adt.activation.v1+xml");
+    CHECK(session.PostCalls()[0].headers.at("x-csrf-token") == "csrf-123");
+
+    // Verify the request XML contains the object reference.
+    auto& body = session.PostCalls()[0].body;
+    CHECK(body.find("adtcore:uri=\"/sap/bc/adt/oo/classes/ZCL_TEST\"") != std::string::npos);
+    CHECK(body.find("adtcore:type=\"CLAS/OC\"") != std::string::npos);
+    CHECK(body.find("adtcore:name=\"ZCL_TEST\"") != std::string::npos);
+}
+
+TEST_CASE("ActivateObject: sync 200 with error messages", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationWithErrorsXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_BROKEN";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().total == 2);
+    CHECK(result.Value().failed == 1);
+    CHECK(result.Value().activated == 1);
+    CHECK(result.Value().error_messages.size() == 2);
+    CHECK(result.Value().error_messages[0] == "Syntax error in class ZCL_BROKEN");
+    CHECK(result.Value().error_messages[1] == "Unused variable X");
+}
+
+TEST_CASE("ActivateObject: async 202 with poll success", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"Location", "/poll/activation/abc"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Completed, kActivationSuccessXml,
+                   std::chrono::milliseconds{2000}}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed == 0);
+
+    REQUIRE(session.PollCallCount() == 1);
+    CHECK(session.PollCalls()[0].location_url == "/poll/activation/abc");
+}
+
+TEST_CASE("ActivateObject: async 202 poll failure returns error", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"Location", "/poll/xyz"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Failed, "", std::chrono::milliseconds{500}}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message == "async activation operation failed");
+    CHECK(result.Error().category == ErrorCategory::ActivationError);
+}
+
+TEST_CASE("ActivateObject: HTTP error propagated", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {500, {}, "Internal Server Error"}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status.value() == 500);
+}
+
+TEST_CASE("ActivateObject: CSRF error propagated", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Err(
+        Error{"FetchCsrfToken", "", std::nullopt, "csrf failed", std::nullopt}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message == "csrf failed");
+}
+
+TEST_CASE("ActivateObject: empty URI returns error", "[adt][activation]") {
+    MockAdtSession session;
+
+    ActivateObjectParams params;  // uri is empty
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message == "URI is required for activation");
+}
+
+TEST_CASE("ActivateObject: optional type and name omitted from XML", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/ZCL_TEST";
+    // type and name intentionally left empty
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+
+    // Verify type/name attributes are not in the request XML.
+    auto& body = session.PostCalls()[0].body;
+    CHECK(body.find("adtcore:uri=\"/sap/bc/adt/oo/classes/ZCL_TEST\"") != std::string::npos);
+    CHECK(body.find("adtcore:type=") == std::string::npos);
+    CHECK(body.find("adtcore:name=") == std::string::npos);
+}

@@ -4,6 +4,7 @@
 #include <erpl_adt/core/ansi.hpp>
 #include <erpl_adt/core/terminal.hpp>
 
+#include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/adt_session.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
@@ -40,7 +41,7 @@ namespace {
 // ---------------------------------------------------------------------------
 
 const std::set<std::string> kNewStyleGroups = {
-    "search", "object", "source", "test", "check",
+    "activate", "search", "object", "source", "test", "check",
     "transport", "ddic", "package", "discover"};
 
 constexpr const char* kCredsFile = ".adt.creds";
@@ -311,6 +312,65 @@ Result<std::string, Error> ResolveObjectUri(IAdtSession& session,
     err.message = "No exact match for '" + name_or_uri + "'. Did you mean: " + suggestions;
     err.category = ErrorCategory::NotFound;
     return Result<std::string, Error>::Err(std::move(err));
+}
+
+// ---------------------------------------------------------------------------
+// ResolveObjectInfo — resolve object name to full SearchResult
+// ---------------------------------------------------------------------------
+Result<SearchResult, Error> ResolveObjectInfo(IAdtSession& session,
+                                              const std::string& name_or_uri) {
+    // Already a URI — return with just uri set.
+    if (name_or_uri.find("/sap/bc/adt/") == 0) {
+        SearchResult sr;
+        sr.uri = name_or_uri;
+        return Result<SearchResult, Error>::Ok(std::move(sr));
+    }
+
+    // Search for the object by name.
+    SearchOptions opts;
+    opts.query = name_or_uri;
+    opts.max_results = 10;
+    auto result = SearchObjects(session, opts);
+    if (result.IsErr()) {
+        return Result<SearchResult, Error>::Err(std::move(result).Error());
+    }
+
+    const auto& items = result.Value();
+
+    // Look for an exact name match (case-insensitive).
+    std::string upper_name = name_or_uri;
+    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+
+    for (const auto& item : items) {
+        std::string upper_item = item.name;
+        std::transform(upper_item.begin(), upper_item.end(), upper_item.begin(),
+                       [](unsigned char c) { return std::toupper(c); });
+        if (upper_item == upper_name) {
+            return Result<SearchResult, Error>::Ok(SearchResult(item));
+        }
+    }
+
+    // No exact match.
+    if (items.empty()) {
+        Error err;
+        err.operation = "ResolveObjectInfo";
+        err.message = "Object not found: " + name_or_uri;
+        err.category = ErrorCategory::NotFound;
+        return Result<SearchResult, Error>::Err(std::move(err));
+    }
+
+    // Build suggestion list.
+    std::string suggestions;
+    for (size_t i = 0; i < items.size() && i < 5; ++i) {
+        if (i > 0) suggestions += ", ";
+        suggestions += items[i].name;
+    }
+    Error err;
+    err.operation = "ResolveObjectInfo";
+    err.message = "No exact match for '" + name_or_uri + "'. Did you mean: " + suggestions;
+    err.category = ErrorCategory::NotFound;
+    return Result<SearchResult, Error>::Err(std::move(err));
 }
 
 // ---------------------------------------------------------------------------
@@ -708,6 +768,9 @@ int HandleSourceWrite(const CommandArgs& args) {
     }
     auto handle_str = GetFlag(args, "handle");
 
+    // Derive object URI for --activate flag (needed in both paths).
+    std::string obj_uri_for_activate;
+
     if (!handle_str.empty()) {
         // Explicit handle: use it directly (advanced / session-file mode).
         auto handle_result = LockHandle::Create(handle_str);
@@ -722,6 +785,12 @@ int HandleSourceWrite(const CommandArgs& args) {
             return result.Error().ExitCode();
         }
         MaybeSaveSession(*session, args);
+
+        // Try to derive object URI from source URI for activation.
+        auto slash_pos = std::string(args.positional[0]).find("/source/");
+        if (slash_pos != std::string::npos) {
+            obj_uri_for_activate = std::string(args.positional[0]).substr(0, slash_pos);
+        }
     } else {
         // Auto-lock mode: derive object URI, lock → write → unlock.
         auto source_uri = args.positional[0];
@@ -733,6 +802,7 @@ int HandleSourceWrite(const CommandArgs& args) {
             return 99;
         }
         auto obj_uri_str = source_uri.substr(0, slash_pos);
+        obj_uri_for_activate = obj_uri_str;
         auto obj_uri = ObjectUri::Create(obj_uri_str);
         if (obj_uri.IsErr()) {
             fmt.PrintError(MakeValidationError("Invalid object URI: " + obj_uri.Error()));
@@ -757,6 +827,24 @@ int HandleSourceWrite(const CommandArgs& args) {
     }
 
     fmt.PrintSuccess("Source written: " + args.positional[0]);
+
+    // Optional activation after successful write.
+    if (HasFlag(args, "activate") && !obj_uri_for_activate.empty()) {
+        ActivateObjectParams act_params;
+        act_params.uri = obj_uri_for_activate;
+        auto act_result = ActivateObject(*session, act_params);
+        if (act_result.IsErr()) {
+            fmt.PrintError(act_result.Error());
+            return act_result.Error().ExitCode();
+        }
+        if (act_result.Value().failed > 0) {
+            for (const auto& msg : act_result.Value().error_messages) {
+                std::cerr << "  Activation warning: " << msg << "\n";
+            }
+        }
+        fmt.PrintSuccess("Activated: " + obj_uri_for_activate);
+    }
+
     return 0;
 }
 
@@ -803,6 +891,65 @@ int HandleSourceCheck(const CommandArgs& args) {
             }
             fmt.PrintTable(headers, rows);
         }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// activate run
+// ---------------------------------------------------------------------------
+int HandleActivateRun(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing object name or URI. Usage: erpl-adt activate <name-or-uri>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+
+    auto info_result = ResolveObjectInfo(*session, args.positional[0]);
+    if (info_result.IsErr()) {
+        fmt.PrintError(info_result.Error());
+        return info_result.Error().ExitCode();
+    }
+
+    const auto& info = info_result.Value();
+    ActivateObjectParams params;
+    params.uri = info.uri;
+    params.type = info.type;
+    params.name = info.name;
+
+    auto result = ActivateObject(*session, params);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& act = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["activated"] = act.activated;
+        j["failed"] = act.failed;
+        nlohmann::json msgs = nlohmann::json::array();
+        for (const auto& m : act.error_messages) {
+            msgs.push_back(m);
+        }
+        j["error_messages"] = msgs;
+        fmt.PrintJson(j.dump());
+    } else {
+        if (act.failed > 0) {
+            std::cerr << "Activation completed with " << act.failed << " error(s)\n";
+            for (const auto& m : act.error_messages) {
+                std::cerr << "  " << m << "\n";
+            }
+            return 5;
+        }
+        fmt.PrintSuccess("Activated: " + args.positional[0]);
     }
     return 0;
 }
@@ -1423,7 +1570,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
 
     // Group ordering.
     const std::vector<std::string> group_order = {
-        "search", "object", "source", "test", "check",
+        "search", "object", "source", "activate", "test", "check",
         "transport", "ddic", "package", "discover"};
 
     // Group display names and short descriptions (overrides for cleaner display).
@@ -1435,6 +1582,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"search",    {"SEARCH", ""}},
         {"object",    {"OBJECT", ""}},
         {"source",    {"SOURCE", ""}},
+        {"activate",  {"ACTIVATE", ""}},
         {"test",      {"TEST", ""}},
         {"check",     {"CHECK", ""}},
         {"transport", {"TRANSPORT", ""}},
@@ -1649,7 +1797,7 @@ void PrintLogoutHelp(std::ostream& out, bool color) {
 bool IsBooleanFlag(std::string_view arg) {
     return arg == "--color" || arg == "--no-color" ||
            arg == "--json" || arg == "--https" || arg == "--insecure" ||
-           arg == "--help";
+           arg == "--help" || arg == "--activate";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -1682,6 +1830,12 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     // Group descriptions and examples
     // -----------------------------------------------------------------------
+    router.SetGroupDescription("activate", "Activate inactive ABAP objects");
+    router.SetGroupExamples("activate", {
+        "$ erpl-adt activate ZCL_MY_CLASS",
+        "$ erpl-adt --json activate /sap/bc/adt/oo/classes/zcl_my_class",
+    });
+
     router.SetGroupDescription("search", "Search for ABAP objects");
     router.SetGroupExamples("search", {
         "$ erpl-adt search \"ZCL_*\" --type=CLAS --max=50",
@@ -1747,6 +1901,25 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt discover services",
         "$ erpl-adt --json discover services",
     });
+
+    // -----------------------------------------------------------------------
+    // activate run (default action — "erpl-adt activate <name>" works)
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt activate <name-or-uri> [flags]";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
+        help.long_description = "Activates inactive ABAP objects. Accepts an object name or URI. "
+            "Names are resolved via search. Exit code 5 indicates activation failure.";
+        help.examples = {
+            "erpl-adt activate ZCL_MY_CLASS",
+            "erpl-adt activate /sap/bc/adt/oo/classes/zcl_my_class",
+            "erpl-adt --json activate ZCL_MY_CLASS",
+        };
+        router.Register("activate", "run", "Activate an ABAP object",
+                         HandleActivateRun, std::move(help));
+        router.SetDefaultAction("activate", "run");
+    }
 
     // -----------------------------------------------------------------------
     // search query (default action — "erpl-adt search <pattern>" works)
@@ -1890,15 +2063,18 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt source write <uri> --file <path> [flags]";
         help.args_description = "<uri>    Source URI (e.g., /sap/bc/adt/oo/classes/zcl_test/source/main)";
-        help.long_description = "Without --handle, the object is automatically locked, written, and unlocked.";
+        help.long_description = "Without --handle, the object is automatically locked, written, and unlocked. "
+            "Use --activate to activate the object after writing.";
         help.flags = {
             {"file", "<path>", "Path to local source file", true},
             {"handle", "<handle>", "Lock handle (skips auto-lock if provided)", false},
             {"transport", "<id>", "Transport request number", false},
             {"session-file", "<path>", "Session file for stateful workflow", false},
+            {"activate", "", "Activate the object after writing", false},
         };
         help.examples = {
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap",
+            "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --activate",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --handle=LOCK_HANDLE --transport=NPLK900001",
         };
         router.Register("source", "write", "Write source code",

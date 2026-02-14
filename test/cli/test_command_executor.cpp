@@ -64,11 +64,11 @@ TEST_CASE("RegisterAllCommands registers all expected groups",
     RegisterAllCommands(router);
     auto groups = router.Groups();
 
-    CHECK(groups.size() == 9);
+    CHECK(groups.size() == 10);
 
     // Verify all groups present (sorted).
     std::set<std::string> expected = {
-        "check", "ddic", "discover", "object", "package",
+        "activate", "check", "ddic", "discover", "object", "package",
         "search", "source", "test", "transport"
     };
     std::set<std::string> actual(groups.begin(), groups.end());

@@ -32,6 +32,12 @@ erpl-adt source read /sap/bc/adt/oo/classes/zcl_my_class/source/main
 # Write source code (auto-locks, writes, unlocks)
 erpl-adt source write /sap/bc/adt/oo/classes/zcl_my_class/source/main --file impl.abap
 
+# Write and activate in one step
+erpl-adt source write /sap/bc/adt/oo/classes/zcl_my_class/source/main --file impl.abap --activate
+
+# Activate an object by name
+erpl-adt activate ZCL_MY_CLASS
+
 # Run unit tests and ATC checks (by name or URI)
 erpl-adt test ZCL_MY_CLASS
 erpl-adt check ZCL_MY_CLASS --variant DEFAULT
@@ -101,6 +107,10 @@ SOURCE — Read, write, and check ABAP source code
       --handle <handle>                   Lock handle (skips auto-lock if provided)
       --transport <id>                    Transport request number
       --session-file <path>               Session file for stateful workflow
+      --activate                          Activate the object after writing
+
+ACTIVATE — Activate inactive ABAP objects
+  activate <name-or-uri>                  Activate an ABAP object
 
 TEST — Run ABAP Unit tests
   test <name-or-uri>                      Run ABAP unit tests
