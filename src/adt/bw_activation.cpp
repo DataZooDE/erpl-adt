@@ -8,7 +8,7 @@ namespace erpl_adt {
 
 namespace {
 
-const char* kBwActivationPath = "/sap/bw/modeling/massact";
+const char* kBwActivationPath = "/sap/bw/modeling/activation";
 
 std::string BuildActivationXml(const BwActivateOptions& options) {
     std::string xml = R"(<bwActivation:objects xmlns:bwActivation="http://www.sap.com/bw/massact")";

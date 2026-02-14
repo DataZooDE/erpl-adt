@@ -87,11 +87,51 @@ TEST_CASE("BwResolveEndpoint: finds matching service", "[adt][bw][discovery]") {
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
                               "/sap/bw/modeling/adso/{adsonm}/{version}", ""});
     disc.services.push_back({"http://www.sap.com/bw/modeling/repo", "bwSearch",
-                              "/sap/bw/modeling/is/bwsearch", ""});
+                              "/sap/bw/modeling/repo/is/bwsearch", ""});
 
     auto result = BwResolveEndpoint(disc, "http://www.sap.com/bw/modeling/repo", "bwSearch");
     REQUIRE(result.IsOk());
-    CHECK(result.Value() == "/sap/bw/modeling/is/bwsearch");
+    CHECK(result.Value() == "/sap/bw/modeling/repo/is/bwsearch");
+}
+
+TEST_CASE("BwDiscover: parses real SAP BW/4HANA discovery XML", "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwDiscover(mock);
+    REQUIRE(result.IsOk());
+
+    const auto& disc = result.Value();
+    REQUIRE(disc.services.size() > 10);
+
+    // Verify key services are found
+    bool has_adso = false;
+    bool has_search = false;
+    bool has_iobj = false;
+    for (const auto& s : disc.services) {
+        if (s.term == "adso") has_adso = true;
+        if (s.term == "bwSearch") has_search = true;
+        if (s.term == "iobj") has_iobj = true;
+    }
+    CHECK(has_adso);
+    CHECK(has_search);
+    CHECK(has_iobj);
+}
+
+TEST_CASE("BwResolveEndpoint: finds service in real discovery", "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto disc_result = BwDiscover(mock);
+    REQUIRE(disc_result.IsOk());
+
+    auto search_result = BwResolveEndpoint(
+        disc_result.Value(),
+        "http://www.sap.com/bw/modeling/repo", "bwSearch");
+    REQUIRE(search_result.IsOk());
+    CHECK(search_result.Value().find("bwsearch") != std::string::npos);
 }
 
 TEST_CASE("BwResolveEndpoint: not found returns error", "[adt][bw][discovery]") {

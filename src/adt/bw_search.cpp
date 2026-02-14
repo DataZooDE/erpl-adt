@@ -8,7 +8,7 @@ namespace erpl_adt {
 
 namespace {
 
-const char* kBwSearchPath = "/sap/bw/modeling/is/bwsearch";
+const char* kBwSearchPath = "/sap/bw/modeling/repo/is/bwsearch";
 
 std::string BuildSearchUrl(const BwSearchOptions& options) {
     std::string url = std::string(kBwSearchPath) +

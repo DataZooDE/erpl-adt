@@ -8,23 +8,23 @@
       </categories>
       <link rel="http://www.sap.com/bw/modeling/adso" href="/sap/bw/modeling/adso/{adsonm}/{version}" type="application/vnd.sap.bw.modeling.adso-v1_2_0+xml"/>
     </collection>
-    <collection href="/sap/bw/modeling/iobj">
+    <collection href="/sap/bw/modeling/infoobject">
       <categories>
         <atom:category scheme="http://www.sap.com/bw/modeling/iobj" term="iobj"/>
       </categories>
-      <link rel="http://www.sap.com/bw/modeling/iobj" href="/sap/bw/modeling/iobj/{infoobject}/{version}" type="application/vnd.sap.bw.modeling.iobj+xml"/>
+      <link rel="http://www.sap.com/bw/modeling/iobj" href="/sap/bw/modeling/infoobject/{infoobject}/{version}" type="application/vnd.sap.bw.modeling.iobj+xml"/>
     </collection>
-    <collection href="/sap/bw/modeling/is/bwsearch">
+    <collection href="/sap/bw/modeling/repo/is/bwsearch">
       <categories>
         <atom:category scheme="http://www.sap.com/bw/modeling/repo" term="bwSearch"/>
       </categories>
-      <link rel="http://www.sap.com/bw/modeling/repo/is/bwsearch" href="/sap/bw/modeling/is/bwsearch" type="application/atom+xml"/>
+      <link rel="http://www.sap.com/bw/modeling/repo/is/bwsearch" href="/sap/bw/modeling/repo/is/bwsearch" type="application/atom+xml"/>
     </collection>
-    <collection href="/sap/bw/modeling/massact">
+    <collection href="/sap/bw/modeling/activation">
       <categories>
         <atom:category scheme="http://www.sap.com/bw/modeling/activation" term="activate"/>
       </categories>
-      <link rel="massact" href="/sap/bw/modeling/massact" type="application/vnd.sap-bw-modeling.massact+xml"/>
+      <link rel="massact" href="/sap/bw/modeling/activation" type="application/vnd.sap-bw-modeling.massact+xml"/>
     </collection>
     <collection href="/sap/bw/modeling/cto">
       <categories>

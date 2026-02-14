@@ -17,6 +17,35 @@ std::string ToLower(std::string s) {
     return s;
 }
 
+// Default content-type versions for known BW object types.
+// These match what SAP BW/4HANA systems advertise in discovery.
+// The Eclipse BW plugin uses the same approach: hardcoded defaults
+// overridable by discovery-resolved content types.
+std::string GetDefaultAcceptType(const std::string& tlogo) {
+    auto lower = ToLower(tlogo);
+    // Object-type versions from the BW content-type catalog
+    if (lower == "adso")   return "application/vnd.sap.bw.modeling.adso-v1_2_0+xml";
+    if (lower == "iobj")   return "application/xml";  // InfoObject uses plain XML
+    if (lower == "hcpr")   return "application/vnd.sap.bw.modeling.hcpr-v1_2_0+xml";
+    if (lower == "trfn")   return "application/vnd.sap.bw.modeling.trfn-v1_0_0+xml";
+    if (lower == "dtpa")   return "application/vnd.sap.bw.modeling.dtpa-v1_0_0+xml";
+    if (lower == "rsds")   return "application/vnd.sap.bw.modeling.rsds+xml";
+    if (lower == "lsys")   return "application/vnd.sap.bw.modeling.lsys-v1_1_0+xml";
+    if (lower == "query")  return "application/vnd.sap.bw.modeling.query-v1_10_0+xml";
+    if (lower == "dest")   return "application/vnd.sap.bw.modeling.dest-v1_0_0+xml";
+    if (lower == "fbp")    return "application/vnd.sap.bw.modeling.fbp-v1_0_0+xml";
+    if (lower == "dmod")   return "application/vnd.sap.bw.modeling.dmod-v1_0_0+xml";
+    if (lower == "trcs")   return "application/vnd.sap.bw.modeling.trcs-v1_0_0+xml";
+    if (lower == "doca")   return "application/vnd.sap.bw.modeling.doca-v1_0_0+xml";
+    if (lower == "segr")   return "application/vnd.sap.bw.modeling.segr-v1_0_0+xml";
+    if (lower == "area")   return "application/vnd.sap.bw.modeling.area-v1_0_0+xml";
+    if (lower == "ctrt")   return "application/vnd.sap.bw.modeling.ctrt-v1_0_0+xml";
+    if (lower == "uomt")   return "application/vnd.sap.bw.modeling.uomt-v1_0_0+xml";
+    if (lower == "thjt")   return "application/vnd.sap.bw.modeling.thjt-v1_0_0+xml";
+    // Fallback: unversioned vendor type
+    return "application/vnd.sap.bw.modeling." + lower + "+xml";
+}
+
 std::string BuildObjectPath(const std::string& type, const std::string& name,
                             const std::string& version = "") {
     std::string path = std::string(kBwModelingBase) + ToLower(type) + "/" + name;
@@ -166,8 +195,7 @@ Result<BwObjectMetadata, Error> BwReadObject(
     }
 
     HttpHeaders headers;
-    headers["Accept"] = "application/vnd.sap.bw.modeling." +
-                        ToLower(options.object_type) + "+xml";
+    headers["Accept"] = GetDefaultAcceptType(options.object_type);
 
     auto response = session.Get(path, headers);
     if (response.IsErr()) {
@@ -285,8 +313,7 @@ Result<void, Error> BwSaveObject(
         save_url += "&timestamp=" + options.timestamp;
     }
 
-    auto content_type = "application/vnd.sap.bw.modeling." +
-                        ToLower(options.object_type) + "+xml";
+    auto content_type = GetDefaultAcceptType(options.object_type);
 
     auto response = session.Put(save_url, options.content, content_type);
     if (response.IsErr()) {

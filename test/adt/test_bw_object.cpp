@@ -70,7 +70,7 @@ TEST_CASE("BwReadObject: sends correct path and Accept header", "[adt][bw][objec
 
     REQUIRE(mock.GetCallCount() == 1);
     CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/adso/ZSALES/m");
-    CHECK(mock.GetCalls()[0].headers.at("Accept") == "application/vnd.sap.bw.modeling.adso+xml");
+    CHECK(mock.GetCalls()[0].headers.at("Accept") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
 }
 
 TEST_CASE("BwReadObject: source system adds path segment", "[adt][bw][object]") {
@@ -251,7 +251,7 @@ TEST_CASE("BwSaveObject: sends correct URL and content", "[adt][bw][object]") {
     CHECK(put.path.find("corrNr=K900001") != std::string::npos);
     CHECK(put.path.find("timestamp=20260214120000") != std::string::npos);
     CHECK(put.body == "<adso/>");
-    CHECK(put.content_type == "application/vnd.sap.bw.modeling.adso+xml");
+    CHECK(put.content_type == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
 }
 
 TEST_CASE("BwSaveObject: empty lock handle returns error", "[adt][bw][object]") {

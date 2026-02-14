@@ -142,7 +142,7 @@ TEST_CASE("BwSearchObjects: HTTP error propagated", "[adt][bw][search]") {
 TEST_CASE("BwSearchObjects: connection error propagated", "[adt][bw][search]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Err(Error{
-        "Get", "/sap/bw/modeling/is/bwsearch",
+        "Get", "/sap/bw/modeling/repo/is/bwsearch",
         std::nullopt, "Connection refused", std::nullopt}));
 
     auto result = BwSearchObjects(mock, MakeSearchOptions("Z*"));

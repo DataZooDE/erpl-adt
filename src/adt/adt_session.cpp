@@ -67,7 +67,8 @@ httplib::Headers BuildRequestHeaders(
 struct AdtSession::Impl {
     std::unique_ptr<httplib::Client> client;
     std::string sap_client;
-    std::optional<std::string> csrf_token;
+    std::optional<std::string> csrf_token;       // ADT paths (/sap/bc/adt/)
+    std::optional<std::string> bw_csrf_token_;   // BW paths (/sap/bw/modeling/)
     AdtSessionOptions options;
     bool stateful_ = false;
     std::string sap_context_id_;
@@ -92,6 +93,18 @@ struct AdtSession::Impl {
         if (use_https && opts.disable_tls_verify) {
             client->enable_server_certificate_verification(false);
         }
+    }
+
+    // Check if a request path targets the BW Modeling API.
+    static bool IsBwPath(std::string_view path) {
+        // "/sap/bw/modeling/" = 17 chars
+        return path.substr(0, 17) == "/sap/bw/modeling/" ||
+               path == "/sap/bw/modeling";
+    }
+
+    // Return the appropriate CSRF token for the given request path.
+    const std::optional<std::string>& CsrfTokenFor(std::string_view path) const {
+        return IsBwPath(path) ? bw_csrf_token_ : csrf_token;
     }
 
     // Capture sap-contextid from response headers for stateful sessions.
@@ -174,8 +187,8 @@ struct AdtSession::Impl {
     // Execute a GET, returning our HttpResponse.
     Result<HttpResponse, Error> DoGet(std::string_view path,
                                       const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, csrf_token,
-                                        cookies_);
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+                                        CsrfTokenFor(path), cookies_);
         InjectStatefulHeaders(hdrs);
         LogInfo("http", "GET " + std::string(path));
         LogRequestHeaders(hdrs);
@@ -198,8 +211,8 @@ struct AdtSession::Impl {
                                        std::string_view body,
                                        std::string_view content_type,
                                        const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, csrf_token,
-                                        cookies_);
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+                                        CsrfTokenFor(path), cookies_);
         InjectStatefulHeaders(hdrs);
         LogInfo("http", "POST " + std::string(path));
         LogRequestHeaders(hdrs);
@@ -223,8 +236,8 @@ struct AdtSession::Impl {
                                       std::string_view body,
                                       std::string_view content_type,
                                       const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, csrf_token,
-                                        cookies_);
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+                                        CsrfTokenFor(path), cookies_);
         InjectStatefulHeaders(hdrs);
         LogInfo("http", "PUT " + std::string(path));
         LogRequestHeaders(hdrs);
@@ -246,8 +259,8 @@ struct AdtSession::Impl {
     // Execute a DELETE, returning our HttpResponse.
     Result<HttpResponse, Error> DoDelete(std::string_view path,
                                          const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, csrf_token,
-                                        cookies_);
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+                                        CsrfTokenFor(path), cookies_);
         InjectStatefulHeaders(hdrs);
         LogInfo("http", "DELETE " + std::string(path));
         LogRequestHeaders(hdrs);
@@ -265,20 +278,29 @@ struct AdtSession::Impl {
             res->status, ToHttpHeaders(res->headers), res->body});
     }
 
-    // Fetch a new CSRF token via GET /sap/bc/adt/discovery.
-    Result<std::string, Error> DoFetchCsrfToken() {
+    // Fetch a new CSRF token. When request_path targets BW, fetch from
+    // /sap/bw/modeling/discovery; otherwise /sap/bc/adt/discovery. SAP
+    // scopes CSRF tokens per application path — an ADT token is rejected
+    // by the BW endpoint and vice versa.
+    Result<std::string, Error> DoFetchCsrfToken(
+            std::string_view request_path = "") {
+        const bool bw = IsBwPath(request_path);
+        const std::string fetch_path = bw
+            ? "/sap/bw/modeling/discovery"
+            : "/sap/bc/adt/discovery";
+
         HttpHeaders extra;
         extra["x-csrf-token"] = "fetch";
         auto hdrs = BuildRequestHeaders(extra, sap_client, std::nullopt,
                                         cookies_);
         InjectStatefulHeaders(hdrs);
 
-        LogInfo("http", "GET /sap/bc/adt/discovery (CSRF fetch)");
+        LogInfo("http", "GET " + fetch_path + " (CSRF fetch)");
         LogRequestHeaders(hdrs);
-        auto res = client->Get("/sap/bc/adt/discovery", hdrs);
+        auto res = client->Get(fetch_path, hdrs);
         if (!res) {
             return Result<std::string, Error>::Err(
-                MakeSessionError("FetchCsrfToken", "/sap/bc/adt/discovery",
+                MakeSessionError("FetchCsrfToken", fetch_path,
                                  std::nullopt,
                                  "HTTP request failed: " +
                                      httplib::to_string(res.error())));
@@ -286,7 +308,7 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         if (res->status != 200) {
             return Result<std::string, Error>::Err(
-                MakeSessionError("FetchCsrfToken", "/sap/bc/adt/discovery",
+                MakeSessionError("FetchCsrfToken", fetch_path,
                                  res->status,
                                  "Expected 200, got " +
                                      std::to_string(res->status)));
@@ -302,13 +324,17 @@ struct AdtSession::Impl {
             std::transform(lower_key.begin(), lower_key.end(),
                            lower_key.begin(), ::tolower);
             if (lower_key == "x-csrf-token") {
-                csrf_token = value;
+                if (bw) {
+                    bw_csrf_token_ = value;
+                } else {
+                    csrf_token = value;
+                }
                 return Result<std::string, Error>::Ok(std::string(value));
             }
         }
 
         return Result<std::string, Error>::Err(
-            MakeSessionError("FetchCsrfToken", "/sap/bc/adt/discovery",
+            MakeSessionError("FetchCsrfToken", fetch_path,
                              res->status,
                              "No x-csrf-token header in response"));
     }
@@ -342,7 +368,7 @@ Result<HttpResponse, Error> AdtSession::Get(std::string_view path,
 
     // On 403, try re-fetching CSRF token and retry once.
     if (result.Value().status_code == 403) {
-        auto token_result = impl_->DoFetchCsrfToken();
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -360,8 +386,8 @@ Result<HttpResponse, Error> AdtSession::Post(std::string_view path,
                                              std::string_view content_type,
                                              const HttpHeaders& headers) {
     // Ensure we have a CSRF token for mutating requests.
-    if (!impl_->csrf_token.has_value()) {
-        auto token_result = impl_->DoFetchCsrfToken();
+    if (!impl_->CsrfTokenFor(path).has_value()) {
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -374,7 +400,7 @@ Result<HttpResponse, Error> AdtSession::Post(std::string_view path,
 
     // On 403, re-fetch CSRF token and retry once.
     if (result.Value().status_code == 403) {
-        auto token_result = impl_->DoFetchCsrfToken();
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -390,8 +416,8 @@ Result<HttpResponse, Error> AdtSession::Post(std::string_view path,
 Result<HttpResponse, Error> AdtSession::Delete(std::string_view path,
                                                const HttpHeaders& headers) {
     // Ensure we have a CSRF token for mutating requests.
-    if (!impl_->csrf_token.has_value()) {
-        auto token_result = impl_->DoFetchCsrfToken();
+    if (!impl_->CsrfTokenFor(path).has_value()) {
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -404,7 +430,7 @@ Result<HttpResponse, Error> AdtSession::Delete(std::string_view path,
 
     // On 403, re-fetch CSRF token and retry once.
     if (result.Value().status_code == 403) {
-        auto token_result = impl_->DoFetchCsrfToken();
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -422,8 +448,8 @@ Result<HttpResponse, Error> AdtSession::Put(std::string_view path,
                                             std::string_view content_type,
                                             const HttpHeaders& headers) {
     // Ensure we have a CSRF token for mutating requests.
-    if (!impl_->csrf_token.has_value()) {
-        auto token_result = impl_->DoFetchCsrfToken();
+    if (!impl_->CsrfTokenFor(path).has_value()) {
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
@@ -436,7 +462,7 @@ Result<HttpResponse, Error> AdtSession::Put(std::string_view path,
 
     // On 403, re-fetch CSRF token and retry once.
     if (result.Value().status_code == 403) {
-        auto token_result = impl_->DoFetchCsrfToken();
+        auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
         }
