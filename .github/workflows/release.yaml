@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
@@ -154,6 +155,101 @@ jobs:
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
+
+      - name: Upload binary for wheel packaging
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }}
+          path: build/${{ matrix.binary }}
+
+  pypi-wheels:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Build Python Wheels
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Build wheels for each platform
+        run: |
+          pip install ./bin-to-wheel
+
+          mkdir -p dist
+
+          platforms=("linux-x86_64:erpl-adt" "macos-arm64:erpl-adt" "macos-x86_64:erpl-adt" "windows-x64:erpl-adt.exe")
+          for entry in "${platforms[@]}"; do
+            platform="${entry%%:*}"
+            binary_name="${entry##*:}"
+            binary_path="binaries/binary-${platform}/${binary_name}"
+
+            if [ ! -f "$binary_path" ]; then
+              echo "::warning::Binary not found: $binary_path"
+              continue
+            fi
+
+            chmod +x "$binary_path" 2>/dev/null || true
+
+            python -m bin_to_wheel \
+              --name erpl-adt \
+              --version "${{ steps.version.outputs.version }}" \
+              --binary "$binary_path" \
+              --platform "$platform" \
+              --output-dir dist \
+              --entry-point erpl-adt \
+              --description "CLI for SAP ADT REST API" \
+              --author "DataZoo GmbH" \
+              --license Apache-2.0 \
+              --url https://github.com/DataZooDE/erpl-adt
+
+            echo "Built wheel for $platform"
+          done
+
+          echo "Wheels built:"
+          ls -la dist/*.whl
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-wheels
+          path: dist/*.whl
+
+  pypi-publish:
+    needs: pypi-wheels
+    runs-on: ubuntu-latest
+    name: Publish to PyPI
+    environment:
+      name: pypi
+      url: https://pypi.org/p/erpl-adt
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-wheels
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
     needs: build
