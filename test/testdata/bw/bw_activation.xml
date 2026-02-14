@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bwActivation:objects xmlns:bwActivation="http://www.sap.com/bw/massact"
+    bwChangeable="X" basisChangeable="X">
+  <object objectName="ZSALES_DATA" objectType="ADSO" objectVersion="A"
+      objectStatus="ACT" objectDesc="Sales DataStore Object"
+      activateObj="true" technicalObjectName="ZSALES_DATA"/>
+</bwActivation:objects>

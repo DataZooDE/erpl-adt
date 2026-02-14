@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messages>
+  <message severity="I" text="Activation started for ZSALES_DATA" objectName="ZSALES_DATA"/>
+  <message severity="W" text="Field AMOUNT has no aggregation rule" objectName="ZSALES_DATA"/>
+  <message severity="S" text="Activation completed successfully" objectName="ZSALES_DATA"/>
+</messages>

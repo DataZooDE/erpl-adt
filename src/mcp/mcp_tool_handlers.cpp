@@ -1,5 +1,11 @@
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
 
+#include <erpl_adt/adt/bw_activation.hpp>
+#include <erpl_adt/adt/bw_discovery.hpp>
+#include <erpl_adt/adt/bw_jobs.hpp>
+#include <erpl_adt/adt/bw_object.hpp>
+#include <erpl_adt/adt/bw_search.hpp>
+#include <erpl_adt/adt/bw_transport.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -890,6 +896,358 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             {"transport_number"}),
         [&session](const nlohmann::json& params) {
             return HandleReleaseTransport(session, params);
+        });
+
+    // === BW Modeling tools ===
+
+    registry.Register(
+        "bw_discover",
+        "List available BW Modeling services. Returns scheme/term pairs and URIs "
+        "for all BW endpoints the system supports.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwDiscover(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& s : result.Value().services) {
+                j.push_back({{"scheme", s.scheme},
+                             {"term", s.term},
+                             {"href", s.href},
+                             {"content_type", s.content_type}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_search",
+        "Search the BW repository for modeling objects (ADSO, IOBJ, HCPR, TRFN, etc.). "
+        "Use wildcards (*). Returns object names, types, statuses, and URIs.",
+        MakeSchema(
+            {{"query", StringProp("Search pattern with wildcards (e.g., Z*, *SALES*)")},
+             {"object_type", StringProp("Filter by type: ADSO, HCPR, IOBJ, TRFN, DTPA, RSDS")},
+             {"max_results", IntProp("Maximum results (default: 100)")},
+             {"status", StringProp("Filter by status: ACT, INA, OFF")}},
+            {"query"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto query = RequireString(params, "query", err);
+            if (!query) return err;
+
+            BwSearchOptions opts;
+            opts.query = *query;
+            opts.max_results = OptInt(params, "max_results", 100);
+            auto obj_type = OptString(params, "object_type");
+            if (!obj_type.empty()) opts.object_type = obj_type;
+            auto status = OptString(params, "status");
+            if (!status.empty()) opts.object_status = status;
+
+            auto result = BwSearchObjects(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& r : result.Value()) {
+                j.push_back({{"name", r.name},
+                             {"type", r.type},
+                             {"description", r.description},
+                             {"version", r.version},
+                             {"status", r.status},
+                             {"uri", r.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_object",
+        "Read a BW object definition. Returns metadata including name, type, "
+        "description, status, package. Use version='m' for inactive version.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type code (ADSO, IOBJ, TRFN, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"version", StringProp("Version: a (active, default), m (modified), d (delivery)")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            BwReadOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            opts.version = OptString(params, "version", "a");
+
+            auto result = BwReadObject(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& meta = result.Value();
+            nlohmann::json j;
+            j["name"] = meta.name;
+            j["type"] = meta.type;
+            j["description"] = meta.description;
+            j["version"] = meta.version;
+            j["status"] = meta.status;
+            j["package"] = meta.package_name;
+            j["last_changed_by"] = meta.last_changed_by;
+            j["last_changed_at"] = meta.last_changed_at;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_lock_object",
+        "Lock a BW object for editing. Returns lock handle and transport info. "
+        "Requires stateful session.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type (ADSO, IOBJ, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"activity", StringProp("Activity: CHAN (default), DELE, MAIN")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+            auto activity = OptString(params, "activity", "CHAN");
+
+            session.SetStateful(true);
+            auto result = BwLockObject(session, *obj_type, *obj_name, activity);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& lock = result.Value();
+            nlohmann::json j;
+            j["lock_handle"] = lock.lock_handle;
+            j["transport"] = lock.transport_number;
+            j["timestamp"] = lock.timestamp;
+            j["package"] = lock.package_name;
+            j["is_local"] = lock.is_local;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_unlock_object",
+        "Release a lock on a BW object.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type")},
+             {"object_name", StringProp("Object name")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            auto result = BwUnlockObject(session, *obj_type, *obj_name);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            return MakeOkResult({{"status", "unlocked"}});
+        });
+
+    registry.Register(
+        "bw_save_object",
+        "Save a modified BW object. Requires prior lock.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type")},
+             {"object_name", StringProp("Object name")},
+             {"content", StringProp("Modified XML content")},
+             {"lock_handle", StringProp("Lock handle from bw_lock_object")},
+             {"transport", StringProp("Transport request number")}},
+            {"object_type", "object_name", "content", "lock_handle"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+            auto content = RequireString(params, "content", err);
+            if (!content) return err;
+            auto handle = RequireString(params, "lock_handle", err);
+            if (!handle) return err;
+
+            BwSaveOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            opts.content = *content;
+            opts.lock_handle = *handle;
+            opts.transport = OptString(params, "transport");
+
+            auto result = BwSaveObject(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            return MakeOkResult({{"status", "saved"}});
+        });
+
+    registry.Register(
+        "bw_delete_object",
+        "Delete a BW object. Requires lock handle.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type")},
+             {"object_name", StringProp("Object name")},
+             {"lock_handle", StringProp("Lock handle")},
+             {"transport", StringProp("Transport request number")}},
+            {"object_type", "object_name", "lock_handle"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+            auto handle = RequireString(params, "lock_handle", err);
+            if (!handle) return err;
+
+            auto result = BwDeleteObject(session, *obj_type, *obj_name,
+                                          *handle, OptString(params, "transport"));
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            return MakeOkResult({{"status", "deleted"}});
+        });
+
+    registry.Register(
+        "bw_activate",
+        "Activate BW objects. Supports validate (pre-check), simulate (dry run), "
+        "and background modes. Can activate multiple objects at once.",
+        MakeSchema(
+            {{"objects", {{"type", "array"},
+                          {"items", {{"type", "object"},
+                                     {"properties", {{"name", StringProp("Object name")},
+                                                     {"type", StringProp("Object type")}}},
+                                     {"required", nlohmann::json::array({"name", "type"})}}},
+                          {"description", "List of objects to activate"}}},
+             {"mode", StringProp("Mode: activate (default), validate, simulate, background")},
+             {"force", {{"type", "boolean"}, {"description", "Force activation with warnings"}}},
+             {"transport", StringProp("Transport request number")}},
+            {"objects"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            if (!params.contains("objects") || !params["objects"].is_array()) {
+                return MakeParamError("Missing required parameter: objects");
+            }
+
+            BwActivateOptions opts;
+            for (const auto& obj : params["objects"]) {
+                BwActivationObject ao;
+                ao.name = obj.value("name", "");
+                ao.type = obj.value("type", "");
+                if (ao.name.empty() || ao.type.empty()) continue;
+                ao.uri = "/sap/bw/modeling/" + ao.type + "/" + ao.name + "/m";
+                opts.objects.push_back(std::move(ao));
+            }
+
+            auto mode = OptString(params, "mode", "activate");
+            if (mode == "validate") opts.mode = BwActivationMode::Validate;
+            else if (mode == "simulate") opts.mode = BwActivationMode::Simulate;
+            else if (mode == "background") opts.mode = BwActivationMode::Background;
+
+            if (params.contains("force") && params["force"].is_boolean()) {
+                opts.force = params["force"].get<bool>();
+            }
+            auto transport = OptString(params, "transport");
+            if (!transport.empty()) opts.transport = transport;
+
+            auto result = BwActivateObjects(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& act = result.Value();
+            nlohmann::json j;
+            j["success"] = act.success;
+            if (!act.job_guid.empty()) j["job_guid"] = act.job_guid;
+            nlohmann::json msgs = nlohmann::json::array();
+            for (const auto& m : act.messages) {
+                msgs.push_back({{"severity", m.severity},
+                                {"text", m.text},
+                                {"object_name", m.object_name}});
+            }
+            j["messages"] = msgs;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_transport_check",
+        "Check BW transport state. Shows changeability, transport requests, "
+        "and object lock states.",
+        MakeSchema(
+            {{"own_only", {{"type", "boolean"},
+                           {"description", "Show only own transport requests"}}}},
+            {}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            bool own_only = params.contains("own_only") &&
+                            params["own_only"].is_boolean() &&
+                            params["own_only"].get<bool>();
+
+            auto result = BwTransportCheck(session, own_only);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& tr = result.Value();
+            nlohmann::json j;
+            j["writing_enabled"] = tr.writing_enabled;
+
+            nlohmann::json reqs = nlohmann::json::array();
+            for (const auto& r : tr.requests) {
+                reqs.push_back({{"number", r.number},
+                                {"function_type", r.function_type},
+                                {"status", r.status},
+                                {"description", r.description}});
+            }
+            j["requests"] = reqs;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_transport_write",
+        "Write a BW object to a transport request.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type")},
+             {"object_name", StringProp("Object name")},
+             {"transport", StringProp("Transport request number")},
+             {"package", StringProp("Package name")}},
+            {"object_type", "object_name", "transport"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+            auto transport = RequireString(params, "transport", err);
+            if (!transport) return err;
+
+            BwTransportWriteOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            opts.transport = *transport;
+            opts.package_name = OptString(params, "package");
+
+            auto result = BwTransportWrite(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& wr = result.Value();
+            nlohmann::json j;
+            j["success"] = wr.success;
+            j["messages"] = wr.messages;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_job_status",
+        "Get status of a BW background job. Status values: N (new), R (running), "
+        "E (error), W (warning), S (success).",
+        MakeSchema(
+            {{"job_guid", StringProp("25-character job GUID")}},
+            {"job_guid"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto guid = RequireString(params, "job_guid", err);
+            if (!guid) return err;
+
+            auto result = BwGetJobStatus(session, *guid);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& st = result.Value();
+            nlohmann::json j;
+            j["guid"] = st.guid;
+            j["status"] = st.status;
+            j["job_type"] = st.job_type;
+            j["description"] = st.description;
+            return MakeOkResult(j);
         });
 }
 

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bwCTO:transport xmlns:bwCTO="http://www.sap.com/bw/cto">
+  <changeability>
+    <setting name="ADSO" transportable="true" changeable="X" tlogo="ADSO"/>
+    <setting name="IOBJ" transportable="true" changeable="X" tlogo="IOBJ"/>
+    <setting name="TRFN" transportable="true" changeable="X" tlogo="TRFN"/>
+  </changeability>
+  <requests>
+    <request number="NPLK900001" functionType="K" status="D" description="BW Dev Request">
+      <task number="NPLK900002" functionType="S" status="D" owner="DEVELOPER"/>
+    </request>
+    <request number="NPLK900010" functionType="K" status="D" description="BW Transport"/>
+  </requests>
+  <objects>
+    <object name="ZSALES_DATA" type="ADSO" operation="I" uri="/sap/bw/modeling/adso/ZSALES_DATA">
+      <lock>
+        <request number="NPLK900001">
+          <task number="NPLK900002"/>
+        </request>
+      </lock>
+      <tadir status="active"/>
+    </object>
+  </objects>
+  <messages/>
+</bwCTO:transport>

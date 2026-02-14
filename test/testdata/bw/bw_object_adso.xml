@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<adso:adso xmlns:adso="http://www.sap.com/bw/modeling/adso"
+    description="Sales DataStore Object"
+    packageName="ZTEST"
+    changedBy="DEVELOPER"
+    changedAt="20260214120000">
+  <fields>
+    <field name="MATERIAL" type="CHAR" length="18" keyFlag="X"/>
+    <field name="PLANT" type="CHAR" length="4" keyFlag="X"/>
+    <field name="QUANTITY" type="DEC" length="13" decimals="3"/>
+    <field name="AMOUNT" type="CURR" length="15" decimals="2"/>
+  </fields>
+  <settings>
+    <setting name="writeInterface" value="standard"/>
+    <setting name="activationQueue" value="X"/>
+  </settings>
+</adso:adso>

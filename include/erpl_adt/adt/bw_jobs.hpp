@@ -1,0 +1,98 @@
+#pragma once
+
+#include <erpl_adt/adt/i_adt_session.hpp>
+#include <erpl_adt/core/result.hpp>
+
+#include <string>
+#include <vector>
+
+namespace erpl_adt {
+
+// ---------------------------------------------------------------------------
+// BwJobStatus — status of a background job.
+// ---------------------------------------------------------------------------
+struct BwJobStatus {
+    std::string guid;
+    std::string status;          // "N" new, "R" running, "E" error, "W" warning, "S" success
+    std::string job_type;        // e.g. "TLOGO_ACTIVATION"
+    std::string description;
+};
+
+// ---------------------------------------------------------------------------
+// BwJobProgress — progress of a background job.
+// ---------------------------------------------------------------------------
+struct BwJobProgress {
+    std::string guid;
+    int percentage = 0;
+    std::string status;
+    std::string description;
+};
+
+// ---------------------------------------------------------------------------
+// BwJobStep — a step in a background job.
+// ---------------------------------------------------------------------------
+struct BwJobStep {
+    std::string name;
+    std::string status;
+    std::string description;
+};
+
+// ---------------------------------------------------------------------------
+// BwJobMessage — a message from a background job.
+// ---------------------------------------------------------------------------
+struct BwJobMessage {
+    std::string severity;        // "E", "W", "I", "S"
+    std::string text;
+    std::string object_name;
+};
+
+// ---------------------------------------------------------------------------
+// BwGetJobStatus — get status of a background job.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}/status
+// Accept:   application/vnd.sap-bw-modeling.jobs.job.status+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwJobStatus, Error> BwGetJobStatus(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwGetJobProgress — get progress percentage of a background job.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}/progress
+// Accept:   application/vnd.sap-bw-modeling.jobs.job.progress+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwJobProgress, Error> BwGetJobProgress(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwGetJobSteps — get step details of a background job.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}/steps
+// Accept:   application/vnd.sap-bw-modeling.jobs.steps+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<std::vector<BwJobStep>, Error> BwGetJobSteps(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwGetJobMessages — get messages from a background job.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}/messages
+// Accept:   application/vnd.sap-bw-modeling.balmessages+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<std::vector<BwJobMessage>, Error> BwGetJobMessages(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwCancelJob — cancel a running background job.
+//
+// Endpoint: POST /sap/bw/modeling/jobs/{guid}/interrupt
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<void, Error> BwCancelJob(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+} // namespace erpl_adt

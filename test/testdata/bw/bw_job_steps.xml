@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<steps>
+  <step name="VALIDATE" status="S" description="Validation"/>
+  <step name="ACTIVATE" status="R" description="Activation"/>
+  <step name="GENERATE" status="N" description="Generation"/>
+</steps>

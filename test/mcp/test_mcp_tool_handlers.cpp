@@ -57,10 +57,10 @@ nlohmann::json ParseContent(const ToolResult& result) {
 // Registration
 // ===========================================================================
 
-TEST_CASE("RegisterAdtTools: registers 20 tools", "[mcp][handlers]") {
+TEST_CASE("RegisterAdtTools: registers 31 tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 20);
+    CHECK(registry.Tools().size() == 31);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -814,7 +814,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 20);
+    CHECK(tools.size() == 31);
 
     // Verify expected tool names are present.
     std::set<std::string> names;

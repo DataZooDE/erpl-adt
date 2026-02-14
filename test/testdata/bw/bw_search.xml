@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:bwModel="http://www.sap.com/bw/modeling">
+  <title>BW Search Results</title>
+  <entry>
+    <title>Sales DataStore Object</title>
+    <id>/sap/bw/modeling/adso/ZSALES_DATA/a</id>
+    <content type="application/xml">
+      <bwModel:searchResult objectName="ZSALES_DATA" objectType="ADSO"
+          objectSubtype="" objectVersion="A" objectStatus="ACT"
+          objectDesc="Sales DataStore Object" lastChangedAt="20260214120000"
+          technicalObjectName="ZSALES_DATA" displayObjectName="ZSALES_DATA"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/adso/ZSALES_DATA/a"/>
+  </entry>
+  <entry>
+    <title>Material InfoObject</title>
+    <id>/sap/bw/modeling/iobj/0MATERIAL/a</id>
+    <content type="application/xml">
+      <bwModel:searchResult objectName="0MATERIAL" objectType="IOBJ"
+          objectSubtype="" objectVersion="A" objectStatus="ACT"
+          objectDesc="Material InfoObject" lastChangedAt="20260213100000"
+          technicalObjectName="0MATERIAL" displayObjectName="0MATERIAL"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/iobj/0MATERIAL/a"/>
+  </entry>
+  <entry>
+    <title>Inactive ADSO</title>
+    <id>/sap/bw/modeling/adso/ZINACTIVE/m</id>
+    <content type="application/xml">
+      <bwModel:searchResult objectName="ZINACTIVE" objectType="ADSO"
+          objectSubtype="" objectVersion="M" objectStatus="INA"
+          objectDesc="Inactive ADSO" lastChangedAt="20260214080000"
+          technicalObjectName="ZINACTIVE" displayObjectName="ZINACTIVE"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/adso/ZINACTIVE/m"/>
+  </entry>
+</feed>
