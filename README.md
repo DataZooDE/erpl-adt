@@ -57,7 +57,19 @@ erpl-adt source check /sap/bc/adt/oo/classes/zcl_my_class/source/main
 
 ## Installation
 
-Download the binary for your platform from the [latest release](https://github.com/datazooDE/erpl-adt/releases/latest), or [build from source](#building-from-source).
+The quickest way to run erpl-adt — no download needed:
+
+```bash
+uvx erpl-adt --help
+```
+
+Or install permanently:
+
+```bash
+pip install erpl-adt
+```
+
+Alternatively, download the binary for your platform from the [latest release](https://github.com/datazooDE/erpl-adt/releases/latest), or [build from source](#building-from-source).
 
 | Platform | Architecture |
 |----------|-------------|
