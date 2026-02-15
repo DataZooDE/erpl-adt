@@ -538,8 +538,9 @@ TEST_CASE("AdtSession: PollUntilComplete - timeout", "[adt][session][live]") {
     // Use a very short timeout
     auto result = session->PollUntilComplete("/poll/forever",
                                              std::chrono::seconds{1});
-    REQUIRE(result.IsOk());
-    CHECK(result.Value().status == PollStatus::Running); // Timed out while still running
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::Timeout);
+    CHECK(result.Error().message.find("Timed out waiting for async operation") != std::string::npos);
 }
 
 TEST_CASE("AdtSession: response headers are captured", "[adt][session][live]") {

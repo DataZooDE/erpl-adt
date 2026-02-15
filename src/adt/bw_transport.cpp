@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/bw_transport.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
 #include <string>
@@ -22,12 +24,11 @@ Result<BwTransportCheckResult, Error> ParseCheckResponse(
     BwTransportCheckResult result;
 
     // Check Writing-Enabled header
-    auto we_it = response_headers.find("Writing-Enabled");
-    if (we_it == response_headers.end()) {
-        we_it = response_headers.find("writing-enabled");
-    }
-    if (we_it != response_headers.end()) {
-        result.writing_enabled = (we_it->second == "true" || we_it->second == "X");
+    auto writing_enabled = adt_utils::FindHeaderValueCi(response_headers,
+                                                        "Writing-Enabled");
+    if (writing_enabled.has_value()) {
+        result.writing_enabled =
+            (*writing_enabled == "true" || *writing_enabled == "X");
     }
 
     if (xml.empty()) {
@@ -35,11 +36,12 @@ Result<BwTransportCheckResult, Error> ParseCheckResponse(
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwTransportCheckResult, Error>::Err(Error{
-            "BwTransportCheck", kBwCtoPath, std::nullopt,
-            "Failed to parse BW transport response XML", std::nullopt,
-            ErrorCategory::TransportError});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwTransportCheck", kBwCtoPath,
+            "Failed to parse BW transport response XML",
+            ErrorCategory::TransportError)) {
+        return Result<BwTransportCheckResult, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -152,9 +154,10 @@ Result<BwTransportCheckResult, Error> BwTransportCheck(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<BwTransportCheckResult, Error>::Err(
-            Error::FromHttpStatus("BwTransportCheck", url,
-                                  http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwTransportCheck", url,
+                                           http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwTransportCheckResult, Error>::Err(std::move(error));
     }
 
     return ParseCheckResponse(http.body, http.headers);
@@ -185,8 +188,8 @@ Result<BwTransportWriteResult, Error> BwTransportWrite(
     // Build request body
     std::string body = R"(<bwCTO:transport xmlns:bwCTO="http://www.sap.com/bw/cto">)";
     body += "<objects>";
-    body += R"(<object name=")" + options.object_name + R"(")";
-    body += R"( type=")" + options.object_type + R"("/>)";
+    body += R"(<object name=")" + adt_utils::XmlEscape(options.object_name) + R"(")";
+    body += R"( type=")" + adt_utils::XmlEscape(options.object_type) + R"("/>)";
     body += "</objects></bwCTO:transport>";
 
     auto response = session.Post(url, body, kCtoContentType);
@@ -197,9 +200,10 @@ Result<BwTransportWriteResult, Error> BwTransportWrite(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        return Result<BwTransportWriteResult, Error>::Err(
-            Error::FromHttpStatus("BwTransportWrite", url,
-                                  http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwTransportWrite", url,
+                                           http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwTransportWriteResult, Error>::Err(std::move(error));
     }
 
     BwTransportWriteResult result;

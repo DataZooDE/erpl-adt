@@ -74,7 +74,7 @@ TEST_CASE("BwSearchObjects: sends correct URL with type filter", "[adt][bw][sear
 
     REQUIRE(mock.GetCallCount() == 1);
     auto& path = mock.GetCalls()[0].path;
-    CHECK(path.find("searchTerm=Z*") != std::string::npos);
+    CHECK(path.find("searchTerm=Z%2A") != std::string::npos);
     CHECK(path.find("maxSize=50") != std::string::npos);
     CHECK(path.find("objectType=ADSO") != std::string::npos);
 }
@@ -147,4 +147,111 @@ TEST_CASE("BwSearchObjects: connection error propagated", "[adt][bw][search]") {
 
     auto result = BwSearchObjects(mock, MakeSearchOptions("Z*"));
     REQUIRE(result.IsErr());
+}
+
+// ===========================================================================
+// Extended search parameters (spec 7.2)
+// ===========================================================================
+
+TEST_CASE("BwSearchObjects: sends objectSubType filter", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "*";
+    opts.object_sub_type = "REP";
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.GetCalls()[0].path.find("objectSubType=REP") != std::string::npos);
+}
+
+TEST_CASE("BwSearchObjects: sends date range filters", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "*";
+    opts.changed_on_from = "2026-01-01";
+    opts.changed_on_to = "2026-12-31";
+    opts.created_on_from = "2025-06-01";
+    opts.created_on_to = "2025-12-31";
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("changedOnFrom=2026-01-01") != std::string::npos);
+    CHECK(path.find("changedOnTo=2026-12-31") != std::string::npos);
+    CHECK(path.find("createdOnFrom=2025-06-01") != std::string::npos);
+    CHECK(path.find("createdOnTo=2025-12-31") != std::string::npos);
+}
+
+TEST_CASE("BwSearchObjects: sends createdBy filter", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "*";
+    opts.created_by = "DEVELOPER";
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.GetCalls()[0].path.find("createdBy=DEVELOPER") != std::string::npos);
+}
+
+TEST_CASE("BwSearchObjects: sends dependency filters", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "*";
+    opts.depends_on_name = "0MATERIAL";
+    opts.depends_on_type = "IOBJ";
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("dependsOnObjectName=0MATERIAL") != std::string::npos);
+    CHECK(path.find("dependsOnObjectType=IOBJ") != std::string::npos);
+}
+
+TEST_CASE("BwSearchObjects: searchInName=false is sent", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "SALES";
+    opts.search_in_name = false;
+    opts.search_in_description = true;
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("searchInName=false") != std::string::npos);
+    CHECK(path.find("searchInDescription=true") != std::string::npos);
+}
+
+TEST_CASE("BwSearchObjects: all filters combined", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwSearchOptions opts;
+    opts.query = "Z*";
+    opts.max_results = 50;
+    opts.object_type = "ADSO";
+    opts.object_sub_type = "SOB";
+    opts.object_status = "ACT";
+    opts.object_version = "A";
+    opts.changed_by = "ADMIN";
+    opts.created_by = "DEVELOPER";
+    auto result = BwSearchObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("objectType=ADSO") != std::string::npos);
+    CHECK(path.find("objectSubType=SOB") != std::string::npos);
+    CHECK(path.find("objectStatus=ACT") != std::string::npos);
+    CHECK(path.find("objectVersion=A") != std::string::npos);
+    CHECK(path.find("changedBy=ADMIN") != std::string::npos);
+    CHECK(path.find("createdBy=DEVELOPER") != std::string::npos);
 }

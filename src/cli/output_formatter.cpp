@@ -115,6 +115,83 @@ void OutputFormatter::PrintTable(
     }
 }
 
+void OutputFormatter::PrintDetail(
+    const std::string& title,
+    const std::vector<DetailSection>& sections) const {
+
+    // Flatten all entries for tree rendering.
+    // Sections with a title become sub-trees; sections without title are root-level.
+    struct TreeEntry {
+        std::string key;
+        std::string value;
+        bool is_section_header = false;
+        bool is_last = false;           // Last in its group
+        bool is_child = false;          // Inside a sub-section
+        bool is_last_child = false;     // Last in sub-section
+    };
+
+    std::vector<TreeEntry> entries;
+    for (size_t si = 0; si < sections.size(); ++si) {
+        const auto& sec = sections[si];
+        if (sec.entries.empty()) continue;
+
+        if (sec.title.empty()) {
+            // Root-level entries
+            for (const auto& e : sec.entries) {
+                entries.push_back({e.first, e.second, false, false, false, false});
+            }
+        } else {
+            // Section header
+            entries.push_back({sec.title, "", true, false, false, false});
+            for (size_t ei = 0; ei < sec.entries.size(); ++ei) {
+                entries.push_back({sec.entries[ei].first, sec.entries[ei].second,
+                                   false, false, true,
+                                   ei == sec.entries.size() - 1});
+            }
+        }
+    }
+
+    // Mark last root-level entry
+    for (int i = static_cast<int>(entries.size()) - 1; i >= 0; --i) {
+        if (!entries[static_cast<size_t>(i)].is_child) {
+            entries[static_cast<size_t>(i)].is_last = true;
+            break;
+        }
+    }
+
+    if (color_mode_) {
+        out_ << kBold << title << kReset << "\n";
+        for (const auto& e : entries) {
+            if (e.is_child) {
+                // Child of a section
+                out_ << kDim << (e.is_last_child ? "    \u2514\u2500\u2500 " : "    \u251C\u2500\u2500 ") << kReset;
+                out_ << e.key << ": " << e.value << "\n";
+            } else if (e.is_section_header) {
+                out_ << kDim << (e.is_last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 ") << kReset;
+                out_ << kBold << e.key << kReset << "\n";
+            } else {
+                out_ << kDim << (e.is_last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 ") << kReset;
+                out_ << e.key << ": " << e.value << "\n";
+            }
+        }
+    } else {
+        // Plain mode — same tree structure, no ANSI
+        out_ << title << "\n";
+        for (const auto& e : entries) {
+            if (e.is_child) {
+                out_ << (e.is_last_child ? "    +-- " : "    |-- ");
+                out_ << e.key << ": " << e.value << "\n";
+            } else if (e.is_section_header) {
+                out_ << (e.is_last ? "+-- " : "|-- ");
+                out_ << e.key << "\n";
+            } else {
+                out_ << (e.is_last ? "+-- " : "|-- ");
+                out_ << e.key << ": " << e.value << "\n";
+            }
+        }
+    }
+}
+
 void OutputFormatter::PrintJson(const std::string& json) const {
     out_ << json << "\n";
 }
@@ -136,6 +213,10 @@ void OutputFormatter::PrintError(const Error& error) const {
         if (error.sap_error.has_value() && !error.sap_error->empty()) {
             err_ << "  " << kDim << "SAP: " << kReset
                  << error.sap_error.value() << "\n";
+        }
+        if (error.hint.has_value() && !error.hint->empty()) {
+            err_ << "  " << kYellow << "Hint: " << kReset
+                 << error.hint.value() << "\n";
         }
         return;
     }

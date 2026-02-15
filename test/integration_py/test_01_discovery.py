@@ -7,14 +7,17 @@ import pytest
 class TestDiscovery:
 
     def test_discovery_has_services(self, cli):
-        """Discovery returns services list."""
+        """Discovery returns workspaces list."""
         data = cli.run_ok("discover", "services")
-        assert len(data["services"]) > 0
+        assert len(data["workspaces"]) > 0
 
     def test_discovery_service_has_fields(self, cli):
-        """Each service entry has title and href."""
+        """Each workspace has title and services with href."""
         data = cli.run_ok("discover", "services")
-        svc = data["services"][0]
+        ws = data["workspaces"][0]
+        assert "title" in ws
+        assert "services" in ws
+        svc = ws["services"][0]
         assert "title" in svc
         assert "href" in svc
 

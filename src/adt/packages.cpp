@@ -1,28 +1,12 @@
 #include <erpl_adt/adt/packages.hpp>
 
-#include <iomanip>
-#include <sstream>
+#include <erpl_adt/core/url.hpp>
+
 #include <string>
 
 namespace erpl_adt {
 
 namespace {
-
-// URL-encode a package name. Slashes and special characters must be
-// percent-encoded in the path segment (e.g. /DMO/FLIGHT -> %2FDMO%2FFLIGHT).
-std::string UrlEncode(const std::string& value) {
-    std::ostringstream encoded;
-    encoded.fill('0');
-    encoded << std::hex << std::uppercase;
-    for (unsigned char c : value) {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded << c;
-        } else {
-            encoded << '%' << std::setw(2) << static_cast<int>(c);
-        }
-    }
-    return encoded.str();
-}
 
 std::string PackagePath(const PackageName& name) {
     return "/sap/bc/adt/packages/" + UrlEncode(name.Value());

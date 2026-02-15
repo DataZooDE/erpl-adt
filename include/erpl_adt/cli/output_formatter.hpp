@@ -33,6 +33,17 @@ public:
     void PrintTable(const std::vector<std::string>& headers,
                     const std::vector<std::vector<std::string>>& rows) const;
 
+    // Print a detail view with tree connectors (e.g. for `bw read`).
+    // Each section has a title (empty for root-level entries) and key-value entries.
+    // In JSON mode, caller handles output separately.
+    struct DetailSection {
+        std::string title;
+        std::vector<std::pair<std::string, std::string>> entries;
+    };
+
+    void PrintDetail(const std::string& title,
+                     const std::vector<DetailSection>& sections) const;
+
     // Print a raw JSON string to stdout.
     void PrintJson(const std::string& json) const;
 

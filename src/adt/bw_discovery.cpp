@@ -1,7 +1,10 @@
 #include <erpl_adt/adt/bw_discovery.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
+#include <algorithm>
 #include <string>
 
 namespace erpl_adt {
@@ -25,10 +28,10 @@ bool NameEndsWith(const char* raw, const char* suffix) {
 
 Result<BwDiscoveryResult, Error> ParseDiscoveryResponse(std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwDiscoveryResult, Error>::Err(Error{
-            "BwDiscover", kBwDiscoveryPath, std::nullopt,
-            "Failed to parse BW discovery response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwDiscover", kBwDiscoveryPath,
+            "Failed to parse BW discovery response XML")) {
+        return Result<BwDiscoveryResult, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -167,8 +170,13 @@ Result<BwDiscoveryResult, Error> ParseDiscoveryResponse(std::string_view xml) {
                 }
             }
 
-            // Fallback: if no link/templateLink found, add the collection itself
-            if (!found_link && !scheme.empty() && !term.empty()) {
+            // Add collection-level entry when:
+            // - No links found (fallback, as before), OR
+            // - <app:accept> provides a content type (preserves versioned
+            //   Accept type for BwResolveContentType even when templateLinks
+            //   provide their own type attributes)
+            if (!scheme.empty() && !term.empty() &&
+                (!found_link || !content_type.empty())) {
                 BwServiceEntry entry;
                 entry.scheme = scheme;
                 entry.term = term;
@@ -195,9 +203,10 @@ Result<BwDiscoveryResult, Error> BwDiscover(IAdtSession& session) {
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<BwDiscoveryResult, Error>::Err(
-            Error::FromHttpStatus("BwDiscover", kBwDiscoveryPath,
-                                  http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwDiscover", kBwDiscoveryPath,
+                                           http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwDiscoveryResult, Error>::Err(std::move(error));
     }
 
     return ParseDiscoveryResponse(http.body);
@@ -216,6 +225,35 @@ Result<std::string, Error> BwResolveEndpoint(
         "BwResolveEndpoint", "", std::nullopt,
         "BW service not found: scheme=" + scheme + ", term=" + term,
         std::nullopt, ErrorCategory::NotFound});
+}
+
+std::string BwResolveContentType(
+    const BwDiscoveryResult& discovery,
+    const std::string& tlogo) {
+    // Lowercase the tlogo for comparison against discovery terms.
+    std::string lower_tlogo = tlogo;
+    std::transform(lower_tlogo.begin(), lower_tlogo.end(), lower_tlogo.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    // Two-pass search: first prefer versioned content types (from <app:accept>),
+    // then fall back to any non-empty content type.  Versioned types contain
+    // "-v" followed by a version number (e.g. "-v2_1_0+xml").
+    std::string fallback;
+    for (const auto& entry : discovery.services) {
+        std::string lower_term = entry.term;
+        std::transform(lower_term.begin(), lower_term.end(), lower_term.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower_term != lower_tlogo || entry.content_type.empty()) {
+            continue;
+        }
+        if (entry.content_type.find("-v") != std::string::npos) {
+            return entry.content_type;
+        }
+        if (fallback.empty()) {
+            fallback = entry.content_type;
+        }
+    }
+    return fallback;
 }
 
 } // namespace erpl_adt

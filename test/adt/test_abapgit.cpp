@@ -303,7 +303,7 @@ TEST_CASE("PullRepo: returns error on missing Location header", "[adt][abapgit]"
     auto result = PullRepo(session, codec, MakeKey("KEY1"));
 
     REQUIRE(result.IsErr());
-    CHECK(result.Error().message == "202 response missing Location header");
+    CHECK(result.Error().message.find("missing required 'Location' header") != std::string::npos);
 }
 
 TEST_CASE("PullRepo: returns error on unexpected status", "[adt][abapgit]") {

@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/source.hpp>
+#include "adt_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -33,10 +34,11 @@ void ParsePosition(const std::string& uri, int& line, int& offset) {
 Result<std::vector<SyntaxMessage>, Error> ParseCheckResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<SyntaxMessage>, Error>::Err(Error{
-            "CheckSyntax", "", std::nullopt,
-            "Failed to parse check response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "CheckSyntax", "",
+            "Failed to parse check response XML")) {
+        return Result<std::vector<SyntaxMessage>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<SyntaxMessage> messages;
@@ -146,7 +148,7 @@ Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<chkrun:checkObjectList xmlns:chkrun=\"http://www.sap.com/adt/checkrun\"\n"
         "  xmlns:adtcore=\"http://www.sap.com/adt/core\">\n"
-        "  <chkrun:checkObject adtcore:uri=\"" + source_uri + "\" chkrun:version=\"active\"/>\n"
+        "  <chkrun:checkObject adtcore:uri=\"" + adt_utils::XmlEscape(source_uri) + "\" chkrun:version=\"active\"/>\n"
         "</chkrun:checkObjectList>\n";
 
     auto response = session.Post(

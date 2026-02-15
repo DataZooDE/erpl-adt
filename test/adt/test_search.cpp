@@ -91,7 +91,7 @@ TEST_CASE("SearchObjects: sends correct URL", "[adt][search]") {
     REQUIRE(mock.GetCallCount() == 1);
     auto& path = mock.GetCalls()[0].path;
     CHECK(path.find("operation=quickSearch") != std::string::npos);
-    CHECK(path.find("query=ZCL_*") != std::string::npos);
+    CHECK(path.find("query=ZCL_%2A") != std::string::npos);
     CHECK(path.find("maxResults=50") != std::string::npos);
     CHECK(path.find("objectType=CLAS") != std::string::npos);
 }

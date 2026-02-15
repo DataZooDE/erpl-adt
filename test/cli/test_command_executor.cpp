@@ -141,12 +141,11 @@ TEST_CASE("source write: missing --file returns 99",
     CHECK(router.Dispatch(6, argv) == 99);
 }
 
-TEST_CASE("object delete: missing --handle returns 99",
+TEST_CASE("object delete: invalid URI returns 99",
           "[cli][executor]") {
     CommandRouter router;
     RegisterAllCommands(router);
-    const char* argv[] = {"erpl-adt", "object", "delete",
-                          "/sap/bc/adt/oo/classes/foo"};
+    const char* argv[] = {"erpl-adt", "object", "delete", "not-a-uri"};
     CHECK(router.Dispatch(4, argv) == 99);
 }
 

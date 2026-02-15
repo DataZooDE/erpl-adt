@@ -1,5 +1,8 @@
 #include <erpl_adt/adt/bw_search.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <string>
@@ -10,24 +13,37 @@ namespace {
 
 const char* kBwSearchPath = "/sap/bw/modeling/repo/is/bwsearch";
 
+void AppendParam(std::string& url, const char* name,
+                  const std::optional<std::string>& value) {
+    if (value.has_value()) {
+        url += "&";
+        url += name;
+        url += "=";
+        url += UrlEncode(*value);
+    }
+}
+
 std::string BuildSearchUrl(const BwSearchOptions& options) {
     std::string url = std::string(kBwSearchPath) +
-        "?searchTerm=" + options.query +
+        "?searchTerm=" + UrlEncode(options.query) +
         "&maxSize=" + std::to_string(options.max_results);
-    if (options.object_type.has_value()) {
-        url += "&objectType=" + *options.object_type;
-    }
-    if (options.object_status.has_value()) {
-        url += "&objectStatus=" + *options.object_status;
-    }
-    if (options.object_version.has_value()) {
-        url += "&objectVersion=" + *options.object_version;
-    }
-    if (options.changed_by.has_value()) {
-        url += "&changedBy=" + *options.changed_by;
-    }
+    AppendParam(url, "objectType", options.object_type);
+    AppendParam(url, "objectSubType", options.object_sub_type);
+    AppendParam(url, "objectStatus", options.object_status);
+    AppendParam(url, "objectVersion", options.object_version);
+    AppendParam(url, "changedBy", options.changed_by);
+    AppendParam(url, "changedOnFrom", options.changed_on_from);
+    AppendParam(url, "changedOnTo", options.changed_on_to);
+    AppendParam(url, "createdBy", options.created_by);
+    AppendParam(url, "createdOnFrom", options.created_on_from);
+    AppendParam(url, "createdOnTo", options.created_on_to);
+    AppendParam(url, "dependsOnObjectName", options.depends_on_name);
+    AppendParam(url, "dependsOnObjectType", options.depends_on_type);
     if (options.search_in_description) {
         url += "&searchInDescription=true";
+    }
+    if (!options.search_in_name) {
+        url += "&searchInName=false";
     }
     return url;
 }
@@ -43,10 +59,11 @@ std::string GetAttr(const tinyxml2::XMLElement* el,
 Result<std::vector<BwSearchResult>, Error> ParseSearchResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwSearchResult>, Error>::Err(Error{
-            "BwSearchObjects", kBwSearchPath, std::nullopt,
-            "Failed to parse BW search response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwSearchObjects", kBwSearchPath,
+            "Failed to parse BW search response XML")) {
+        return Result<std::vector<BwSearchResult>, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -137,8 +154,9 @@ Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<std::vector<BwSearchResult>, Error>::Err(
-            Error::FromHttpStatus("BwSearchObjects", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwSearchObjects", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<std::vector<BwSearchResult>, Error>::Err(std::move(error));
     }
 
     return ParseSearchResponse(http.body);

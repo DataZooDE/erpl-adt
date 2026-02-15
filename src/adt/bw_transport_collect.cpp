@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/bw_transport_collect.hpp>
 
+#include "adt_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -31,8 +32,8 @@ std::string BuildCollectUrl(const BwTransportCollectOptions& options) {
 std::string BuildCollectBody(const BwTransportCollectOptions& options) {
     std::string body = R"(<bwCTO:transport xmlns:bwCTO="http://www.sap.com/bw/cto">)";
     body += "<objects>";
-    body += R"(<object name=")" + options.object_name + R"(")";
-    body += R"( type=")" + options.object_type + R"("/>)";
+    body += R"(<object name=")" + adt_utils::XmlEscape(options.object_name) + R"(")";
+    body += R"( type=")" + adt_utils::XmlEscape(options.object_type) + R"("/>)";
     body += "</objects></bwCTO:transport>";
     return body;
 }
@@ -40,11 +41,12 @@ std::string BuildCollectBody(const BwTransportCollectOptions& options) {
 Result<BwTransportCollectResult, Error> ParseCollectResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwTransportCollectResult, Error>::Err(Error{
-            "BwTransportCollect", kBwCtoPath, std::nullopt,
-            "Failed to parse BW transport collect response XML", std::nullopt,
-            ErrorCategory::TransportError});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwTransportCollect", kBwCtoPath,
+            "Failed to parse BW transport collect response XML",
+            ErrorCategory::TransportError)) {
+        return Result<BwTransportCollectResult, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();

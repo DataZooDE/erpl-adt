@@ -49,6 +49,12 @@ Error Error::FromHttpStatus(const std::string& operation,
     std::string message;
 
     switch (status_code) {
+        case 400:
+            category = ErrorCategory::Internal;
+            message = sap_error.has_value()
+                ? "Bad request: " + *sap_error
+                : "Bad request";
+            break;
         case 401:
             category = ErrorCategory::Authentication;
             message = "Authentication failed — check credentials or run 'erpl-adt login'";
@@ -70,8 +76,18 @@ Error Error::FromHttpStatus(const std::string& operation,
             message = "Resource is locked";
             break;
         case 500:
-            category = ErrorCategory::Connection;
-            message = "SAP server internal error";
+            category = ErrorCategory::Internal;
+            message = sap_error.has_value()
+                ? "SAP server error: " + *sap_error
+                : "SAP server internal error";
+            break;
+        case 408:
+            category = ErrorCategory::Timeout;
+            message = "Request timed out";
+            break;
+        case 429:
+            category = ErrorCategory::Timeout;
+            message = "Too many requests — retry later";
             break;
         case 502:
         case 503:

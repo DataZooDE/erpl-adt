@@ -4,7 +4,9 @@
 #include <erpl_adt/adt/bw_discovery.hpp>
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
+#include <erpl_adt/adt/bw_locks.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
+#include <erpl_adt/adt/bw_system.hpp>
 #include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
 #include <erpl_adt/adt/bw_transport_collect.hpp>
@@ -929,8 +931,19 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         MakeSchema(
             {{"query", StringProp("Search pattern with wildcards (e.g., Z*, *SALES*)")},
              {"object_type", StringProp("Filter by type: ADSO, HCPR, IOBJ, TRFN, DTPA, RSDS")},
+             {"object_sub_type", StringProp("Filter by subtype (e.g., REP, SOB, RKF)")},
              {"max_results", IntProp("Maximum results (default: 100)")},
-             {"status", StringProp("Filter by status: ACT, INA, OFF")}},
+             {"status", StringProp("Filter by status: ACT, INA, OFF")},
+             {"changed_by", StringProp("Filter by last changed user")},
+             {"changed_on_from", StringProp("Changed on or after date")},
+             {"changed_on_to", StringProp("Changed on or before date")},
+             {"created_by", StringProp("Filter by creator")},
+             {"created_on_from", StringProp("Created on or after date")},
+             {"created_on_to", StringProp("Created on or before date")},
+             {"depends_on_name", StringProp("Filter by dependency object name")},
+             {"depends_on_type", StringProp("Filter by dependency object type")},
+             {"search_in_description", {{"type", "boolean"},
+                                         {"description", "Also search in descriptions"}}}},
             {"query"}),
         [&session](const nlohmann::json& params) -> ToolResult {
             ToolResult err;
@@ -942,20 +955,46 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             opts.max_results = OptInt(params, "max_results", 100);
             auto obj_type = OptString(params, "object_type");
             if (!obj_type.empty()) opts.object_type = obj_type;
+            auto sub_type = OptString(params, "object_sub_type");
+            if (!sub_type.empty()) opts.object_sub_type = sub_type;
             auto status = OptString(params, "status");
             if (!status.empty()) opts.object_status = status;
+            auto changed_by = OptString(params, "changed_by");
+            if (!changed_by.empty()) opts.changed_by = changed_by;
+            auto changed_from = OptString(params, "changed_on_from");
+            if (!changed_from.empty()) opts.changed_on_from = changed_from;
+            auto changed_to = OptString(params, "changed_on_to");
+            if (!changed_to.empty()) opts.changed_on_to = changed_to;
+            auto created_by = OptString(params, "created_by");
+            if (!created_by.empty()) opts.created_by = created_by;
+            auto created_from = OptString(params, "created_on_from");
+            if (!created_from.empty()) opts.created_on_from = created_from;
+            auto created_to = OptString(params, "created_on_to");
+            if (!created_to.empty()) opts.created_on_to = created_to;
+            auto dep_name = OptString(params, "depends_on_name");
+            if (!dep_name.empty()) opts.depends_on_name = dep_name;
+            auto dep_type = OptString(params, "depends_on_type");
+            if (!dep_type.empty()) opts.depends_on_type = dep_type;
+            if (params.contains("search_in_description") &&
+                params["search_in_description"].is_boolean() &&
+                params["search_in_description"].get<bool>()) {
+                opts.search_in_description = true;
+            }
 
             auto result = BwSearchObjects(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
             nlohmann::json j = nlohmann::json::array();
             for (const auto& r : result.Value()) {
-                j.push_back({{"name", r.name},
-                             {"type", r.type},
-                             {"description", r.description},
-                             {"version", r.version},
-                             {"status", r.status},
-                             {"uri", r.uri}});
+                nlohmann::json obj = {{"name", r.name},
+                                      {"type", r.type},
+                                      {"description", r.description},
+                                      {"version", r.version},
+                                      {"status", r.status},
+                                      {"uri", r.uri}};
+                if (!r.technical_name.empty()) obj["technical_name"] = r.technical_name;
+                if (!r.last_changed.empty()) obj["last_changed"] = r.last_changed;
+                j.push_back(std::move(obj));
             }
             return MakeOkResult(j);
         });
@@ -989,6 +1028,17 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
                 opts.uri = uri_val;
             }
 
+            // Resolve content type from discovery (best-effort)
+            if (!opts.object_type.empty()) {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    auto ct = BwResolveContentType(disc.Value(), opts.object_type);
+                    if (!ct.empty()) {
+                        opts.content_type = ct;
+                    }
+                }
+            }
+
             auto result = BwReadObject(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
@@ -1002,6 +1052,21 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["package"] = meta.package_name;
             j["last_changed_by"] = meta.last_changed_by;
             j["last_changed_at"] = meta.last_changed_at;
+            if (!meta.sub_type.empty()) j["sub_type"] = meta.sub_type;
+            if (!meta.long_description.empty()) j["long_description"] = meta.long_description;
+            if (!meta.short_description.empty()) j["short_description"] = meta.short_description;
+            if (!meta.content_state.empty()) j["content_state"] = meta.content_state;
+            if (!meta.info_area.empty()) j["info_area"] = meta.info_area;
+            if (!meta.responsible.empty()) j["responsible"] = meta.responsible;
+            if (!meta.created_at.empty()) j["created_at"] = meta.created_at;
+            if (!meta.language.empty()) j["language"] = meta.language;
+            if (!meta.properties.empty()) {
+                nlohmann::json props = nlohmann::json::object();
+                for (const auto& kv : meta.properties) {
+                    props[kv.first] = kv.second;
+                }
+                j["properties"] = props;
+            }
             return MakeOkResult(j);
         });
 
@@ -1033,6 +1098,8 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["timestamp"] = lock.timestamp;
             j["package"] = lock.package_name;
             j["is_local"] = lock.is_local;
+            if (!lock.transport_text.empty()) j["transport_text"] = lock.transport_text;
+            if (!lock.transport_owner.empty()) j["transport_owner"] = lock.transport_owner;
             return MakeOkResult(j);
         });
 
@@ -1167,7 +1234,8 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             for (const auto& m : act.messages) {
                 msgs.push_back({{"severity", m.severity},
                                 {"text", m.text},
-                                {"object_name", m.object_name}});
+                                {"object_name", m.object_name},
+                                {"object_type", m.object_type}});
             }
             j["messages"] = msgs;
             return MakeOkResult(j);
@@ -1195,12 +1263,46 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
             nlohmann::json reqs = nlohmann::json::array();
             for (const auto& r : tr.requests) {
-                reqs.push_back({{"number", r.number},
-                                {"function_type", r.function_type},
-                                {"status", r.status},
-                                {"description", r.description}});
+                nlohmann::json rj;
+                rj["number"] = r.number;
+                rj["function_type"] = r.function_type;
+                rj["status"] = r.status;
+                rj["description"] = r.description;
+                nlohmann::json tasks = nlohmann::json::array();
+                for (const auto& t : r.tasks) {
+                    tasks.push_back({{"number", t.number},
+                                     {"function_type", t.function_type},
+                                     {"status", t.status},
+                                     {"owner", t.owner}});
+                }
+                rj["tasks"] = tasks;
+                reqs.push_back(std::move(rj));
             }
             j["requests"] = reqs;
+
+            nlohmann::json objs = nlohmann::json::array();
+            for (const auto& o : tr.objects) {
+                nlohmann::json oj = {{"name", o.name},
+                                     {"type", o.type},
+                                     {"operation", o.operation},
+                                     {"lock_request", o.lock_request}};
+                if (!o.uri.empty()) oj["uri"] = o.uri;
+                if (!o.tadir_status.empty()) oj["tadir_status"] = o.tadir_status;
+                objs.push_back(std::move(oj));
+            }
+            if (!objs.empty()) j["objects"] = objs;
+
+            nlohmann::json chgs = nlohmann::json::array();
+            for (const auto& c : tr.changeability) {
+                chgs.push_back({{"tlogo", c.tlogo},
+                                {"transportable", c.transportable},
+                                {"changeable", c.changeable}});
+            }
+            if (!chgs.empty()) j["changeability"] = chgs;
+
+            if (!tr.messages.empty()) {
+                j["messages"] = tr.messages;
+            }
             return MakeOkResult(j);
         });
 
@@ -1259,6 +1361,207 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["status"] = st.status;
             j["job_type"] = st.job_type;
             j["description"] = st.description;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_job_restart",
+        "Restart a failed BW background job. Job must be in error state (status E).",
+        MakeSchema(
+            {{"job_guid", StringProp("25-character job GUID")}},
+            {"job_guid"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto guid = RequireString(params, "job_guid", err);
+            if (!guid) return err;
+
+            auto result = BwRestartJob(session, *guid);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j;
+            j["status"] = "restarted";
+            j["guid"] = *guid;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_job_cleanup",
+        "Cleanup resources of a completed or failed BW background job. "
+        "Removes temporary data, logs, and artifacts.",
+        MakeSchema(
+            {{"job_guid", StringProp("25-character job GUID")}},
+            {"job_guid"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto guid = RequireString(params, "job_guid", err);
+            if (!guid) return err;
+
+            auto result = BwCleanupJob(session, *guid);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j;
+            j["status"] = "cleaned_up";
+            j["guid"] = *guid;
+            return MakeOkResult(j);
+        });
+
+    // === Lock monitoring tools ===
+
+    registry.Register(
+        "bw_list_locks",
+        "List active BW object locks. Shows who has locked which objects. "
+        "Useful for diagnosing lock conflicts.",
+        MakeSchema(
+            {{"user", StringProp("Filter by lock owner user")},
+             {"search", StringProp("Search pattern for object names")},
+             {"max_results", IntProp("Maximum results (default: 100)")}},
+            {}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            BwListLocksOptions opts;
+            auto user = OptString(params, "user");
+            if (!user.empty()) opts.user = user;
+            auto search = OptString(params, "search");
+            if (!search.empty()) opts.search = search;
+            opts.max_results = OptInt(params, "max_results", 100);
+
+            auto result = BwListLocks(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& l : result.Value()) {
+                nlohmann::json lj = {{"user", l.user},
+                                     {"client", l.client},
+                                     {"mode", l.mode},
+                                     {"object", l.object},
+                                     {"table_name", l.table_name},
+                                     {"timestamp", l.timestamp},
+                                     {"arg", l.arg},
+                                     {"owner1", l.owner1},
+                                     {"owner2", l.owner2}};
+                if (!l.table_desc.empty()) lj["table_desc"] = l.table_desc;
+                if (l.upd_count != 0) lj["upd_count"] = l.upd_count;
+                if (l.dia_count != 0) lj["dia_count"] = l.dia_count;
+                j.push_back(std::move(lj));
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_delete_lock",
+        "Delete a stuck BW object lock (admin operation). Use values from "
+        "bw_list_locks output to identify the lock to delete.",
+        MakeSchema(
+            {{"user", StringProp("Lock owner user")},
+             {"table_name", StringProp("Table name from lock entry (e.g., RSBWOBJ_ENQUEUE)")},
+             {"arg", StringProp("Base64-encoded argument from lock entry")},
+             {"lock_mode", StringProp("Lock mode (default: E)")},
+             {"scope", StringProp("Lock scope (default: 1)")},
+             {"owner1", StringProp("Base64-encoded owner1 from lock entry")},
+             {"owner2", StringProp("Base64-encoded owner2 from lock entry")}},
+            {"user", "table_name", "arg"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto user = RequireString(params, "user", err);
+            if (!user) return err;
+            auto table_name = RequireString(params, "table_name", err);
+            if (!table_name) return err;
+            auto arg = RequireString(params, "arg", err);
+            if (!arg) return err;
+
+            BwDeleteLockOptions opts;
+            opts.user = *user;
+            opts.table_name = *table_name;
+            opts.arg = *arg;
+            opts.lock_mode = OptString(params, "lock_mode", "E");
+            opts.scope = OptString(params, "scope", "1");
+            opts.owner1 = OptString(params, "owner1");
+            opts.owner2 = OptString(params, "owner2");
+
+            auto result = BwDeleteLock(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j;
+            j["status"] = "deleted";
+            j["user"] = *user;
+            return MakeOkResult(j);
+        });
+
+    // === System info tools ===
+
+    registry.Register(
+        "bw_dbinfo",
+        "Get HANA database connection info (host, port, schema, database type).",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetDbInfo(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& info = result.Value();
+            nlohmann::json j;
+            j["host"] = info.host;
+            j["port"] = info.port;
+            j["schema"] = info.schema;
+            j["database_type"] = info.database_type;
+            if (!info.database_name.empty()) j["database_name"] = info.database_name;
+            if (!info.instance.empty()) j["instance"] = info.instance;
+            if (!info.user.empty()) j["user"] = info.user;
+            if (!info.version.empty()) j["version"] = info.version;
+            if (!info.patchlevel.empty()) j["patchlevel"] = info.patchlevel;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_sysinfo",
+        "Get BW system properties (system configuration key-value pairs).",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetSystemInfo(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& p : result.Value()) {
+                j.push_back({{"key", p.key},
+                             {"value", p.value},
+                             {"description", p.description}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_changeability",
+        "Get per-TLOGO changeability and transport settings. Shows which BW object "
+        "types can be modified and whether they require transport requests.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetChangeability(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& e : result.Value()) {
+                j.push_back({{"object_type", e.object_type},
+                             {"changeable", e.changeable},
+                             {"transportable", e.transportable},
+                             {"description", e.description}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_adturi",
+        "Get BW-to-ADT URI mappings. Shows how BW modeling URIs map to "
+        "standard ADT URIs for cross-navigation.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetAdtUriMappings(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& m : result.Value()) {
+                j.push_back({{"bw_type", m.bw_type},
+                             {"adt_type", m.adt_type},
+                             {"bw_uri_template", m.bw_uri_template},
+                             {"adt_uri_template", m.adt_uri_template}});
+            }
             return MakeOkResult(j);
         });
 
@@ -1429,7 +1732,16 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             if (!name) return err;
             auto version = OptString(params, "version", "a");
 
-            auto result = BwReadTransformation(session, *name, version);
+            // Resolve content type from discovery (best-effort)
+            std::string resolved_ct;
+            {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    resolved_ct = BwResolveContentType(disc.Value(), "TRFN");
+                }
+            }
+
+            auto result = BwReadTransformation(session, *name, version, resolved_ct);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
             const auto& detail = result.Value();
@@ -1487,7 +1799,16 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             if (!name) return err;
             auto version = OptString(params, "version", "a");
 
-            auto result = BwReadAdsoDetail(session, *name, version);
+            // Resolve content type from discovery (best-effort)
+            std::string resolved_ct;
+            {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    resolved_ct = BwResolveContentType(disc.Value(), "ADSO");
+                }
+            }
+
+            auto result = BwReadAdsoDetail(session, *name, version, resolved_ct);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
             const auto& detail = result.Value();
@@ -1524,7 +1845,16 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             if (!name) return err;
             auto version = OptString(params, "version", "a");
 
-            auto result = BwReadDtpDetail(session, *name, version);
+            // Resolve content type from discovery (best-effort)
+            std::string resolved_ct;
+            {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    resolved_ct = BwResolveContentType(disc.Value(), "DTPA");
+                }
+            }
+
+            auto result = BwReadDtpDetail(session, *name, version, resolved_ct);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
             const auto& detail = result.Value();

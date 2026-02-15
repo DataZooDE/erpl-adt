@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/search.hpp>
 
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <string>
@@ -12,10 +13,10 @@ const char* kSearchPath = "/sap/bc/adt/repository/informationsystem/search";
 
 std::string BuildSearchUrl(const SearchOptions& options) {
     std::string url = std::string(kSearchPath) +
-        "?operation=quickSearch&query=" + options.query +
+        "?operation=quickSearch&query=" + UrlEncode(options.query) +
         "&maxResults=" + std::to_string(options.max_results);
     if (options.object_type.has_value()) {
-        url += "&objectType=" + *options.object_type;
+        url += "&objectType=" + UrlEncode(*options.object_type);
     }
     return url;
 }

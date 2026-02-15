@@ -1,7 +1,10 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
+#include <exception>
 #include <string>
 
 namespace erpl_adt {
@@ -49,15 +52,16 @@ Result<BwJobStatus, Error> BwGetJobStatus(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<BwJobStatus, Error>::Err(
-            Error::FromHttpStatus("BwGetJobStatus", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwGetJobStatus", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwJobStatus, Error>::Err(std::move(error));
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwJobStatus, Error>::Err(Error{
-            "BwGetJobStatus", url, std::nullopt,
-            "Failed to parse job status XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobStatus", url,
+            "Failed to parse job status XML")) {
+        return Result<BwJobStatus, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -99,15 +103,16 @@ Result<BwJobProgress, Error> BwGetJobProgress(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<BwJobProgress, Error>::Err(
-            Error::FromHttpStatus("BwGetJobProgress", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwGetJobProgress", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwJobProgress, Error>::Err(std::move(error));
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwJobProgress, Error>::Err(Error{
-            "BwGetJobProgress", url, std::nullopt,
-            "Failed to parse job progress XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobProgress", url,
+            "Failed to parse job progress XML")) {
+        return Result<BwJobProgress, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -119,12 +124,17 @@ Result<BwJobProgress, Error> BwGetJobProgress(
         const char* pct = root->Attribute("percentage");
         if (!pct) pct = root->Attribute("value");
         if (pct) {
-            try { result.percentage = std::stoi(pct); }
-            catch (...) { result.percentage = 0; }
+            try {
+                result.percentage = std::stoi(pct);
+            } catch (const std::exception&) {
+                result.percentage = 0;
+            }
         }
         if (result.percentage == 0 && root->GetText()) {
-            try { result.percentage = std::stoi(root->GetText()); }
-            catch (...) {}
+            try {
+                result.percentage = std::stoi(root->GetText());
+            } catch (const std::exception&) {
+            }
         }
     }
 
@@ -155,15 +165,17 @@ Result<std::vector<BwJobStep>, Error> BwGetJobSteps(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<std::vector<BwJobStep>, Error>::Err(
-            Error::FromHttpStatus("BwGetJobSteps", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwGetJobSteps", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<std::vector<BwJobStep>, Error>::Err(std::move(error));
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwJobStep>, Error>::Err(Error{
-            "BwGetJobSteps", url, std::nullopt,
-            "Failed to parse job steps XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobSteps", url,
+            "Failed to parse job steps XML")) {
+        return Result<std::vector<BwJobStep>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<BwJobStep> steps;
@@ -209,15 +221,17 @@ Result<std::vector<BwJobMessage>, Error> BwGetJobMessages(
 
     const auto& http = response.Value();
     if (http.status_code != 200) {
-        return Result<std::vector<BwJobMessage>, Error>::Err(
-            Error::FromHttpStatus("BwGetJobMessages", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwGetJobMessages", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<std::vector<BwJobMessage>, Error>::Err(std::move(error));
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwJobMessage>, Error>::Err(Error{
-            "BwGetJobMessages", url, std::nullopt,
-            "Failed to parse job messages XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobMessages", url,
+            "Failed to parse job messages XML")) {
+        return Result<std::vector<BwJobMessage>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<BwJobMessage> messages;
@@ -262,8 +276,67 @@ Result<void, Error> BwCancelJob(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        return Result<void, Error>::Err(
-            Error::FromHttpStatus("BwCancelJob", url, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwCancelJob", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
+    }
+
+    return Result<void, Error>::Ok();
+}
+
+// ---------------------------------------------------------------------------
+// BwRestartJob
+// ---------------------------------------------------------------------------
+Result<void, Error> BwRestartJob(
+    IAdtSession& session,
+    const std::string& job_guid) {
+    if (job_guid.empty()) {
+        return Result<void, Error>::Err(Error{
+            "BwRestartJob", "", std::nullopt,
+            "Job GUID must not be empty", std::nullopt});
+    }
+
+    auto url = JobUrl(job_guid, "restart");
+
+    auto response = session.Post(url, "", "application/xml");
+    if (response.IsErr()) {
+        return Result<void, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200 && http.status_code != 204) {
+        auto error = Error::FromHttpStatus("BwRestartJob", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
+    }
+
+    return Result<void, Error>::Ok();
+}
+
+// ---------------------------------------------------------------------------
+// BwCleanupJob
+// ---------------------------------------------------------------------------
+Result<void, Error> BwCleanupJob(
+    IAdtSession& session,
+    const std::string& job_guid) {
+    if (job_guid.empty()) {
+        return Result<void, Error>::Err(Error{
+            "BwCleanupJob", "", std::nullopt,
+            "Job GUID must not be empty", std::nullopt});
+    }
+
+    auto url = JobUrl(job_guid, "cleanup");
+
+    auto response = session.Delete(url);
+    if (response.IsErr()) {
+        return Result<void, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200 && http.status_code != 204) {
+        auto error = Error::FromHttpStatus("BwCleanupJob", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
     }
 
     return Result<void, Error>::Ok();

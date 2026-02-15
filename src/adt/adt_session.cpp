@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/adt_session.hpp>
+#include "adt_utils.hpp"
 #include <erpl_adt/core/log.hpp>
 
 #include <httplib.h>
@@ -20,8 +21,9 @@ namespace {
 Error MakeSessionError(const std::string& operation,
                        const std::string& endpoint,
                        std::optional<int> http_status,
-                       const std::string& message) {
-    return Error{operation, endpoint, http_status, message, std::nullopt};
+                       const std::string& message,
+                       ErrorCategory category = ErrorCategory::Connection) {
+    return Error{operation, endpoint, http_status, message, std::nullopt, category};
 }
 
 // Convert httplib::Headers to our HttpHeaders map.
@@ -123,11 +125,12 @@ struct AdtSession::Impl {
 
     // Capture set-cookie headers from response for session persistence.
     void CaptureCookies(const httplib::Headers& hdrs) {
-        for (auto it = hdrs.equal_range("set-cookie"); it.first != it.second;
-             ++it.first) {
-            auto cookie_str = it.first->second;
-            auto semi = cookie_str.find(';');
-            auto nv = cookie_str.substr(0, semi);
+        for (const auto& [key, value] : hdrs) {
+            if (!adt_utils::IEquals(key, "set-cookie")) {
+                continue;
+            }
+            auto semi = value.find(';');
+            auto nv = value.substr(0, semi);
             auto eq = nv.find('=');
             if (eq != std::string::npos) {
                 cookies_[nv.substr(0, eq)] = nv.substr(eq + 1);
@@ -169,7 +172,7 @@ struct AdtSession::Impl {
                             const std::string& body) {
         LogInfo("http", "  < " + std::to_string(status));
         for (const auto& [k, v] : hdrs) {
-            if (k == "set-cookie" || IsSensitiveHeader(k)) {
+            if (adt_utils::IEquals(k, "set-cookie") || IsSensitiveHeader(k)) {
                 LogDebug("http", "  < " + k + ": <redacted>");
             }
         }
@@ -308,35 +311,29 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         if (res->status != 200) {
             return Result<std::string, Error>::Err(
-                MakeSessionError("FetchCsrfToken", fetch_path,
-                                 res->status,
-                                 "Expected 200, got " +
-                                     std::to_string(res->status)));
+                Error::FromHttpStatus("FetchCsrfToken", fetch_path, res->status, res->body));
         }
 
         // Capture session cookies and context ID from the CSRF fetch response.
         CaptureCookies(res->headers);
         CaptureContextId(res->headers);
 
-        // Look for the x-csrf-token header in the response (case-insensitive).
-        for (const auto& [key, value] : res->headers) {
-            auto lower_key = key;
-            std::transform(lower_key.begin(), lower_key.end(),
-                           lower_key.begin(), ::tolower);
-            if (lower_key == "x-csrf-token") {
-                if (bw) {
-                    bw_csrf_token_ = value;
-                } else {
-                    csrf_token = value;
-                }
-                return Result<std::string, Error>::Ok(std::string(value));
+        auto token = adt_utils::FindHeaderValueCi(
+            ToHttpHeaders(res->headers), "x-csrf-token");
+        if (token.has_value()) {
+            if (bw) {
+                bw_csrf_token_ = *token;
+            } else {
+                csrf_token = *token;
             }
+            return Result<std::string, Error>::Ok(*token);
         }
 
         return Result<std::string, Error>::Err(
             MakeSessionError("FetchCsrfToken", fetch_path,
                              res->status,
-                             "No x-csrf-token header in response"));
+                             "No x-csrf-token header in response",
+                             ErrorCategory::CsrfToken));
     }
 };
 
@@ -527,8 +524,14 @@ Result<PollResult, Error> AdtSession::PollUntilComplete(
             if (std::chrono::steady_clock::now() >= deadline) {
                 elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - start);
-                return Result<PollResult, Error>::Ok(
-                    PollResult{PollStatus::Running, resp.body, elapsed});
+                return Result<PollResult, Error>::Err(Error{
+                    "PollUntilComplete",
+                    std::string(location_url),
+                    resp.status_code,
+                    "Timed out waiting for async operation after " +
+                        std::to_string(elapsed.count()) + "ms",
+                    std::nullopt,
+                    ErrorCategory::Timeout});
             }
             std::this_thread::sleep_for(impl_->options.poll_interval);
             continue;
@@ -549,6 +552,9 @@ Result<void, Error> AdtSession::SaveSession(const std::string& path) const {
     nlohmann::json j;
     if (impl_->csrf_token.has_value()) {
         j["csrf_token"] = *impl_->csrf_token;
+    }
+    if (impl_->bw_csrf_token_.has_value()) {
+        j["bw_csrf_token"] = *impl_->bw_csrf_token_;
     }
     j["stateful"] = impl_->stateful_;
     j["context_id"] = impl_->sap_context_id_;
@@ -587,6 +593,9 @@ Result<void, Error> AdtSession::LoadSession(const std::string& path) {
 
     if (j.contains("csrf_token") && j["csrf_token"].is_string()) {
         impl_->csrf_token = j["csrf_token"].get<std::string>();
+    }
+    if (j.contains("bw_csrf_token") && j["bw_csrf_token"].is_string()) {
+        impl_->bw_csrf_token_ = j["bw_csrf_token"].get<std::string>();
     }
     if (j.contains("stateful") && j["stateful"].is_boolean()) {
         impl_->stateful_ = j["stateful"].get<bool>();

@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/bw_nodes.hpp>
 
+#include "adt_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
@@ -48,10 +49,11 @@ std::string GetAttr(const tinyxml2::XMLElement* el,
 Result<std::vector<BwNodeEntry>, Error> ParseNodesResponse(
     std::string_view xml, const char* operation) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwNodeEntry>, Error>::Err(Error{
-            operation, "", std::nullopt,
-            "Failed to parse BW nodes response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, operation, "",
+            "Failed to parse BW nodes response XML")) {
+        return Result<std::vector<BwNodeEntry>, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();

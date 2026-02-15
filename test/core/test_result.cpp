@@ -281,6 +281,21 @@ TEST_CASE("Error: ToJson without optional fields", "[error]") {
     CHECK(json.find("\"sap_error\"") == std::string::npos);
 }
 
+TEST_CASE("Error: ToJson escapes special characters", "[error]") {
+    Error e{
+        "Op\"Quoted\"",
+        "/path",
+        500,
+        "line1\nline2\t\"quoted\"",
+        std::string("backslash\\value"),
+        ErrorCategory::Internal};
+    auto json = e.ToJson();
+    CHECK(json.find("\\n") != std::string::npos);
+    CHECK(json.find("\\t") != std::string::npos);
+    CHECK(json.find("\\\"quoted\\\"") != std::string::npos);
+    CHECK(json.find("backslash\\\\value") != std::string::npos);
+}
+
 TEST_CASE("Error: equality includes category", "[error]") {
     Error e1{"Op", "", std::nullopt, "msg", std::nullopt, ErrorCategory::Connection};
     Error e2{"Op", "", std::nullopt, "msg", std::nullopt, ErrorCategory::Connection};
@@ -326,10 +341,29 @@ TEST_CASE("FromHttpStatus: 423 maps to LockConflict", "[error]") {
     CHECK(e.message.find("locked") != std::string::npos);
 }
 
-TEST_CASE("FromHttpStatus: 500 maps to Connection", "[error]") {
+TEST_CASE("FromHttpStatus: 500 maps to Internal", "[error]") {
     auto e = Error::FromHttpStatus("Op", "/ep", 500);
-    CHECK(e.category == ErrorCategory::Connection);
+    CHECK(e.category == ErrorCategory::Internal);
     CHECK(e.message.find("internal error") != std::string::npos);
+}
+
+TEST_CASE("FromHttpStatus: 408 maps to Timeout", "[error]") {
+    auto e = Error::FromHttpStatus("Op", "/ep", 408);
+    CHECK(e.category == ErrorCategory::Timeout);
+}
+
+TEST_CASE("FromHttpStatus: 429 maps to Timeout", "[error]") {
+    auto e = Error::FromHttpStatus("Op", "/ep", 429);
+    CHECK(e.category == ErrorCategory::Timeout);
+}
+
+TEST_CASE("FromHttpStatus: 500 includes SAP error in message", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>BW Search is not activated</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("Op", "/ep", 500, body);
+    CHECK(e.category == ErrorCategory::Internal);
+    CHECK(e.message.find("BW Search is not activated") != std::string::npos);
+    REQUIRE(e.sap_error.has_value());
+    CHECK(e.sap_error.value() == "BW Search is not activated");
 }
 
 TEST_CASE("FromHttpStatus: 502/503/504 map to Connection", "[error]") {
@@ -369,4 +403,68 @@ TEST_CASE("FromHttpStatus: HTML body without XML tags yields no sap_error", "[er
     std::string body = "<html><body><h1>500 Internal Server Error</h1></body></html>";
     auto e = Error::FromHttpStatus("Op", "/ep", 500, body);
     CHECK_FALSE(e.sap_error.has_value());
+}
+
+// ===========================================================================
+// Hint field
+// ===========================================================================
+
+TEST_CASE("Error: ToString includes hint when present", "[error]") {
+    Error e;
+    e.operation = "BwSearch";
+    e.message = "Server error";
+    e.hint = "Activate BW Search in transaction RSOSM";
+    auto s = e.ToString();
+    CHECK(s.find("Hint: Activate BW Search") != std::string::npos);
+}
+
+TEST_CASE("Error: ToString omits hint when absent", "[error]") {
+    Error e;
+    e.operation = "Search";
+    e.message = "Not found";
+    auto s = e.ToString();
+    CHECK(s.find("Hint") == std::string::npos);
+}
+
+TEST_CASE("Error: ToJson includes hint field when present", "[error]") {
+    Error e;
+    e.operation = "BwSearch";
+    e.endpoint = "/bw";
+    e.message = "err";
+    e.hint = "Use RSOSM";
+    auto json = e.ToJson();
+    CHECK(json.find("\"hint\":\"Use RSOSM\"") != std::string::npos);
+}
+
+TEST_CASE("Error: ToJson omits hint field when absent", "[error]") {
+    Error e;
+    e.operation = "Search";
+    e.message = "err";
+    auto json = e.ToJson();
+    CHECK(json.find("hint") == std::string::npos);
+}
+
+TEST_CASE("Error: equality includes hint", "[error]") {
+    Error e1;
+    e1.operation = "Op";
+    e1.message = "msg";
+    e1.hint = "some hint";
+
+    Error e2;
+    e2.operation = "Op";
+    e2.message = "msg";
+    e2.hint = "some hint";
+
+    Error e3;
+    e3.operation = "Op";
+    e3.message = "msg";
+    e3.hint = "different hint";
+
+    Error e4;
+    e4.operation = "Op";
+    e4.message = "msg";
+
+    CHECK(e1 == e2);
+    CHECK(e1 != e3);
+    CHECK(e1 != e4);
 }

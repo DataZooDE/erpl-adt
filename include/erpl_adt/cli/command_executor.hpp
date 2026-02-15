@@ -19,9 +19,16 @@ void PrintLoginHelp(std::ostream& out, bool color);
 // Print logout-specific help.
 void PrintLogoutHelp(std::ostream& out, bool color);
 
+// Print detailed BW group help with sub-categories and ANSI formatting.
+void PrintBwGroupHelp(const CommandRouter& router, std::ostream& out, bool color);
+
 // Check if argv contains a new-style command group (search, object, etc.)
 // rather than a legacy deploy subcommand.
 bool IsNewStyleCommand(int argc, const char* const* argv);
+
+// Check if argv is a BW group help request (bare "bw", "bw --help", "bw help").
+// Returns false for "bw <action> ..." — those are handled by the router.
+bool IsBwHelpRequest(int argc, const char* const* argv);
 
 // Handle `erpl-adt login ...` — save credentials to .adt.creds.
 int HandleLogin(int argc, const char* const* argv);

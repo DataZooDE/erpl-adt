@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/testing.hpp>
+#include "adt_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -26,7 +27,7 @@ std::string BuildTestRunXml(const std::string& uri) {
         "  <adtcore:objectSets xmlns:adtcore=\"http://www.sap.com/adt/core\">\n"
         "    <objectSet kind=\"inclusive\">\n"
         "      <adtcore:objectReferences>\n"
-        "        <adtcore:objectReference adtcore:uri=\"" + uri + "\"/>\n"
+        "        <adtcore:objectReference adtcore:uri=\"" + adt_utils::XmlEscape(uri) + "\"/>\n"
         "      </adtcore:objectReferences>\n"
         "    </objectSet>\n"
         "  </adtcore:objectSets>\n"
@@ -44,11 +45,11 @@ const char* GetAttr(const tinyxml2::XMLElement* el,
 Result<TestRunResult, Error> ParseTestRunResult(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<TestRunResult, Error>::Err(Error{
-            "RunTests", "", std::nullopt,
-            "Failed to parse test run response XML", std::nullopt,
-            ErrorCategory::TestFailure});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "RunTests", "",
+            "Failed to parse test run response XML",
+            ErrorCategory::TestFailure)) {
+        return Result<TestRunResult, Error>::Err(std::move(*parse_error));
     }
 
     TestRunResult result;

@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/bw_object.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
 #include <algorithm>
@@ -71,14 +73,43 @@ std::string GetAttr(const tinyxml2::XMLElement* el,
     return val ? val : "";
 }
 
+// Get child element text, trying multiple element names.
+std::string GetChildText(const tinyxml2::XMLElement* parent, const char* name1,
+                         const char* name2 = nullptr) {
+    auto* el = parent->FirstChildElement(name1);
+    if (!el && name2) el = parent->FirstChildElement(name2);
+    if (el && el->GetText()) return el->GetText();
+    return "";
+}
+
+// Check if an attribute name is namespace noise we should skip.
+bool IsNamespaceAttr(const char* name) {
+    if (!name) return true;
+    std::string s(name);
+    return s.find("xmlns") == 0 || s.find("xsi:") == 0;
+}
+
+// Known root attributes already extracted into named fields.
+bool IsKnownAttr(const char* name) {
+    static const char* known[] = {
+        "name", "description", "objectDesc", "packageName", "package",
+        "changedBy", "lastChangedBy", "changedAt", "lastChangedAt",
+        "bwModel:description", nullptr
+    };
+    for (auto* k = known; *k; ++k) {
+        if (std::strcmp(name, *k) == 0) return true;
+    }
+    return false;
+}
+
 Result<BwObjectMetadata, Error> ParseObjectResponse(
     std::string_view xml, const std::string& path,
     const std::string& type, const std::string& name) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwObjectMetadata, Error>::Err(Error{
-            "BwReadObject", path, std::nullopt,
-            "Failed to parse BW object response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwReadObject", path,
+            "Failed to parse BW object response XML")) {
+        return Result<BwObjectMetadata, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -94,6 +125,9 @@ Result<BwObjectMetadata, Error> ParseObjectResponse(
     meta.type = type;
     meta.raw_xml = std::string(xml);
 
+    // xsi:type → sub_type
+    meta.sub_type = GetAttr(root, "xsi:type");
+
     // Try common attribute locations
     meta.description = GetAttr(root, "description", "objectDesc");
     if (meta.description.empty()) {
@@ -102,6 +136,49 @@ Result<BwObjectMetadata, Error> ParseObjectResponse(
     meta.package_name = GetAttr(root, "packageName", "package");
     meta.last_changed_by = GetAttr(root, "changedBy", "lastChangedBy");
     meta.last_changed_at = GetAttr(root, "changedAt", "lastChangedAt");
+
+    // Short/long descriptions from child elements
+    meta.short_description = GetChildText(root, "shortDescription");
+    meta.long_description = GetChildText(root, "longDescription");
+
+    // tlogoProperties — present on most BW object types
+    auto* tlp = root->FirstChildElement("tlogoProperties");
+    if (tlp) {
+        meta.responsible = GetChildText(tlp, "adtcore:responsible", "responsible");
+        meta.created_at = GetChildText(tlp, "adtcore:createdAt", "createdAt");
+        meta.language = GetChildText(tlp, "adtcore:language", "language");
+        meta.info_area = GetChildText(tlp, "infoArea");
+        meta.status = GetChildText(tlp, "objectStatus");
+        meta.content_state = GetChildText(tlp, "contentState");
+
+        // Override changed-by/at from tlogoProperties if root attrs were empty
+        if (meta.last_changed_by.empty()) {
+            meta.last_changed_by = GetChildText(tlp, "adtcore:changedBy", "changedBy");
+        }
+        if (meta.last_changed_at.empty()) {
+            meta.last_changed_at = GetChildText(tlp, "adtcore:changedAt", "changedAt");
+        }
+    }
+
+    // Collect interesting root attributes into properties map
+    for (auto* attr = root->FirstAttribute(); attr; attr = attr->Next()) {
+        const char* attr_name = attr->Name();
+        if (IsNamespaceAttr(attr_name) || IsKnownAttr(attr_name)) continue;
+        meta.properties[attr_name] = attr->Value();
+    }
+
+    // Collect key child element text values into properties
+    // (type-specific elements like infoObjectType, dataType)
+    static const char* child_props[] = {
+        "infoObjectType", "dataType", "aggregationType",
+        "compounding", nullptr
+    };
+    for (auto* cp = child_props; *cp; ++cp) {
+        auto val = GetChildText(root, *cp);
+        if (!val.empty()) {
+            meta.properties[*cp] = val;
+        }
+    }
 
     return Result<BwObjectMetadata, Error>::Ok(std::move(meta));
 }
@@ -114,11 +191,11 @@ Result<BwLockResult, Error> ParseLockResponse(
     std::string wrapped = "<root>" + std::string(xml) + "</root>";
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(wrapped.data(), wrapped.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwLockResult, Error>::Err(Error{
-            "BwLockObject", path, std::nullopt,
-            "Failed to parse BW lock response XML", std::nullopt,
-            ErrorCategory::LockConflict});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, wrapped, "BwLockObject", path,
+            "Failed to parse BW lock response XML",
+            ErrorCategory::LockConflict)) {
+        return Result<BwLockResult, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -150,16 +227,15 @@ Result<BwLockResult, Error> ParseLockResponse(
     }
 
     // Extract headers
-    auto ts_it = response_headers.find("timestamp");
-    if (ts_it != response_headers.end()) {
-        result.timestamp = ts_it->second;
+    auto timestamp = adt_utils::FindHeaderValueCi(response_headers,
+                                                  "timestamp");
+    if (timestamp.has_value()) {
+        result.timestamp = *timestamp;
     }
-    auto pkg_it = response_headers.find("Development-Class");
-    if (pkg_it == response_headers.end()) {
-        pkg_it = response_headers.find("development-class");
-    }
-    if (pkg_it != response_headers.end()) {
-        result.package_name = pkg_it->second;
+    auto package_name = adt_utils::FindHeaderValueCi(response_headers,
+                                                     "Development-Class");
+    if (package_name.has_value()) {
+        result.package_name = *package_name;
     }
 
     return Result<BwLockResult, Error>::Ok(std::move(result));
@@ -173,19 +249,25 @@ Result<BwLockResult, Error> ParseLockResponse(
 Result<BwObjectMetadata, Error> BwReadObject(
     IAdtSession& session,
     const BwReadOptions& options) {
-    if (options.object_type.empty()) {
-        return Result<BwObjectMetadata, Error>::Err(Error{
-            "BwReadObject", "", std::nullopt,
-            "Object type must not be empty", std::nullopt});
-    }
-    if (options.object_name.empty()) {
-        return Result<BwObjectMetadata, Error>::Err(Error{
-            "BwReadObject", "", std::nullopt,
-            "Object name must not be empty", std::nullopt});
+    bool has_uri = options.uri.has_value() && !options.uri->empty();
+
+    if (!has_uri) {
+        if (options.object_type.empty()) {
+            return Result<BwObjectMetadata, Error>::Err(Error{
+                "BwReadObject", "", std::nullopt,
+                "Object type must not be empty", std::nullopt});
+        }
+        if (options.object_name.empty()) {
+            return Result<BwObjectMetadata, Error>::Err(Error{
+                "BwReadObject", "", std::nullopt,
+                "Object name must not be empty", std::nullopt});
+        }
     }
 
     std::string path;
-    if (options.source_system.has_value()) {
+    if (has_uri) {
+        path = *options.uri;
+    } else if (options.source_system.has_value()) {
         path = BuildObjectPathWithSourceSystem(
             options.object_type, options.object_name,
             *options.source_system, options.version);
@@ -195,7 +277,13 @@ Result<BwObjectMetadata, Error> BwReadObject(
     }
 
     HttpHeaders headers;
-    headers["Accept"] = GetDefaultAcceptType(options.object_type);
+    if (options.content_type.has_value() && !options.content_type->empty()) {
+        headers["Accept"] = *options.content_type;
+    } else if (options.object_type.empty()) {
+        headers["Accept"] = "application/xml";
+    } else {
+        headers["Accept"] = GetDefaultAcceptType(options.object_type);
+    }
 
     auto response = session.Get(path, headers);
     if (response.IsErr()) {
@@ -210,8 +298,9 @@ Result<BwObjectMetadata, Error> BwReadObject(
             std::nullopt, ErrorCategory::NotFound});
     }
     if (http.status_code != 200) {
-        return Result<BwObjectMetadata, Error>::Err(
-            Error::FromHttpStatus("BwReadObject", path, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwReadObject", path, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwObjectMetadata, Error>::Err(std::move(error));
     }
 
     if (options.raw) {
@@ -261,8 +350,9 @@ Result<BwLockResult, Error> BwLockObject(
             ErrorCategory::LockConflict});
     }
     if (http.status_code != 200) {
-        return Result<BwLockResult, Error>::Err(
-            Error::FromHttpStatus("BwLockObject", path, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwLockObject", path, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwLockResult, Error>::Err(std::move(error));
     }
 
     return ParseLockResponse(http.body, http.headers, path);
@@ -285,8 +375,9 @@ Result<void, Error> BwUnlockObject(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        return Result<void, Error>::Err(
-            Error::FromHttpStatus("BwUnlockObject", path, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwUnlockObject", path, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
     }
 
     return Result<void, Error>::Ok();
@@ -313,17 +404,20 @@ Result<void, Error> BwSaveObject(
         save_url += "&timestamp=" + options.timestamp;
     }
 
-    auto content_type = GetDefaultAcceptType(options.object_type);
+    auto ct = (options.content_type.has_value() && !options.content_type->empty())
+        ? *options.content_type
+        : GetDefaultAcceptType(options.object_type);
 
-    auto response = session.Put(save_url, options.content, content_type);
+    auto response = session.Put(save_url, options.content, ct);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        return Result<void, Error>::Err(
-            Error::FromHttpStatus("BwSaveObject", path, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwSaveObject", path, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
     }
 
     return Result<void, Error>::Ok();
@@ -351,8 +445,9 @@ Result<void, Error> BwDeleteObject(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        return Result<void, Error>::Err(
-            Error::FromHttpStatus("BwDeleteObject", path, http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwDeleteObject", path, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<void, Error>::Err(std::move(error));
     }
 
     return Result<void, Error>::Ok();

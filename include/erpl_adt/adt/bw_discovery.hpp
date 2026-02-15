@@ -47,4 +47,15 @@ struct BwDiscoveryResult {
     const std::string& scheme,
     const std::string& term);
 
+// ---------------------------------------------------------------------------
+// BwResolveContentType — find the Accept content type for a given tlogo.
+//
+// Searches the discovery result for a service whose term matches the tlogo
+// (case-insensitive) and returns its content_type.  Returns empty string if
+// no match is found.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::string BwResolveContentType(
+    const BwDiscoveryResult& discovery,
+    const std::string& tlogo);
+
 } // namespace erpl_adt

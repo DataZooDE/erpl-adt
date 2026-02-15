@@ -3,6 +3,7 @@
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -12,15 +13,30 @@ namespace erpl_adt {
 // BwObjectMetadata — parsed metadata from a BW object read.
 // ---------------------------------------------------------------------------
 struct BwObjectMetadata {
+    // Identity
     std::string name;
-    std::string type;            // Tlogo, e.g. "ADSO", "IOBJ"
+    std::string type;              // Tlogo, e.g. "ADSO", "IOBJ"
+    std::string sub_type;          // xsi:type value, e.g. "iobj:TimeCharacteristic"
     std::string description;
-    std::string version;         // "a", "m", "d"
-    std::string status;          // "ACT", "INA"
+    std::string long_description;
+    std::string short_description;
+    std::string version;           // "a", "m", "d"
+
+    // tlogoProperties + root attributes
+    std::string status;            // objectStatus: "active", "inactive"
+    std::string content_state;     // ACT, INA, MOD
+    std::string info_area;
+    std::string responsible;
+    std::string created_at;
     std::string package_name;
     std::string last_changed_by;
     std::string last_changed_at;
-    std::string raw_xml;         // Full XML for save-back workflows
+    std::string language;
+
+    // Type-specific properties (root attributes + key child element text)
+    std::map<std::string, std::string> properties;
+
+    std::string raw_xml;           // Full XML for save-back workflows
 };
 
 // ---------------------------------------------------------------------------
@@ -31,10 +47,12 @@ struct BwObjectMetadata {
 // ---------------------------------------------------------------------------
 
 struct BwReadOptions {
-    std::string object_type;               // Required: tlogo (e.g. "ADSO")
+    std::string object_type;               // Required: tlogo (e.g. "ADSO") — used for Accept header
     std::string object_name;               // Required: name (e.g. "ZSALES")
     std::string version = "a";             // "a" (active), "m" (modified), "d" (delivery)
     std::optional<std::string> source_system;  // Required for RSDS, APCO
+    std::optional<std::string> uri;        // Direct URI override (from search results)
+    std::optional<std::string> content_type;   // From discovery, overrides default Accept header
     bool raw = false;                      // Return raw XML only
 };
 
@@ -90,6 +108,7 @@ struct BwSaveOptions {
     std::string lock_handle;
     std::string transport;           // CORRNR
     std::string timestamp;
+    std::optional<std::string> content_type;   // From discovery, overrides default Content-Type
 };
 
 [[nodiscard]] Result<void, Error> BwSaveObject(

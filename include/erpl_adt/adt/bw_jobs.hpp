@@ -95,4 +95,23 @@ struct BwJobMessage {
     IAdtSession& session,
     const std::string& job_guid);
 
+// ---------------------------------------------------------------------------
+// BwRestartJob — restart a failed background job.
+//
+// Endpoint: POST /sap/bw/modeling/jobs/{guid}/restart
+// Prerequisite: job must be in error state (status "E").
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<void, Error> BwRestartJob(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwCleanupJob — cleanup resources of a completed/failed job.
+//
+// Endpoint: DELETE /sap/bw/modeling/jobs/{guid}/cleanup
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<void, Error> BwCleanupJob(
+    IAdtSession& session,
+    const std::string& job_guid);
+
 } // namespace erpl_adt

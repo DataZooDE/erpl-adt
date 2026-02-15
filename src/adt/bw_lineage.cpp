@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/bw_lineage.hpp>
 
+#include "adt_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -43,10 +44,12 @@ Result<std::string, Error> FetchObjectXml(
     const std::string& type,
     const std::string& name,
     const std::string& version,
-    const char* operation) {
+    const char* operation,
+    const std::string& content_type_override = "") {
     auto path = BuildObjectPath(type, name, version);
     HttpHeaders headers;
-    headers["Accept"] = GetDefaultAcceptType(type);
+    headers["Accept"] = content_type_override.empty()
+        ? GetDefaultAcceptType(type) : content_type_override;
 
     auto response = session.Get(path, headers);
     if (response.IsErr()) {
@@ -97,9 +100,10 @@ std::vector<BwTransformationField> ParseTransformationFields(
 Result<BwTransformationDetail, Error> BwReadTransformation(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version) {
+    const std::string& version,
+    const std::string& content_type) {
     auto xml_result = FetchObjectXml(session, "TRFN", name, version,
-                                      "BwReadTransformation");
+                                      "BwReadTransformation", content_type);
     if (xml_result.IsErr()) {
         return Result<BwTransformationDetail, Error>::Err(
             std::move(xml_result).Error());
@@ -107,10 +111,11 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
 
     const auto& xml = xml_result.Value();
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwTransformationDetail, Error>::Err(Error{
-            "BwReadTransformation", "", std::nullopt,
-            "Failed to parse TRFN XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwReadTransformation", "",
+            "Failed to parse TRFN XML")) {
+        return Result<BwTransformationDetail, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -190,19 +195,20 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
 Result<BwAdsoDetail, Error> BwReadAdsoDetail(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version) {
+    const std::string& version,
+    const std::string& content_type) {
     auto xml_result = FetchObjectXml(session, "ADSO", name, version,
-                                      "BwReadAdsoDetail");
+                                      "BwReadAdsoDetail", content_type);
     if (xml_result.IsErr()) {
         return Result<BwAdsoDetail, Error>::Err(std::move(xml_result).Error());
     }
 
     const auto& xml = xml_result.Value();
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwAdsoDetail, Error>::Err(Error{
-            "BwReadAdsoDetail", "", std::nullopt,
-            "Failed to parse ADSO XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwReadAdsoDetail", "",
+            "Failed to parse ADSO XML")) {
+        return Result<BwAdsoDetail, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -253,19 +259,20 @@ Result<BwAdsoDetail, Error> BwReadAdsoDetail(
 Result<BwDtpDetail, Error> BwReadDtpDetail(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version) {
+    const std::string& version,
+    const std::string& content_type) {
     auto xml_result = FetchObjectXml(session, "DTPA", name, version,
-                                      "BwReadDtpDetail");
+                                      "BwReadDtpDetail", content_type);
     if (xml_result.IsErr()) {
         return Result<BwDtpDetail, Error>::Err(std::move(xml_result).Error());
     }
 
     const auto& xml = xml_result.Value();
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<BwDtpDetail, Error>::Err(Error{
-            "BwReadDtpDetail", "", std::nullopt,
-            "Failed to parse DTP XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwReadDtpDetail", "",
+            "Failed to parse DTP XML")) {
+        return Result<BwDtpDetail, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();

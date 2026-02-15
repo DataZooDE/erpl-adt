@@ -42,7 +42,8 @@ struct BwTransformationDetail {
 [[nodiscard]] Result<BwTransformationDetail, Error> BwReadTransformation(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version = "a");
+    const std::string& version = "a",
+    const std::string& content_type = "");
 
 // ---------------------------------------------------------------------------
 // ADSO — field list for lineage.
@@ -68,7 +69,8 @@ struct BwAdsoDetail {
 [[nodiscard]] Result<BwAdsoDetail, Error> BwReadAdsoDetail(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version = "a");
+    const std::string& version = "a",
+    const std::string& content_type = "");
 
 // ---------------------------------------------------------------------------
 // DTP — source/target connections for lineage.
@@ -87,6 +89,7 @@ struct BwDtpDetail {
 [[nodiscard]] Result<BwDtpDetail, Error> BwReadDtpDetail(
     IAdtSession& session,
     const std::string& name,
-    const std::string& version = "a");
+    const std::string& version = "a",
+    const std::string& content_type = "");
 
 } // namespace erpl_adt

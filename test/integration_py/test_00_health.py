@@ -21,13 +21,13 @@ class TestHealth:
     def test_discover_services(self, cli):
         """CLI discover services command succeeds."""
         data = cli.run_ok("discover", "services")
-        assert "services" in data
-        assert isinstance(data["services"], list)
+        assert "workspaces" in data
+        assert isinstance(data["workspaces"], list)
 
     def test_discover_has_services(self, cli):
-        """Discovery returns at least one service."""
+        """Discovery returns at least one workspace with services."""
         data = cli.run_ok("discover", "services")
-        assert len(data["services"]) > 0
+        assert len(data["workspaces"]) > 0
 
     def test_bad_credentials_fail(self, cli):
         """CLI with bad credentials returns non-zero exit code."""
@@ -49,7 +49,7 @@ class TestHealth:
         result = cli.run_raw("--version")
         assert result.returncode == 0
         assert "erpl-adt" in result.stdout
-        assert "0." in result.stdout  # version starts with 0.x
+        assert "20" in result.stdout  # version starts with year (e.g., 2026.x)
 
     def test_help_output(self, cli):
         """Running with just a group and no action prints help with command list."""
@@ -75,7 +75,7 @@ class TestHealth:
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
-        assert "services" in data
+        assert "workspaces" in data
 
     def test_verbose_flag(self, cli, sap_config):
         """-v flag produces INFO-level log output on stderr."""
@@ -172,7 +172,7 @@ class TestLoginLogout:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
-        assert "services" in data
+        assert "workspaces" in data
 
     def test_logout_deletes_creds(self, cli, tmp_path):
         """logout command deletes .adt.creds file."""

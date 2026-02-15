@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iobj:infoObject xmlns:iobj="http://www.sap.com/bw/modeling/iobj"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:adtcore="http://www.sap.com/adt/core"
+    xsi:type="iobj:TimeCharacteristic"
+    name="0CALMONTH"
+    description="Calendar Year/Month"
+    fieldName="CALMONTH"
+    conversionRoutine="PERI6"
+    outputLength="7"
+    dataType="NUMC"
+    packageName="NODESNOTCONNECTED">
+  <shortDescription>Cal. Year/Month</shortDescription>
+  <longDescription>Calendar Year/Month for reporting and analysis</longDescription>
+  <tlogoProperties>
+    <adtcore:responsible>SAP</adtcore:responsible>
+    <adtcore:createdAt>2017-07-13T09:27:01Z</adtcore:createdAt>
+    <adtcore:changedBy>DDIC</adtcore:changedBy>
+    <adtcore:changedAt>2017-07-13T09:27:01Z</adtcore:changedAt>
+    <adtcore:language>EN</adtcore:language>
+    <infoArea>NODESNOTCONNECTED</infoArea>
+    <objectStatus>active</objectStatus>
+    <contentState>ACT</contentState>
+  </tlogoProperties>
+  <infoObjectType>TIM</infoObjectType>
+  <attributes>
+    <attribute name="0CALMONTH2" description="Calendar Year/Month Alt"/>
+  </attributes>
+</iobj:infoObject>

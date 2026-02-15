@@ -15,8 +15,8 @@ class TestExploreCodebase:
     def test_step1_discover_services(self, cli):
         """Step 1: Discover system capabilities."""
         data = cli.run_ok("discover", "services")
-        assert "services" in data
-        assert len(data["services"]) > 0
+        assert "workspaces" in data
+        assert len(data["workspaces"]) > 0
         assert "has_packages" in data
         # Store for later steps
         self.__class__.capabilities = data

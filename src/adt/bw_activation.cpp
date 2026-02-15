@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/bw_activation.hpp>
 
+#include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
 #include <string>
@@ -69,13 +71,10 @@ Result<BwActivationResult, Error> ParseActivationResponse(
     BwActivationResult result;
 
     // Check for job GUID in Location header (background mode)
-    auto loc_it = response_headers.find("Location");
-    if (loc_it == response_headers.end()) {
-        loc_it = response_headers.find("location");
-    }
-    if (loc_it != response_headers.end()) {
+    auto location = adt_utils::FindHeaderValueCi(response_headers, "Location");
+    if (location.has_value()) {
         // Extract GUID from URL like /sap/bw/modeling/jobs/ABC123...
-        auto& loc = loc_it->second;
+        const auto& loc = *location;
         auto jobs_pos = loc.find("/jobs/");
         if (jobs_pos != std::string::npos) {
             result.job_guid = loc.substr(jobs_pos + 6);
@@ -187,9 +186,10 @@ Result<BwActivationResult, Error> BwActivateObjects(
     const auto& http = response.Value();
     // 200 = sync result, 202 = async job started
     if (http.status_code != 200 && http.status_code != 202) {
-        return Result<BwActivationResult, Error>::Err(
-            Error::FromHttpStatus("BwActivateObjects", url,
-                                  http.status_code, http.body));
+        auto error = Error::FromHttpStatus("BwActivateObjects", url,
+                                           http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwActivationResult, Error>::Err(std::move(error));
     }
 
     return ParseActivationResponse(http.body, http.headers);

@@ -137,6 +137,204 @@ TEST_CASE("BwReadObject: empty name returns error", "[adt][bw][object]") {
     CHECK(result.Error().message.find("name") != std::string::npos);
 }
 
+TEST_CASE("BwReadObject: uri overrides constructed path", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "ELEM";
+    opts.object_name = "0D_FC_NW_C01_Q0007";
+    opts.uri = "/sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a");
+}
+
+TEST_CASE("BwReadObject: uri with empty type/name still works", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.uri = "/sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a");
+    // Falls back to application/xml when type is empty
+    CHECK(mock.GetCalls()[0].headers.at("Accept") == "application/xml");
+}
+
+TEST_CASE("BwReadObject: uri with type uses type for Accept header", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "ELEM";
+    opts.uri = "/sap/bw/modeling/query/0D_FC_NW_C01_Q0007/a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.elem+xml");
+}
+
+TEST_CASE("BwReadObject: parses IOBJ with tlogoProperties", "[adt][bw][object]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_object_iobj.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    BwReadOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "0CALMONTH";
+    opts.version = "a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& meta = result.Value();
+    CHECK(meta.name == "0CALMONTH");
+    CHECK(meta.type == "IOBJ");
+    CHECK(meta.description == "Calendar Year/Month");
+    CHECK(meta.sub_type == "iobj:TimeCharacteristic");
+    CHECK(meta.short_description == "Cal. Year/Month");
+    CHECK(meta.long_description == "Calendar Year/Month for reporting and analysis");
+
+    // tlogoProperties
+    CHECK(meta.responsible == "SAP");
+    CHECK(meta.created_at == "2017-07-13T09:27:01Z");
+    CHECK(meta.last_changed_by == "DDIC");
+    CHECK(meta.last_changed_at == "2017-07-13T09:27:01Z");
+    CHECK(meta.language == "EN");
+    CHECK(meta.info_area == "NODESNOTCONNECTED");
+    CHECK(meta.status == "active");
+    CHECK(meta.content_state == "ACT");
+    CHECK(meta.package_name == "NODESNOTCONNECTED");
+
+    // Root attributes in properties
+    CHECK(meta.properties.at("fieldName") == "CALMONTH");
+    CHECK(meta.properties.at("conversionRoutine") == "PERI6");
+    CHECK(meta.properties.at("outputLength") == "7");
+    CHECK(meta.properties.at("dataType") == "NUMC");
+
+    // Child element text in properties
+    CHECK(meta.properties.at("infoObjectType") == "TIM");
+}
+
+TEST_CASE("BwReadObject: ADSO without tlogoProperties still works", "[adt][bw][object]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_object_adso.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    BwReadOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES_DATA";
+    opts.version = "a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& meta = result.Value();
+    // These should still work from root attributes
+    CHECK(meta.description == "Sales DataStore Object");
+    CHECK(meta.package_name == "ZTEST");
+    CHECK(meta.last_changed_by == "DEVELOPER");
+
+    // tlogoProperties fields should be empty (not present in this fixture)
+    CHECK(meta.responsible.empty());
+    CHECK(meta.info_area.empty());
+    CHECK(meta.status.empty());
+    CHECK(meta.content_state.empty());
+    CHECK(meta.language.empty());
+    CHECK(meta.sub_type.empty());
+}
+
+TEST_CASE("BwReadObject: inline XML with tlogoProperties", "[adt][bw][object]") {
+    MockAdtSession mock;
+    std::string xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<obj name="ZTEST" description="Test Object">
+  <tlogoProperties>
+    <responsible>TESTUSER</responsible>
+    <createdAt>2025-01-01</createdAt>
+    <changedBy>ADMIN</changedBy>
+    <changedAt>2025-06-15</changedAt>
+    <language>DE</language>
+    <infoArea>ZAREA</infoArea>
+    <objectStatus>inactive</objectStatus>
+    <contentState>MOD</contentState>
+  </tlogoProperties>
+</obj>)";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    BwReadOptions opts;
+    opts.object_type = "TEST";
+    opts.object_name = "ZTEST";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& meta = result.Value();
+    // Non-namespaced tlogoProperties (plain element names)
+    CHECK(meta.responsible == "TESTUSER");
+    CHECK(meta.created_at == "2025-01-01");
+    CHECK(meta.last_changed_by == "ADMIN");
+    CHECK(meta.last_changed_at == "2025-06-15");
+    CHECK(meta.language == "DE");
+    CHECK(meta.info_area == "ZAREA");
+    CHECK(meta.status == "inactive");
+    CHECK(meta.content_state == "MOD");
+}
+
+TEST_CASE("BwReadObject: empty tlogoProperties is handled gracefully", "[adt][bw][object]") {
+    MockAdtSession mock;
+    std::string xml = R"(<obj name="ZMIN" description="Minimal">
+  <tlogoProperties/>
+</obj>)";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    BwReadOptions opts;
+    opts.object_type = "TEST";
+    opts.object_name = "ZMIN";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& meta = result.Value();
+    CHECK(meta.description == "Minimal");
+    CHECK(meta.responsible.empty());
+    CHECK(meta.status.empty());
+}
+
+TEST_CASE("BwReadObject: namespace attributes are excluded from properties", "[adt][bw][object]") {
+    MockAdtSession mock;
+    std::string xml = R"(<obj xmlns:ns="http://example.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:type="ns:SubType" name="Z1" description="Test" customAttr="value42"/>)";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    BwReadOptions opts;
+    opts.object_type = "TEST";
+    opts.object_name = "Z1";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& meta = result.Value();
+    CHECK(meta.sub_type == "ns:SubType");
+    CHECK(meta.properties.count("customAttr") == 1);
+    CHECK(meta.properties.at("customAttr") == "value42");
+    // xmlns and xsi attributes should NOT be in properties
+    CHECK(meta.properties.count("xmlns:ns") == 0);
+    CHECK(meta.properties.count("xsi:type") == 0);
+    // Already-extracted attrs should NOT be in properties
+    CHECK(meta.properties.count("name") == 0);
+    CHECK(meta.properties.count("description") == 0);
+}
+
 // ===========================================================================
 // BwLockObject
 // ===========================================================================
@@ -290,4 +488,80 @@ TEST_CASE("BwDeleteObject: 204 is success", "[adt][bw][object]") {
 
     auto result = BwDeleteObject(mock, "ADSO", "ZSALES", "H1", "");
     REQUIRE(result.IsOk());
+}
+
+// ===========================================================================
+// BwReadObject content_type override
+// ===========================================================================
+
+TEST_CASE("BwReadObject: content_type override is used as Accept header", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "0CALMONTH";
+    opts.content_type = "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml");
+}
+
+TEST_CASE("BwReadObject: empty content_type falls back to default", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content_type = "";  // Explicitly empty
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwReadObject: unset content_type falls back to default", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    // content_type not set (nullopt)
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+// ===========================================================================
+// BwSaveObject content_type override
+// ===========================================================================
+
+TEST_CASE("BwSaveObject: content_type override is used as Content-Type", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "0CALMONTH";
+    opts.content = "<iobj/>";
+    opts.lock_handle = "H1";
+    opts.content_type = "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    CHECK(mock.PutCalls()[0].content_type ==
+          "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml");
 }

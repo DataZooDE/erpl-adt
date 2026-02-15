@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/checks.hpp>
+#include "adt_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -55,7 +56,7 @@ Result<void, Error> CreateRun(
         "  <objectSets xmlns:adtcore=\"http://www.sap.com/adt/core\">\n"
         "    <objectSet kind=\"inclusive\">\n"
         "      <adtcore:objectReferences>\n"
-        "        <adtcore:objectReference adtcore:uri=\"" + object_uri + "\"/>\n"
+        "        <adtcore:objectReference adtcore:uri=\"" + adt_utils::XmlEscape(object_uri) + "\"/>\n"
         "      </adtcore:objectReferences>\n"
         "    </objectSet>\n"
         "  </objectSets>\n"
@@ -101,11 +102,12 @@ Result<std::vector<AtcFinding>, Error> GetWorklistFindings(
 
     // Parse findings from worklist XML.
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<AtcFinding>, Error>::Err(Error{
-            "RunAtcCheck", url, std::nullopt,
-            "Failed to parse ATC worklist XML", std::nullopt,
-            ErrorCategory::CheckError});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "RunAtcCheck", url,
+            "Failed to parse ATC worklist XML",
+            ErrorCategory::CheckError)) {
+        return Result<std::vector<AtcFinding>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<AtcFinding> findings;

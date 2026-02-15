@@ -37,10 +37,19 @@ struct BwSearchOptions {
     std::string query;                               // Required: search term
     int max_results = 100;                           // Maximum results
     std::optional<std::string> object_type;          // e.g. "ADSO", "IOBJ"
+    std::optional<std::string> object_sub_type;      // e.g. "REP", "SOB", "RKF"
     std::optional<std::string> object_status;        // "ACT", "INA", "OFF"
     std::optional<std::string> object_version;       // "A", "M", "N"
     std::optional<std::string> changed_by;           // Last changed by user
+    std::optional<std::string> changed_on_from;      // Changed on or after date
+    std::optional<std::string> changed_on_to;        // Changed on or before date
+    std::optional<std::string> created_by;           // Created by user
+    std::optional<std::string> created_on_from;      // Created on or after date
+    std::optional<std::string> created_on_to;        // Created on or before date
+    std::optional<std::string> depends_on_name;      // Objects depending on name
+    std::optional<std::string> depends_on_type;      // Objects depending on type
     bool search_in_description = false;              // Also search descriptions
+    bool search_in_name = true;                      // Search in names (default)
 };
 
 [[nodiscard]] Result<std::vector<BwSearchResult>, Error> BwSearchObjects(

@@ -143,3 +143,73 @@ TEST_CASE("BwResolveEndpoint: not found returns error", "[adt][bw][discovery]") 
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::NotFound);
 }
+
+// ===========================================================================
+// BwResolveContentType
+// ===========================================================================
+
+TEST_CASE("BwResolveContentType: finds matching term case-insensitively", "[adt][bw][discovery]") {
+    BwDiscoveryResult disc;
+    disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
+                              "/sap/bw/modeling/adso/{adsonm}/{version}",
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+    disc.services.push_back({"http://www.sap.com/bw/modeling/iobj", "iobj",
+                              "/sap/bw/modeling/iobj/{iobjnm}/{version}",
+                              "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml"});
+
+    // Uppercase TLOGO matches lowercase term
+    CHECK(BwResolveContentType(disc, "ADSO") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+    CHECK(BwResolveContentType(disc, "IOBJ") == "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml");
+
+    // Lowercase also works
+    CHECK(BwResolveContentType(disc, "adso") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwResolveContentType: returns empty for unknown type", "[adt][bw][discovery]") {
+    BwDiscoveryResult disc;
+    disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
+                              "/sap/bw/modeling/adso/{adsonm}/{version}",
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+
+    CHECK(BwResolveContentType(disc, "UNKNOWN") == "");
+    CHECK(BwResolveContentType(disc, "") == "");
+}
+
+TEST_CASE("BwResolveContentType: skips entries with empty content_type", "[adt][bw][discovery]") {
+    BwDiscoveryResult disc;
+    // First entry has empty content_type, second has it set
+    disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
+                              "/sap/bw/modeling/adso/{adsonm}/{version}", ""});
+    disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
+                              "/sap/bw/modeling/adso/{adsonm}/{version}",
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+
+    CHECK(BwResolveContentType(disc, "ADSO") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwResolveContentType: works with real discovery fixture", "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto disc_result = BwDiscover(mock);
+    REQUIRE(disc_result.IsOk());
+
+    const auto& disc = disc_result.Value();
+
+    // IOBJ should have versioned content type, not plain application/xml
+    auto iobj_ct = BwResolveContentType(disc, "IOBJ");
+    CHECK_FALSE(iobj_ct.empty());
+    CHECK(iobj_ct.find("iobj") != std::string::npos);
+    CHECK(iobj_ct != "application/xml");
+
+    // ADSO should also resolve
+    auto adso_ct = BwResolveContentType(disc, "ADSO");
+    CHECK_FALSE(adso_ct.empty());
+    CHECK(adso_ct.find("adso") != std::string::npos);
+
+    // HCPR should resolve (catches version drift)
+    auto hcpr_ct = BwResolveContentType(disc, "HCPR");
+    CHECK_FALSE(hcpr_ct.empty());
+    CHECK(hcpr_ct.find("hcpr") != std::string::npos);
+}

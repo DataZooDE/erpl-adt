@@ -190,6 +190,7 @@ struct Error {
     std::string message;
     std::optional<std::string> sap_error;
     ErrorCategory category = ErrorCategory::Internal;
+    std::optional<std::string> hint = std::nullopt;
 
     /// Create an Error from an HTTP status code with human-readable messages.
     /// Extracts SAP error messages from XML response bodies.
@@ -251,23 +252,58 @@ struct Error {
         if (sap_error.has_value() && !sap_error->empty()) {
             oss << " — SAP: " << *sap_error;
         }
+        if (hint.has_value() && !hint->empty()) {
+            oss << " — Hint: " << *hint;
+        }
         return oss.str();
     }
 
     [[nodiscard]] std::string ToJson() const {
+        auto escape_json = [](std::string_view s) {
+            std::string escaped;
+            escaped.reserve(s.size());
+            constexpr char kHex[] = "0123456789abcdef";
+            for (char ch : s) {
+                switch (ch) {
+                    case '"':  escaped += "\\\""; break;
+                    case '\\': escaped += "\\\\"; break;
+                    case '\b': escaped += "\\b"; break;
+                    case '\f': escaped += "\\f"; break;
+                    case '\n': escaped += "\\n"; break;
+                    case '\r': escaped += "\\r"; break;
+                    case '\t': escaped += "\\t"; break;
+                    default: {
+                        const auto c = static_cast<unsigned char>(ch);
+                        if (c < 0x20) {
+                            escaped += "\\u00";
+                            escaped += kHex[(c >> 4) & 0x0f];
+                            escaped += kHex[c & 0x0f];
+                        } else {
+                            escaped += static_cast<char>(c);
+                        }
+                        break;
+                    }
+                }
+            }
+            return escaped;
+        };
+
         std::ostringstream oss;
         oss << R"({"error":{)";
         oss << R"("category":")" << CategoryName() << R"(",)";
-        oss << R"("operation":")" << operation << R"(",)";
+        oss << R"("operation":")" << escape_json(operation) << R"(",)";
         if (!endpoint.empty()) {
-            oss << R"("endpoint":")" << endpoint << R"(",)";
+            oss << R"("endpoint":")" << escape_json(endpoint) << R"(",)";
         }
         if (http_status.has_value()) {
             oss << R"("http_status":)" << *http_status << R"(,)";
         }
-        oss << R"("message":")" << message << R"(",)";
+        oss << R"("message":")" << escape_json(message) << R"(",)";
         if (sap_error.has_value() && !sap_error->empty()) {
-            oss << R"("sap_error":")" << *sap_error << R"(",)";
+            oss << R"("sap_error":")" << escape_json(*sap_error) << R"(",)";
+        }
+        if (hint.has_value() && !hint->empty()) {
+            oss << R"("hint":")" << escape_json(*hint) << R"(",)";
         }
         oss << R"("exit_code":)" << ExitCode();
         oss << R"(}})";
@@ -284,7 +320,8 @@ struct Error {
                http_status == other.http_status &&
                message == other.message &&
                sap_error == other.sap_error &&
-               category == other.category;
+               category == other.category &&
+               hint == other.hint;
     }
 
     bool operator!=(const Error& other) const {

@@ -242,3 +242,79 @@ TEST_CASE("BwCancelJob: HTTP error propagated", "[adt][bw][jobs]") {
     auto result = BwCancelJob(mock, "GUID123");
     REQUIRE(result.IsErr());
 }
+
+// ===========================================================================
+// BwRestartJob
+// ===========================================================================
+
+TEST_CASE("BwRestartJob: sends POST to restart endpoint", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = BwRestartJob(mock, "GUID123");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path == "/sap/bw/modeling/jobs/GUID123/restart");
+}
+
+TEST_CASE("BwRestartJob: 204 is success", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({204, {}, ""}));
+
+    auto result = BwRestartJob(mock, "GUID123");
+    REQUIRE(result.IsOk());
+}
+
+TEST_CASE("BwRestartJob: empty GUID returns error", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    auto result = BwRestartJob(mock, "");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("empty") != std::string::npos);
+}
+
+TEST_CASE("BwRestartJob: HTTP error propagated", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, "Error"}));
+
+    auto result = BwRestartJob(mock, "GUID123");
+    REQUIRE(result.IsErr());
+}
+
+// ===========================================================================
+// BwCleanupJob
+// ===========================================================================
+
+TEST_CASE("BwCleanupJob: sends DELETE to cleanup endpoint", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueDelete(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = BwCleanupJob(mock, "GUID123");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.DeleteCallCount() == 1);
+    CHECK(mock.DeleteCalls()[0].path == "/sap/bw/modeling/jobs/GUID123/cleanup");
+}
+
+TEST_CASE("BwCleanupJob: 204 is success", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueDelete(Result<HttpResponse, Error>::Ok({204, {}, ""}));
+
+    auto result = BwCleanupJob(mock, "GUID123");
+    REQUIRE(result.IsOk());
+}
+
+TEST_CASE("BwCleanupJob: empty GUID returns error", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    auto result = BwCleanupJob(mock, "");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("empty") != std::string::npos);
+}
+
+TEST_CASE("BwCleanupJob: HTTP error propagated", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueDelete(Result<HttpResponse, Error>::Ok({500, {}, "Error"}));
+
+    auto result = BwCleanupJob(mock, "GUID123");
+    REQUIRE(result.IsErr());
+}

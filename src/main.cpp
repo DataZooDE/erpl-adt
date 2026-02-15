@@ -239,8 +239,7 @@ std::vector<const char*> StripSubcommand(int argc, const char* const* argv,
 
 void PrintError(const erpl_adt::Error& error, bool json_output) {
     if (json_output) {
-        std::cerr << R"({"error":{"operation":")" << error.operation
-                  << R"(","message":")" << error.message << R"("})" << "\n";
+        std::cerr << error.ToJson() << "\n";
     } else {
         std::cerr << "Error: " << error.ToString() << "\n";
     }
@@ -533,6 +532,11 @@ int main(int argc, const char* argv[]) {
     if (IsNewStyleCommand(argc, argv)) {
         CommandRouter router;
         RegisterAllCommands(router);
+        // BW group: intercept help requests for the detailed, categorized help.
+        if (IsBwHelpRequest(argc, argv)) {
+            PrintBwGroupHelp(router, std::cout, ResolveColorForHelp(argc, argv));
+            return kExitSuccess;
+        }
         return router.Dispatch(argc, argv);
     }
 
