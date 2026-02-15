@@ -17,6 +17,20 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--background" || arg == "--force";
 }
 
+// Check if --json appears anywhere in argv (for pre-parse error formatting).
+bool HasJsonFlag(int argc, const char* const* argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view{argv[i]} == "--json") return true;
+    }
+    return false;
+}
+
+// Emit a JSON-formatted error object to stderr.
+void PrintJsonError(const std::string& message, std::ostream& out) {
+    out << R"({"error":{"message":")" << message << R"("}})";
+    out << "\n";
+}
+
 } // namespace
 
 void CommandRouter::Register(const std::string& group,
@@ -63,6 +77,7 @@ void CommandRouter::SetDefaultAction(const std::string& group,
 }
 
 int CommandRouter::Dispatch(int argc, const char* const* argv) const {
+    bool json_mode = HasJsonFlag(argc, argv);
     auto parse_result = Parse(argc, argv);
     if (parse_result.IsErr()) {
         const auto& err = parse_result.Error();
@@ -76,26 +91,39 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
             if (end != std::string::npos) {
                 auto group = err.substr(start, end - start);
                 if (HasGroup(group)) {
-                    PrintGroupHelp(group, std::cout);
+                    if (json_mode) {
+                        PrintJsonError("Missing action for group '" + group + "'", std::cerr);
+                    } else {
+                        PrintGroupHelp(group, std::cout);
+                    }
                     return 0;
                 }
             }
         }
 
-        std::cerr << "Error: " << err << "\n";
-        PrintHelp(std::cerr);
+        if (json_mode) {
+            PrintJsonError(err, std::cerr);
+        } else {
+            std::cerr << "Error: " << err << "\n";
+            PrintHelp(std::cerr);
+        }
         return 1;
     }
 
     auto args = std::move(parse_result).Value();
+    json_mode = json_mode || args.flags.count("json") > 0;
 
     if (args.action.empty()) {
         if (args.flags.count("help") > 0) {
             if (HasGroup(args.group)) {
                 PrintGroupHelp(args.group, std::cout);
             } else {
-                std::cerr << "Error: unknown command group '" << args.group << "'\n";
-                PrintHelp(std::cerr);
+                if (json_mode) {
+                    PrintJsonError("Unknown command group '" + args.group + "'", std::cerr);
+                } else {
+                    std::cerr << "Error: unknown command group '" << args.group << "'\n";
+                    PrintHelp(std::cerr);
+                }
                 return 1;
             }
             return 0;
@@ -104,10 +132,14 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
         if (def_it != default_actions_.end()) {
             args.action = def_it->second;
         } else {
-            std::cerr << "Error: Missing action for group '" << args.group
-                      << "'. Usage: erpl-adt " << args.group
-                      << " <action> [args]\n";
-            PrintHelp(std::cerr);
+            if (json_mode) {
+                PrintJsonError("Missing action for group '" + args.group + "'", std::cerr);
+            } else {
+                std::cerr << "Error: Missing action for group '" << args.group
+                          << "'. Usage: erpl-adt " << args.group
+                          << " <action> [args]\n";
+                PrintHelp(std::cerr);
+            }
             return 1;
         }
     }
@@ -117,8 +149,12 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
         if (HasGroup(args.group)) {
             PrintGroupHelp(args.group, std::cout);
         } else {
-            std::cerr << "Error: unknown command group '" << args.group << "'\n";
-            PrintHelp(std::cerr);
+            if (json_mode) {
+                PrintJsonError("Unknown command group '" + args.group + "'", std::cerr);
+            } else {
+                std::cerr << "Error: unknown command group '" << args.group << "'\n";
+                PrintHelp(std::cerr);
+            }
             return 1;
         }
         return 0;
@@ -132,9 +168,13 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
         } else if (HasGroup(args.group)) {
             PrintGroupHelp(args.group, std::cout);
         } else {
-            std::cerr << "Error: unknown command '" << args.group
-                      << " " << args.action << "'\n";
-            PrintHelp(std::cerr);
+            if (json_mode) {
+                PrintJsonError("Unknown command '" + args.group + " " + args.action + "'", std::cerr);
+            } else {
+                std::cerr << "Error: unknown command '" << args.group
+                          << " " << args.action << "'\n";
+                PrintHelp(std::cerr);
+            }
             return 1;
         }
         return 0;
@@ -156,12 +196,16 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
     }
 
     if (it == commands_.end()) {
-        std::cerr << "Error: unknown command '" << args.group
-                  << " " << args.action << "'\n";
-        if (HasGroup(args.group)) {
-            PrintGroupHelp(args.group, std::cerr);
+        if (json_mode) {
+            PrintJsonError("Unknown command '" + args.group + " " + args.action + "'", std::cerr);
         } else {
-            PrintHelp(std::cerr);
+            std::cerr << "Error: unknown command '" << args.group
+                      << " " << args.action << "'\n";
+            if (HasGroup(args.group)) {
+                PrintGroupHelp(args.group, std::cerr);
+            } else {
+                PrintHelp(std::cerr);
+            }
         }
         return 1;
     }

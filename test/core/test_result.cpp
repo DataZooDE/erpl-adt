@@ -323,6 +323,22 @@ TEST_CASE("FromHttpStatus: 403 maps to CsrfToken", "[error]") {
     CHECK(e.message.find("Forbidden") != std::string::npos);
 }
 
+TEST_CASE("FromHttpStatus: 403 includes SAP message when available", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>Package $DEMO_SOI_DRAFT does not exist</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("Lock", "/ep", 403, body);
+    CHECK(e.category == ErrorCategory::CsrfToken);
+    CHECK(e.message.find("Package $DEMO_SOI_DRAFT does not exist") != std::string::npos);
+    REQUIRE(e.sap_error.has_value());
+    CHECK(e.sap_error.value() == "Package $DEMO_SOI_DRAFT does not exist");
+}
+
+TEST_CASE("FromHttpStatus: 400 includes SAP message when available", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>Malformed XML payload</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("Op", "/ep", 400, body);
+    CHECK(e.category == ErrorCategory::Internal);
+    CHECK(e.message.find("Malformed XML payload") != std::string::npos);
+}
+
 TEST_CASE("FromHttpStatus: 404 maps to NotFound", "[error]") {
     auto e = Error::FromHttpStatus("Op", "/ep", 404);
     CHECK(e.category == ErrorCategory::NotFound);

@@ -36,12 +36,8 @@ Result<PackageName, std::string> PackageName::Create(std::string_view name) {
             std::to_string(name.size()));
     }
 
-    // Handle $TMP special case before general character validation
+    // Allow $-prefixed package names (e.g. $TMP, $DEMO_SOI_DRAFT)
     if (name[0] == '$') {
-        if (name != "$TMP") {
-            return Result<PackageName, std::string>::Err(
-                "Only $TMP is allowed as a $-prefixed package name");
-        }
         return Result<PackageName, std::string>::Ok(PackageName(std::string(name)));
     }
 

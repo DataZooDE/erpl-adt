@@ -8,6 +8,7 @@
 #include <erpl_adt/adt/adt_session.hpp>
 #include <erpl_adt/adt/bw_activation.hpp>
 #include <erpl_adt/adt/bw_discovery.hpp>
+#include <erpl_adt/adt/bw_endpoint_resolver.hpp>
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_lineage.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
@@ -29,10 +30,12 @@
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
 #include <erpl_adt/adt/xml_codec.hpp>
+#include <erpl_adt/workflow/lock_workflow.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
@@ -386,6 +389,65 @@ Result<SearchResult, Error> ResolveObjectInfo(IAdtSession& session,
     return Result<SearchResult, Error>::Err(std::move(err));
 }
 
+std::optional<std::string> TryResolveBwEndpoint(
+    IAdtSession& session,
+    const std::string& scheme,
+    const std::string& term,
+    const BwTemplateParams& path_params,
+    const BwTemplateParams& query_params) {
+    auto resolved = BwDiscoverResolveAndExpandEndpoint(
+        session, scheme, term, path_params, query_params);
+    if (resolved.IsErr() || resolved.Value().empty()) {
+        return std::nullopt;
+    }
+    return resolved.Value();
+}
+
+std::string ToLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+BwTemplateParams BuildBwObjectPathParams(const BwReadOptions& opts) {
+    BwTemplateParams params;
+    params["version"] = opts.version;
+    params["objectName"] = opts.object_name;
+    params["objectType"] = opts.object_type;
+    params["objname"] = opts.object_name;
+    params["objvers"] = opts.version;
+    params["objectname"] = opts.object_name;
+
+    const auto lower = ToLowerCopy(opts.object_type);
+    params["adsonm"] = opts.object_name;
+    params["hcprnm"] = opts.object_name;
+    params["infoobject"] = opts.object_name;
+    params["trfnnm"] = opts.object_name;
+    params["dtpanm"] = opts.object_name;
+    params["sourcesystem"] = opts.object_name;
+    params["compid"] = opts.object_name;
+    params["fbpnm"] = opts.object_name;
+    params["dmodnm"] = opts.object_name;
+    params["segrnm"] = opts.object_name;
+    params["destnm"] = opts.object_name;
+    params["trcsnm"] = opts.object_name;
+    params["rspcnm"] = opts.object_name;
+    params["docanm"] = opts.object_name;
+    params["dhdsnm"] = opts.object_name;
+    params["infoprov"] = opts.object_name;
+    params["datasource"] = opts.object_name;
+
+    if (opts.source_system.has_value()) {
+        params["logsys"] = *opts.source_system;
+        params["logicalsystem"] = *opts.source_system;
+    }
+
+    if (lower == "rsds" && opts.source_system.has_value()) {
+        params["datasource"] = opts.object_name;
+    }
+    return params;
+}
+
 // ---------------------------------------------------------------------------
 // search query
 // ---------------------------------------------------------------------------
@@ -416,13 +478,23 @@ int HandleSearchQuery(const CommandArgs& args) {
         opts.max_results = max_result.Value();
     }
     if (HasFlag(args, "type")) {
-        opts.object_type = GetFlag(args, "type");
+        auto type_val = GetFlag(args, "type");
+        if (type_val == "true" || type_val.empty()) {
+            fmt.PrintError(MakeValidationError(
+                "Missing value for --type. Usage: --type=CLAS (valid types: CLAS, PROG, INTF, TABL, FUGR, DTEL, DOMA, SHLP, MSAG, TTYP)"));
+            return 99;
+        }
+        opts.object_type = type_val;
     }
 
     auto result = SearchObjects(*session, opts);
     if (result.IsErr()) {
-        fmt.PrintError(result.Error());
-        return result.Error().ExitCode();
+        auto err = result.Error();
+        if (err.http_status.has_value() && err.http_status.value() == 406) {
+            err.hint = "Check --type value. Valid types: CLAS, PROG, INTF, TABL, FUGR, DTEL, DOMA, SHLP, MSAG, TTYP";
+        }
+        fmt.PrintError(err);
+        return err.ExitCode();
     }
 
     auto items = std::move(result).Value();
@@ -479,13 +551,20 @@ int HandleObjectRead(const CommandArgs& args) {
     }
 
     const auto& obj = result.Value();
+
+    // Default source_uri for class types on ABAP Cloud where XML omits it
+    auto source_uri = obj.info.source_uri;
+    if (source_uri.empty() && obj.info.type.substr(0, 5) == "CLAS/") {
+        source_uri = "source/main";
+    }
+
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["name"] = obj.info.name;
         j["type"] = obj.info.type;
         j["uri"] = obj.info.uri;
         j["description"] = obj.info.description;
-        j["source_uri"] = obj.info.source_uri;
+        j["source_uri"] = source_uri;
         j["version"] = obj.info.version;
         j["responsible"] = obj.info.responsible;
         j["changed_by"] = obj.info.changed_by;
@@ -502,6 +581,9 @@ int HandleObjectRead(const CommandArgs& args) {
         std::cout << obj.info.name << " (" << obj.info.type << ")\n";
         std::cout << "  URI: " << obj.info.uri << "\n";
         std::cout << "  Description: " << obj.info.description << "\n";
+        if (!source_uri.empty()) {
+            std::cout << "  Source: " << source_uri << "\n";
+        }
         if (!obj.includes.empty()) {
             std::cout << "  Includes:\n";
             for (const auto& inc : obj.includes) {
@@ -607,17 +689,8 @@ int HandleObjectDelete(const CommandArgs& args) {
         }
     } else {
         // Auto-lock mode: lock → delete → unlock in a single session.
-        session->SetStateful(true);
-        auto lock_result = LockObject(*session, uri_result.Value());
-        if (lock_result.IsErr()) {
-            fmt.PrintError(lock_result.Error());
-            return lock_result.Error().ExitCode();
-        }
-        auto del_result = DeleteObject(*session, uri_result.Value(),
-                                       lock_result.Value().handle, transport);
-        auto unlock_result = UnlockObject(*session, uri_result.Value(),
-                                          lock_result.Value().handle);
-        session->SetStateful(false);
+        auto del_result = DeleteObjectWithAutoLock(
+            *session, uri_result.Value(), transport);
         if (del_result.IsErr()) {
             fmt.PrintError(del_result.Error());
             return del_result.Error().ExitCode();
@@ -747,6 +820,10 @@ int HandleSourceRead(const CommandArgs& args) {
         fmt.PrintJson(j.dump());
     } else {
         std::cout << result.Value();
+        // Ensure trailing newline so shell prompt doesn't append to last line
+        if (!result.Value().empty() && result.Value().back() != '\n') {
+            std::cout << '\n';
+        }
     }
     return 0;
 }
@@ -812,37 +889,13 @@ int HandleSourceWrite(const CommandArgs& args) {
         }
     } else {
         // Auto-lock mode: derive object URI, lock → write → unlock.
-        auto source_uri = args.positional[0];
-        auto slash_pos = source_uri.find("/source/");
-        if (slash_pos == std::string::npos) {
-            fmt.PrintError(MakeValidationError(
-                "Cannot derive object URI from source URI (expected /source/ segment): " +
-                source_uri));
-            return 99;
-        }
-        auto obj_uri_str = source_uri.substr(0, slash_pos);
-        obj_uri_for_activate = obj_uri_str;
-        auto obj_uri = ObjectUri::Create(obj_uri_str);
-        if (obj_uri.IsErr()) {
-            fmt.PrintError(MakeValidationError("Invalid object URI: " + obj_uri.Error()));
-            return 99;
-        }
-
-        session->SetStateful(true);
-        auto lock_result = LockObject(*session, obj_uri.Value());
-        if (lock_result.IsErr()) {
-            fmt.PrintError(lock_result.Error());
-            return lock_result.Error().ExitCode();
-        }
-        auto write_result = WriteSource(*session, source_uri, source,
-                                        lock_result.Value().handle, transport);
-        auto unlock_result = UnlockObject(*session, obj_uri.Value(),
-                                          lock_result.Value().handle);
-        session->SetStateful(false);
+        auto write_result = WriteSourceWithAutoLock(
+            *session, args.positional[0], source, transport);
         if (write_result.IsErr()) {
             fmt.PrintError(write_result.Error());
             return write_result.Error().ExitCode();
         }
+        obj_uri_for_activate = std::move(write_result).Value();
     }
 
     fmt.PrintSuccess("Source written: " + args.positional[0]);
@@ -1008,6 +1061,9 @@ int HandleTestRun(const CommandArgs& args) {
         j["total_methods"] = tr.TotalMethods();
         j["total_failed"] = tr.TotalFailed();
         j["all_passed"] = tr.AllPassed();
+        if (tr.TotalMethods() == 0) {
+            j["note"] = "No test methods found";
+        }
         nlohmann::json classes = nlohmann::json::array();
         for (const auto& c : tr.classes) {
             nlohmann::json methods = nlohmann::json::array();
@@ -1253,6 +1309,10 @@ int HandleDdicTable(const CommandArgs& args) {
             rows.push_back({f.name, f.type, f.key_field ? "Y" : "", f.description});
         }
         fmt.PrintTable(headers, rows);
+        if (table.fields.empty()) {
+            std::cerr << "Note: Field definitions may be in DDL source on ABAP Cloud systems. "
+                      << "Try 'erpl-adt ddic cds " << table.name << "' instead.\n";
+        }
     }
     return 0;
 }
@@ -1623,6 +1683,33 @@ int HandleBwSearch(const CommandArgs& args) {
         opts.search_in_name = true;
     }
 
+    BwTemplateParams path_params;
+    BwTemplateParams query_params{
+        {"searchTerm", opts.query},
+        {"maxSize", std::to_string(opts.max_results)},
+    };
+    if (opts.object_type.has_value()) query_params["objectType"] = *opts.object_type;
+    if (opts.object_sub_type.has_value()) query_params["objectSubType"] = *opts.object_sub_type;
+    if (opts.object_status.has_value()) query_params["objectStatus"] = *opts.object_status;
+    if (opts.object_version.has_value()) query_params["objectVersion"] = *opts.object_version;
+    if (opts.changed_by.has_value()) query_params["changedBy"] = *opts.changed_by;
+    if (opts.changed_on_from.has_value()) query_params["changedOnFrom"] = *opts.changed_on_from;
+    if (opts.changed_on_to.has_value()) query_params["changedOnTo"] = *opts.changed_on_to;
+    if (opts.created_by.has_value()) query_params["createdBy"] = *opts.created_by;
+    if (opts.created_on_from.has_value()) query_params["createdOnFrom"] = *opts.created_on_from;
+    if (opts.created_on_to.has_value()) query_params["createdOnTo"] = *opts.created_on_to;
+    if (opts.depends_on_name.has_value()) query_params["dependsOnObjectName"] = *opts.depends_on_name;
+    if (opts.depends_on_type.has_value()) query_params["dependsOnObjectType"] = *opts.depends_on_type;
+    if (opts.search_in_description) query_params["searchInDescription"] = "true";
+    if (!opts.search_in_name) query_params["searchInName"] = "false";
+
+    auto endpoint = TryResolveBwEndpoint(
+        *session, "http://www.sap.com/bw/modeling/repo", "bwSearch",
+        path_params, query_params);
+    if (endpoint.has_value()) {
+        opts.endpoint_override = *endpoint;
+    }
+
     auto result = BwSearchObjects(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -1688,6 +1775,18 @@ int HandleBwRead(const CommandArgs& args) {
         opts.uri = GetFlag(args, "uri");
     }
     opts.raw = HasFlag(args, "raw");
+
+    if (!has_uri && !opts.object_type.empty() && !opts.object_name.empty()) {
+        BwTemplateParams path_params = BuildBwObjectPathParams(opts);
+        BwTemplateParams query_params;
+        auto scheme = "http://www.sap.com/bw/modeling/" + ToLowerCopy(opts.object_type);
+        auto term = ToLowerCopy(opts.object_type);
+        auto endpoint = TryResolveBwEndpoint(
+            *session, scheme, term, path_params, query_params);
+        if (endpoint.has_value()) {
+            opts.uri = *endpoint;
+        }
+    }
 
     // Resolve content type from discovery (best-effort)
     if (!opts.object_type.empty()) {
@@ -1992,6 +2091,20 @@ int HandleBwActivate(const CommandArgs& args) {
         opts.transport = GetFlag(args, "transport");
     }
 
+    {
+        BwTemplateParams path_params;
+        BwTemplateParams query_params;
+        auto endpoint = TryResolveBwEndpoint(
+            *session,
+            "http://www.sap.com/bw/modeling/activation",
+            "activate",
+            path_params,
+            query_params);
+        if (endpoint.has_value()) {
+            opts.endpoint_override = *endpoint;
+        }
+    }
+
     auto result = BwActivateObjects(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2056,6 +2169,22 @@ int HandleBwXref(const CommandArgs& args) {
         opts.associated_object_type = GetFlag(args, "assoc-type");
     }
 
+    BwTemplateParams path_params;
+    BwTemplateParams query_params{
+        {"objectType", opts.object_type},
+        {"objectName", opts.object_name},
+    };
+    if (opts.object_version.has_value()) query_params["objectVersion"] = *opts.object_version;
+    if (opts.association.has_value()) query_params["association"] = *opts.association;
+    if (opts.associated_object_type.has_value()) query_params["associatedObjectType"] = *opts.associated_object_type;
+
+    auto endpoint = TryResolveBwEndpoint(
+        *session, "http://www.sap.com/bw/modeling/repo", "xref",
+        path_params, query_params);
+    if (endpoint.has_value()) {
+        opts.endpoint_override = *endpoint;
+    }
+
     auto result = BwGetXrefs(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2111,6 +2240,23 @@ int HandleBwNodes(const CommandArgs& args) {
     }
     if (HasFlag(args, "child-type")) {
         opts.child_type = GetFlag(args, "child-type");
+    }
+
+    BwTemplateParams path_params{
+        {"objectType", opts.object_type},
+        {"objectName", opts.object_name},
+    };
+    BwTemplateParams query_params;
+    if (opts.child_name.has_value()) query_params["childName"] = *opts.child_name;
+    if (opts.child_type.has_value()) query_params["childType"] = *opts.child_type;
+
+    auto endpoint = TryResolveBwEndpoint(
+        *session,
+        "http://www.sap.com/bw/modeling/repo",
+        opts.datasource ? "datasourcenodes" : "nodes",
+        path_params, query_params);
+    if (endpoint.has_value()) {
+        opts.endpoint_override = *endpoint;
     }
 
     auto result = BwGetNodes(*session, opts);
@@ -3498,6 +3644,8 @@ void PrintBwGroupHelp(const CommandRouter& router, std::ostream& out, bool color
         {"LIFECYCLE",        {"lock", "unlock", "save", "delete", "activate"}},
         {"TRANSPORT",        {"transport"}},
         {"JOBS",             {"job"}},
+        {"SYSTEM",           {"sysinfo", "changeability", "dbinfo", "adturi"}},
+        {"LOCKS",            {"locks"}},
     };
 
     // Pre-compute display entries and max width.

@@ -65,9 +65,15 @@ TEST_CASE("PackageName: invalid names", "[types][PackageName]") {
         auto r = PackageName::Create("zfoo");
         REQUIRE(r.IsErr());
     }
-    SECTION("invalid $ prefix") {
+    SECTION("$-prefixed package names are valid") {
         auto r = PackageName::Create("$FOO");
-        REQUIRE(r.IsErr());
+        REQUIRE(r.IsOk());
+        CHECK(r.Value().Value() == "$FOO");
+    }
+    SECTION("$-prefixed with underscores") {
+        auto r = PackageName::Create("$DEMO_SOI_DRAFT");
+        REQUIRE(r.IsOk());
+        CHECK(r.Value().Value() == "$DEMO_SOI_DRAFT");
     }
     SECTION("namespace missing second slash") {
         auto r = PackageName::Create("/DMO");

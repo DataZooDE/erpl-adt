@@ -61,7 +61,9 @@ Error Error::FromHttpStatus(const std::string& operation,
             break;
         case 403:
             category = ErrorCategory::CsrfToken;
-            message = "Forbidden — CSRF token may be invalid";
+            message = sap_error.has_value()
+                ? "Forbidden: " + *sap_error
+                : "Forbidden — CSRF token may be invalid";
             break;
         case 404:
             category = ErrorCategory::NotFound;

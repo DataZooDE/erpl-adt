@@ -510,3 +510,34 @@ TEST_CASE("CommandRouter: Register with CommandHelp stores help metadata", "[cli
     CHECK(cmds[0].help->args_description == "<uri>    Object URI");
     CHECK(cmds[0].help->examples.size() == 1);
 }
+
+// ===========================================================================
+// JSON mode error output
+// ===========================================================================
+
+TEST_CASE("CommandRouter: --json unknown command outputs JSON error", "[cli][router][json]") {
+    CommandRouter router;
+    router.Register("search", "query", "Search", [](const CommandArgs&) { return 0; });
+
+    const char* argv[] = {"erpl-adt", "--json", "bogus", "cmd"};
+    int exit_code = router.Dispatch(4, argv);
+    CHECK(exit_code == 1);
+}
+
+TEST_CASE("CommandRouter: --json missing group outputs JSON error", "[cli][router][json]") {
+    CommandRouter router;
+    router.Register("search", "query", "Search", [](const CommandArgs&) { return 0; });
+
+    const char* argv[] = {"erpl-adt", "--json"};
+    int exit_code = router.Dispatch(2, argv);
+    CHECK(exit_code == 1);
+}
+
+TEST_CASE("CommandRouter: --json unknown action in known group outputs JSON error", "[cli][router][json]") {
+    CommandRouter router;
+    router.Register("search", "query", "Search", [](const CommandArgs&) { return 0; });
+
+    const char* argv[] = {"erpl-adt", "--json", "search", "nonexistent"};
+    int exit_code = router.Dispatch(4, argv);
+    CHECK(exit_code == 1);
+}
