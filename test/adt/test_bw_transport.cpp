@@ -88,6 +88,25 @@ TEST_CASE("BwTransportCheck: own-only flag", "[adt][bw][transport]") {
     CHECK(mock.GetCalls()[0].path.find("ownonly=true") != std::string::npos);
 }
 
+TEST_CASE("BwTransportCheck: advanced check flags are encoded", "[adt][bw][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<bwCTO:transport/>"}));
+
+    BwTransportCheckOptions opts;
+    opts.read_details = "objs";
+    opts.read_properties = true;
+    opts.own_only = true;
+    opts.all_messages = true;
+    auto result = BwTransportCheck(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("rddetails=objs") != std::string::npos);
+    CHECK(path.find("rdprops=true") != std::string::npos);
+    CHECK(path.find("ownonly=true") != std::string::npos);
+    CHECK(path.find("allmsgs=true") != std::string::npos);
+}
+
 TEST_CASE("BwTransportCheck: sends CTO Accept header", "[adt][bw][transport]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<bwCTO:transport/>"}));
@@ -147,6 +166,44 @@ TEST_CASE("BwTransportWrite: simulate flag", "[adt][bw][transport]") {
     REQUIRE(result.IsOk());
 
     CHECK(mock.PostCalls()[0].path.find("simulate=true") != std::string::npos);
+}
+
+TEST_CASE("BwTransportWrite: allmsgs flag", "[adt][bw][transport]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwTransportWriteOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.transport = "K900001";
+    opts.all_messages = true;
+
+    auto result = BwTransportWrite(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.PostCalls()[0].path.find("allmsgs=true") != std::string::npos);
+}
+
+TEST_CASE("BwTransportWrite: context headers are forwarded",
+          "[adt][bw][transport]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwTransportWriteOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.transport = "K900001";
+    opts.context_headers.foreign_objects = "ADSO:ZOTHER";
+    opts.context_headers.foreign_package = "ZPKG";
+
+    auto result = BwTransportWrite(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& headers = mock.PostCalls()[0].headers;
+    CHECK(headers.at("Transport-Lock-Holder") == "K900001");
+    CHECK(headers.at("Foreign-Objects") == "ADSO:ZOTHER");
+    CHECK(headers.at("Foreign-Package") == "ZPKG");
 }
 
 TEST_CASE("BwTransportWrite: empty transport returns error", "[adt][bw][transport]") {

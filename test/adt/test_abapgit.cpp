@@ -277,6 +277,41 @@ TEST_CASE("PullRepo: handles async 202 with poll", "[adt][abapgit]") {
     CHECK(session.PollCalls()[0].location_url == "/poll/pull/456");
 }
 
+TEST_CASE("PullRepo: handles lowercase location header", "[adt][abapgit]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"location", "/poll/pull/lower"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Completed, "<result/>", std::chrono::milliseconds{123}}));
+
+    auto result = PullRepo(session, codec, MakeKey("KEY1"));
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().status == PollStatus::Completed);
+    REQUIRE(session.PollCallCount() == 1);
+    CHECK(session.PollCalls()[0].location_url == "/poll/pull/lower");
+}
+
+TEST_CASE("PullRepo: returns error when async poll fails", "[adt][abapgit]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"Location", "/poll/pull/fail"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Failed, "<failed/>", std::chrono::milliseconds{1500}}));
+
+    auto result = PullRepo(session, codec, MakeKey("KEY1"));
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::PullError);
+    CHECK(result.Error().message == "async pull operation failed");
+}
+
 TEST_CASE("PullRepo: handles sync 200 (no changes)", "[adt][abapgit]") {
     MockAdtSession session;
     MockXmlCodec codec;

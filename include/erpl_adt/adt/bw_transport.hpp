@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/bw_context_headers.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
@@ -58,6 +59,13 @@ struct BwTransportCheckResult {
     std::vector<std::string> messages;
 };
 
+struct BwTransportCheckOptions {
+    std::string read_details = "all"; // off|objs|all
+    bool read_properties = false;     // rdprops
+    bool own_only = false;            // ownonly
+    bool all_messages = false;        // allmsgs
+};
+
 // ---------------------------------------------------------------------------
 // BwTransportCheck — check transport state for BW objects.
 //
@@ -67,6 +75,10 @@ struct BwTransportCheckResult {
 [[nodiscard]] Result<BwTransportCheckResult, Error> BwTransportCheck(
     IAdtSession& session,
     bool own_only = false);
+
+[[nodiscard]] Result<BwTransportCheckResult, Error> BwTransportCheck(
+    IAdtSession& session,
+    const BwTransportCheckOptions& options);
 
 // ---------------------------------------------------------------------------
 // BwTransportWrite — write BW objects to a transport request.
@@ -81,6 +93,8 @@ struct BwTransportWriteOptions {
     std::string transport;           // CORRNR
     std::string package_name;
     bool simulate = false;
+    bool all_messages = false;
+    BwContextHeaders context_headers;
 };
 
 struct BwTransportWriteResult {

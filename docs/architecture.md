@@ -16,12 +16,14 @@ main.cpp -> command_router -> {group handlers}
                                     v
                              i_adt_session <-- adt_session (cpp-httplib)
                                     |
-                             i_xml_codec  <-- xml_codec   (tinyxml2)
+                             i_xml_codec  <-- xml_codec   (tinyxml2, legacy)
 ```
 
 All arrows point downward. No cycles. Every horizontal boundary is a pure abstract interface. The concrete implementations (`adt_session`, `xml_codec`) are injected at construction time and can be replaced with mocks for testing.
 
-New operation modules (search, object, source, testing, checks, transport, ddic) parse XML directly with tinyxml2 inside anonymous namespaces in their `.cpp` files. They do NOT use `IXmlCodec`. The existing `IXmlCodec` is preserved for the legacy deploy workflow operations (packages, abapgit, activation).
+Most operation modules parse XML directly with tinyxml2 using shared parser helpers in `src/adt/xml_utils.hpp` and `src/adt/atom_parser.hpp`. `IXmlCodec` remains only for the legacy deploy workflow (`workflow/deploy_workflow` and package bootstrap paths).
+
+Async `202 Accepted + Location` polling behavior is centralized in `src/adt/protocol_kernel.hpp`, so ADT/BW async call sites share the same timeout, header-contract, and error-shaping semantics.
 
 ## Module Map
 
@@ -157,7 +159,7 @@ Returns `AtcResult` with prioritized findings (1=error, 2=warning, 3=info).
 
 #### adt/discovery, adt/packages, adt/abapgit, adt/activation
 
-Legacy deploy workflow operations. Use `IXmlCodec` for XML parsing.
+Deploy/bootstrap operations. `packages` still uses `IXmlCodec`; `abapgit` and `activation` use tinyxml2 parsing plus protocol-kernel async handling.
 
 ### CLI Layer
 
@@ -188,6 +190,13 @@ Parses CLI arguments (argparse) and YAML files (yaml-cpp). Merges them with CLI-
 #### workflow/deploy_workflow
 
 Idempotent state machine for the legacy deploy workflow: discover -> package -> clone -> pull -> activate.
+
+#### workflow/lock_workflow
+
+Shared lock transaction orchestration used by CLI handlers:
+
+- `DeleteObjectWithAutoLock(...)` -> lock, mutate, unlock with RAII
+- `WriteSourceWithAutoLock(...)` -> derive object URI, lock, write, unlock
 
 ## Directory Structure
 
@@ -228,6 +237,7 @@ erpl-adt/
 |   |   +-- config_loader.hpp      # CLI + YAML loading
 |   +-- workflow/
 |       +-- deploy_workflow.hpp    # Legacy deploy state machine
+|       +-- lock_workflow.hpp      # Lock transaction use-cases
 +-- src/                           # Implementation files (mirrors include/)
 +-- test/
 |   +-- core/                      # Unit tests for types, result

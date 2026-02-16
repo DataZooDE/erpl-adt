@@ -113,6 +113,19 @@ TEST_CASE("CreateTransport: sends correct body", "[adt][transport]") {
     CHECK(call.body.find("Test transport") != std::string::npos);
 }
 
+TEST_CASE("CreateTransport: escapes XML in body fields", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({201, {}, "NPLK900001"}));
+
+    auto result = CreateTransport(mock, "Fix <bug> & \"quote\"", "Z&PKG");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("<DEVCLASS>Z&amp;PKG</DEVCLASS>") != std::string::npos);
+    CHECK(body.find("<REQUEST_TEXT>Fix &lt;bug&gt; &amp; &quot;quote&quot;</REQUEST_TEXT>") != std::string::npos);
+}
+
 TEST_CASE("CreateTransport: HTTP error propagated", "[adt][transport]") {
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(

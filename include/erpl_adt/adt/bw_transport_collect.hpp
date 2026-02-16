@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/bw_context_headers.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
@@ -64,6 +65,7 @@ struct BwTransportCollectOptions {
     std::string object_name;                     // Required
     std::string mode = "000";                    // 000, 001, 003, 004
     std::optional<std::string> transport;        // CORRNR
+    BwContextHeaders context_headers;
 };
 
 [[nodiscard]] Result<BwTransportCollectResult, Error> BwTransportCollect(

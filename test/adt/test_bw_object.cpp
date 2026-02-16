@@ -69,8 +69,24 @@ TEST_CASE("BwReadObject: sends correct path and Accept header", "[adt][bw][objec
     REQUIRE(result.IsOk());
 
     REQUIRE(mock.GetCallCount() == 1);
-    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/adso/ZSALES/m");
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/adso/zsales/m");
     CHECK(mock.GetCalls()[0].headers.at("Accept") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwReadObject: uppercase names are lowercased in URL", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<root/>"}));
+
+    BwReadOptions opts;
+    opts.object_type = "CUBE";
+    opts.object_name = "0TCT_C01";
+    opts.version = "a";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/cube/0tct_c01/a");
 }
 
 TEST_CASE("BwReadObject: source system adds path segment", "[adt][bw][object]") {
@@ -86,7 +102,7 @@ TEST_CASE("BwReadObject: source system adds path segment", "[adt][bw][object]") 
     auto result = BwReadObject(mock, opts);
     REQUIRE(result.IsOk());
 
-    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/rsds/ZSRC/ECLCLNT100/a");
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/rsds/zsrc/ECLCLNT100/a");
 }
 
 TEST_CASE("BwReadObject: raw mode returns XML directly", "[adt][bw][object]") {
@@ -115,6 +131,29 @@ TEST_CASE("BwReadObject: 404 returns NotFound error", "[adt][bw][object]") {
     auto result = BwReadObject(mock, opts);
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::NotFound);
+}
+
+TEST_CASE("BwReadObject: 404 preserves SAP error detail", "[adt][bw][object]") {
+    MockAdtSession mock;
+    std::string sap_body =
+        R"(<?xml version="1.0" encoding="utf-8"?>)"
+        R"(<exc:exception xmlns:exc="http://www.sap.com/abap/exception">)"
+        R"(<exc:message>Version 'A' of DataStore object '0TCTHP24O' does not exist</exc:message>)"
+        R"(</exc:exception>)";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, sap_body}));
+
+    BwReadOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "0TCTHP24O";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    // BW-specific message is preserved
+    CHECK(result.Error().message.find("BW object not found") != std::string::npos);
+    // SAP detail is extracted into sap_error field
+    REQUIRE(result.Error().sap_error.has_value());
+    CHECK(result.Error().sap_error->find("does not exist") != std::string::npos);
 }
 
 TEST_CASE("BwReadObject: empty type returns error", "[adt][bw][object]") {
@@ -359,6 +398,30 @@ TEST_CASE("BwLockObject: parses lock response", "[adt][bw][object]") {
     CHECK(lock.package_name == "ZTEST");
 }
 
+TEST_CASE("BwLockObject: lock options include parent query and context headers",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<LOCK_HANDLE>H1</LOCK_HANDLE>"}));
+
+    BwLockOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.parent_name = "PARENT";
+    opts.parent_type = "HCPR";
+    opts.context_headers.transport_lock_holder = "K900001";
+
+    auto result = BwLockObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& call = mock.PostCalls()[0];
+    CHECK(call.path.find("action=lock") != std::string::npos);
+    CHECK(call.path.find("parent_name=PARENT") != std::string::npos);
+    CHECK(call.path.find("parent_type=HCPR") != std::string::npos);
+    CHECK(call.headers.at("Transport-Lock-Holder") == "K900001");
+}
+
 TEST_CASE("BwLockObject: sends correct URL", "[adt][bw][object]") {
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
@@ -368,7 +431,7 @@ TEST_CASE("BwLockObject: sends correct URL", "[adt][bw][object]") {
     REQUIRE(result.IsOk());
 
     REQUIRE(mock.PostCallCount() == 1);
-    CHECK(mock.PostCalls()[0].path == "/sap/bw/modeling/adso/ZSALES?action=lock");
+    CHECK(mock.PostCalls()[0].path == "/sap/bw/modeling/adso/zsales?action=lock");
 }
 
 TEST_CASE("BwLockObject: sends activity header for DELE", "[adt][bw][object]") {
@@ -381,6 +444,18 @@ TEST_CASE("BwLockObject: sends activity header for DELE", "[adt][bw][object]") {
 
     CHECK(mock.PostCalls()[0].headers.count("activity_context") > 0);
     CHECK(mock.PostCalls()[0].headers.at("activity_context") == "DELE");
+}
+
+TEST_CASE("BwLockObject: 400 adds stateful session hint", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<html><body>Session not found</body></html>"}));
+
+    auto result = BwLockObject(mock, "IOBJ", "0CALDAY");
+    REQUIRE(result.IsErr());
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+    CHECK(result.Error().hint->find("stateful") != std::string::npos);
 }
 
 TEST_CASE("BwLockObject: 409 returns LockConflict", "[adt][bw][object]") {
@@ -412,7 +487,7 @@ TEST_CASE("BwUnlockObject: success returns Ok", "[adt][bw][object]") {
     auto result = BwUnlockObject(mock, "ADSO", "ZSALES");
     REQUIRE(result.IsOk());
 
-    CHECK(mock.PostCalls()[0].path == "/sap/bw/modeling/adso/ZSALES?action=unlock");
+    CHECK(mock.PostCalls()[0].path == "/sap/bw/modeling/adso/zsales?action=unlock");
 }
 
 TEST_CASE("BwUnlockObject: 204 is also success", "[adt][bw][object]") {
@@ -444,7 +519,7 @@ TEST_CASE("BwSaveObject: sends correct URL and content", "[adt][bw][object]") {
 
     REQUIRE(mock.PutCallCount() == 1);
     auto& put = mock.PutCalls()[0];
-    CHECK(put.path.find("/sap/bw/modeling/adso/ZSALES") != std::string::npos);
+    CHECK(put.path.find("/sap/bw/modeling/adso/zsales") != std::string::npos);
     CHECK(put.path.find("lockHandle=H1") != std::string::npos);
     CHECK(put.path.find("corrNr=K900001") != std::string::npos);
     CHECK(put.path.find("timestamp=20260214120000") != std::string::npos);
@@ -464,6 +539,30 @@ TEST_CASE("BwSaveObject: empty lock handle returns error", "[adt][bw][object]") 
     CHECK(result.Error().message.find("Lock handle") != std::string::npos);
 }
 
+TEST_CASE("BwSaveObject: injects transport and foreign context headers",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso/>";
+    opts.lock_handle = "H1";
+    opts.transport = "K900001";
+    opts.context_headers.foreign_objects = "ADSO:ZOTHER";
+    opts.context_headers.foreign_object_locks = "LOCK123";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    const auto& headers = mock.PutCalls()[0].headers;
+    CHECK(headers.at("Transport-Lock-Holder") == "K900001");
+    CHECK(headers.at("Foreign-Objects") == "ADSO:ZOTHER");
+    CHECK(headers.at("Foreign-Object-Locks") == "LOCK123");
+}
+
 // ===========================================================================
 // BwDeleteObject
 // ===========================================================================
@@ -477,7 +576,7 @@ TEST_CASE("BwDeleteObject: sends correct URL", "[adt][bw][object]") {
 
     REQUIRE(mock.DeleteCallCount() == 1);
     auto& path = mock.DeleteCalls()[0].path;
-    CHECK(path.find("/sap/bw/modeling/adso/ZSALES") != std::string::npos);
+    CHECK(path.find("/sap/bw/modeling/adso/zsales") != std::string::npos);
     CHECK(path.find("lockHandle=H1") != std::string::npos);
     CHECK(path.find("corrNr=K900001") != std::string::npos);
 }
@@ -488,6 +587,28 @@ TEST_CASE("BwDeleteObject: 204 is success", "[adt][bw][object]") {
 
     auto result = BwDeleteObject(mock, "ADSO", "ZSALES", "H1", "");
     REQUIRE(result.IsOk());
+}
+
+TEST_CASE("BwDeleteObject: options allow explicit context header override",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueDelete(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwDeleteOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.lock_handle = "H1";
+    opts.transport = "K900001";
+    opts.context_headers.transport_lock_holder = "K999999";
+    opts.context_headers.foreign_package = "ZPKG";
+
+    auto result = BwDeleteObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.DeleteCallCount() == 1);
+    const auto& headers = mock.DeleteCalls()[0].headers;
+    CHECK(headers.at("Transport-Lock-Holder") == "K999999");
+    CHECK(headers.at("Foreign-Package") == "ZPKG");
 }
 
 // ===========================================================================
@@ -564,4 +685,58 @@ TEST_CASE("BwSaveObject: content_type override is used as Content-Type", "[adt][
     REQUIRE(mock.PutCallCount() == 1);
     CHECK(mock.PutCalls()[0].content_type ==
           "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml");
+}
+
+// ===========================================================================
+// BwCreateObject
+// ===========================================================================
+
+TEST_CASE("BwCreateObject: sends create URL with options", "[adt][bw][object]") {
+    MockAdtSession mock;
+    HttpHeaders headers;
+    headers["Location"] = "/sap/bw/modeling/adso/ZNEW_ADSO";
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({201, headers, ""}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.package_name = "ZPKG";
+    opts.copy_from_name = "ZSOURCE";
+    opts.copy_from_type = "ADSO";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().uri == "/sap/bw/modeling/adso/ZNEW_ADSO");
+    CHECK(result.Value().http_status == 201);
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& path = mock.PostCalls()[0].path;
+    CHECK(path.find("/sap/bw/modeling/adso/znew_adso") != std::string::npos);
+    CHECK(path.find("package=ZPKG") != std::string::npos);
+    CHECK(path.find("copyFromObjectName=ZSOURCE") != std::string::npos);
+    CHECK(path.find("copyFromObjectType=ADSO") != std::string::npos);
+}
+
+TEST_CASE("BwCreateObject: non-success status returns error", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({400, {}, "bad"}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZBAD";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsErr());
+}
+
+TEST_CASE("BwLockObject: captures foreign object locks header", "[adt][bw][object]") {
+    MockAdtSession mock;
+    std::string xml = "<LOCK_HANDLE>H1</LOCK_HANDLE><CORRNR>K900001</CORRNR>";
+    HttpHeaders headers;
+    headers["Foreign-Object-Locks"] = "LOCKA,LOCKB";
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, headers, xml}));
+
+    auto result = BwLockObject(mock, "ADSO", "ZSALES");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().foreign_object_locks == "LOCKA,LOCKB");
 }

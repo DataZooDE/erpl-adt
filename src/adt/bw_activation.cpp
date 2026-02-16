@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/bw_activation.hpp>
 
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -18,21 +19,27 @@ std::string BuildActivationXml(const BwActivateOptions& options) {
     if (options.force) {
         xml += R"( forceAct="true")";
     }
+    if (options.exec_checks) {
+        xml += R"( execChk="true")";
+    }
+    if (options.with_cto) {
+        xml += R"( withCTO="true")";
+    }
     xml += ">";
 
     for (const auto& obj : options.objects) {
-        xml += R"(<object objectName=")" + obj.name + R"(")";
-        xml += R"( objectType=")" + obj.type + R"(")";
-        xml += R"( objectVersion=")" + obj.version + R"(")";
-        xml += R"( technicalObjectName=")" + obj.name + R"(")";
-        xml += R"( objectSubtype=")" + obj.subtype + R"(")";
-        xml += R"( objectDesc=")" + obj.description + R"(")";
-        xml += R"( objectStatus=")" + obj.status + R"(")";
+        xml += R"(<object objectName=")" + adt_utils::XmlEscape(obj.name) + R"(")";
+        xml += R"( objectType=")" + adt_utils::XmlEscape(obj.type) + R"(")";
+        xml += R"( objectVersion=")" + adt_utils::XmlEscape(obj.version) + R"(")";
+        xml += R"( technicalObjectName=")" + adt_utils::XmlEscape(obj.name) + R"(")";
+        xml += R"( objectSubtype=")" + adt_utils::XmlEscape(obj.subtype) + R"(")";
+        xml += R"( objectDesc=")" + adt_utils::XmlEscape(obj.description) + R"(")";
+        xml += R"( objectStatus=")" + adt_utils::XmlEscape(obj.status) + R"(")";
         xml += R"( activateObj="true")";
         xml += R"( associationType="")";
-        xml += R"( corrnum=")" + obj.transport + R"(")";
-        xml += R"( package=")" + obj.package_name + R"(")";
-        xml += R"( href=")" + obj.uri + R"(")";
+        xml += R"( corrnum=")" + adt_utils::XmlEscape(obj.transport) + R"(")";
+        xml += R"( package=")" + adt_utils::XmlEscape(obj.package_name) + R"(")";
+        xml += R"( href=")" + adt_utils::XmlEscape(obj.uri) + R"(")";
         xml += R"( hrefType=""/>)";
     }
 
@@ -41,11 +48,18 @@ std::string BuildActivationXml(const BwActivateOptions& options) {
 }
 
 std::string BuildActivationUrl(const BwActivateOptions& options) {
-    std::string url = std::string(kBwActivationPath) + "?mode=";
+    std::string base = options.endpoint_override.has_value() &&
+                               !options.endpoint_override->empty()
+                           ? *options.endpoint_override
+                           : std::string(kBwActivationPath);
+    std::string url = std::move(base);
+    url += (url.find('?') == std::string::npos) ? "?mode=" : "&mode=";
 
     switch (options.mode) {
         case BwActivationMode::Validate:
             url += "validate";
+            url += std::string("&sort=") + (options.sort ? "true" : "false");
+            url += std::string("&onlyina=") + (options.only_inactive ? "true" : "false");
             break;
         case BwActivationMode::Simulate:
             url += "activate&simu=true";
@@ -87,7 +101,9 @@ Result<BwActivationResult, Error> ParseActivationResponse(
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwActivateObjects", kBwActivationPath,
+            "Failed to parse BW activation response XML")) {
         // Non-parseable response but HTTP success — treat as OK
         result.success = true;
         return Result<BwActivationResult, Error>::Ok(std::move(result));
@@ -110,18 +126,14 @@ Result<BwActivationResult, Error> ParseActivationResponse(
         if (name_str == "message" || name_str.find(":message") != std::string::npos ||
             name_str == "msg") {
             BwActivationMessage msg;
-            const char* severity = el->Attribute("severity");
-            if (!severity) severity = el->Attribute("type");
-            msg.severity = severity ? severity : "I";
-            msg.object_name = el->Attribute("objectName") ?
-                              el->Attribute("objectName") : "";
-            msg.object_type = el->Attribute("objectType") ?
-                              el->Attribute("objectType") : "";
+            msg.severity = xml_utils::AttrAny(el, "severity", "type");
+            if (msg.severity.empty()) msg.severity = "I";
+            msg.object_name = xml_utils::Attr(el, "objectName");
+            msg.object_type = xml_utils::Attr(el, "objectType");
             if (el->GetText()) {
                 msg.text = el->GetText();
             } else {
-                const char* text_attr = el->Attribute("text");
-                msg.text = text_attr ? text_attr : "";
+                msg.text = xml_utils::Attr(el, "text");
             }
             if (msg.severity == "E") has_errors = true;
             result.messages.push_back(std::move(msg));
@@ -141,15 +153,14 @@ Result<BwActivationResult, Error> ParseActivationResponse(
                 std::string mn(msg_name);
                 if (mn == "message" || mn.find(":message") != std::string::npos) {
                     BwActivationMessage msg;
-                    const char* sev = msg_el->Attribute("severity");
-                    if (!sev) sev = msg_el->Attribute("type");
-                    msg.severity = sev ? sev : "I";
-                    msg.object_name = el->Attribute("objectName") ?
-                                      el->Attribute("objectName") : "";
-                    msg.object_type = el->Attribute("objectType") ?
-                                      el->Attribute("objectType") : "";
+                    msg.severity = xml_utils::AttrAny(msg_el, "severity", "type");
+                    if (msg.severity.empty()) msg.severity = "I";
+                    msg.object_name = xml_utils::Attr(el, "objectName");
+                    msg.object_type = xml_utils::Attr(el, "objectType");
                     if (msg_el->GetText()) {
                         msg.text = msg_el->GetText();
+                    } else {
+                        msg.text = xml_utils::Attr(msg_el, "text");
                     }
                     if (msg.severity == "E") has_errors = true;
                     result.messages.push_back(std::move(msg));

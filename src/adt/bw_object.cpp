@@ -1,7 +1,11 @@
 #include <erpl_adt/adt/bw_object.hpp>
 
+#include "atom_parser.hpp"
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
+#include <erpl_adt/adt/bw_context_headers.hpp>
 #include <erpl_adt/adt/bw_hints.hpp>
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <algorithm>
@@ -50,7 +54,7 @@ std::string GetDefaultAcceptType(const std::string& tlogo) {
 
 std::string BuildObjectPath(const std::string& type, const std::string& name,
                             const std::string& version = "") {
-    std::string path = std::string(kBwModelingBase) + ToLower(type) + "/" + name;
+    std::string path = std::string(kBwModelingBase) + ToLower(type) + "/" + ToLower(name);
     if (!version.empty()) {
         path += "/" + version;
     }
@@ -61,25 +65,52 @@ std::string BuildObjectPathWithSourceSystem(const std::string& type,
                                             const std::string& name,
                                             const std::string& source_system,
                                             const std::string& version) {
-    return std::string(kBwModelingBase) + ToLower(type) + "/" + name +
+    return std::string(kBwModelingBase) + ToLower(type) + "/" + ToLower(name) +
            "/" + source_system + "/" + version;
-}
-
-// Get attribute value, trying both namespaced and plain.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* ns_name, const char* plain_name = nullptr) {
-    const char* val = el->Attribute(ns_name);
-    if (!val && plain_name) val = el->Attribute(plain_name);
-    return val ? val : "";
 }
 
 // Get child element text, trying multiple element names.
 std::string GetChildText(const tinyxml2::XMLElement* parent, const char* name1,
                          const char* name2 = nullptr) {
-    auto* el = parent->FirstChildElement(name1);
-    if (!el && name2) el = parent->FirstChildElement(name2);
-    if (el && el->GetText()) return el->GetText();
+    auto text = atom_parser::ChildTextByLocalName(parent, name1);
+    if (!text.empty()) {
+        return text;
+    }
+    if (name2 != nullptr) {
+        return atom_parser::ChildTextByLocalName(parent, name2);
+    }
     return "";
+}
+
+std::string BuildLockUrl(const BwLockOptions& options) {
+    auto url = BuildObjectPath(options.object_type, options.object_name) + "?action=lock";
+    if (options.parent_name.has_value() && !options.parent_name->empty()) {
+        url += "&parent_name=" + UrlEncode(*options.parent_name);
+    }
+    if (options.parent_type.has_value() && !options.parent_type->empty()) {
+        url += "&parent_type=" + UrlEncode(*options.parent_type);
+    }
+    return url;
+}
+
+std::string BuildCreateUrl(const BwCreateOptions& options) {
+    std::string url = BuildObjectPath(options.object_type, options.object_name);
+    bool has_query = false;
+    auto add = [&](const char* key, const std::optional<std::string>& value) {
+        if (!value.has_value() || value->empty()) {
+            return;
+        }
+        url += (has_query ? "&" : "?");
+        url += key;
+        url += "=";
+        url += UrlEncode(*value);
+        has_query = true;
+    };
+
+    add("package", options.package_name);
+    add("copyFromObjectName", options.copy_from_name);
+    add("copyFromObjectType", options.copy_from_type);
+    return url;
 }
 
 // Check if an attribute name is namespace noise we should skip.
@@ -126,23 +157,23 @@ Result<BwObjectMetadata, Error> ParseObjectResponse(
     meta.raw_xml = std::string(xml);
 
     // xsi:type → sub_type
-    meta.sub_type = GetAttr(root, "xsi:type");
+    meta.sub_type = xml_utils::Attr(root, "xsi:type");
 
     // Try common attribute locations
-    meta.description = GetAttr(root, "description", "objectDesc");
+    meta.description = xml_utils::AttrAny(root, "description", "objectDesc");
     if (meta.description.empty()) {
-        meta.description = GetAttr(root, "bwModel:description");
+        meta.description = xml_utils::Attr(root, "bwModel:description");
     }
-    meta.package_name = GetAttr(root, "packageName", "package");
-    meta.last_changed_by = GetAttr(root, "changedBy", "lastChangedBy");
-    meta.last_changed_at = GetAttr(root, "changedAt", "lastChangedAt");
+    meta.package_name = xml_utils::AttrAny(root, "packageName", "package");
+    meta.last_changed_by = xml_utils::AttrAny(root, "changedBy", "lastChangedBy");
+    meta.last_changed_at = xml_utils::AttrAny(root, "changedAt", "lastChangedAt");
 
     // Short/long descriptions from child elements
     meta.short_description = GetChildText(root, "shortDescription");
     meta.long_description = GetChildText(root, "longDescription");
 
     // tlogoProperties — present on most BW object types
-    auto* tlp = root->FirstChildElement("tlogoProperties");
+    const auto* tlp = atom_parser::FirstChildByLocalName(root, "tlogoProperties");
     if (tlp) {
         meta.responsible = GetChildText(tlp, "adtcore:responsible", "responsible");
         meta.created_at = GetChildText(tlp, "adtcore:createdAt", "createdAt");
@@ -237,6 +268,11 @@ Result<BwLockResult, Error> ParseLockResponse(
     if (package_name.has_value()) {
         result.package_name = *package_name;
     }
+    auto foreign_object_locks = adt_utils::FindHeaderValueCi(response_headers,
+                                                             "Foreign-Object-Locks");
+    if (foreign_object_locks.has_value()) {
+        result.foreign_object_locks = *foreign_object_locks;
+    }
 
     return Result<BwLockResult, Error>::Ok(std::move(result));
 }
@@ -292,10 +328,9 @@ Result<BwObjectMetadata, Error> BwReadObject(
 
     const auto& http = response.Value();
     if (http.status_code == 404) {
-        return Result<BwObjectMetadata, Error>::Err(Error{
-            "BwReadObject", path, 404,
-            "BW object not found: " + options.object_type + " " + options.object_name,
-            std::nullopt, ErrorCategory::NotFound});
+        auto error = Error::FromHttpStatus("BwReadObject", path, 404, http.body);
+        error.message = "BW object not found: " + options.object_type + " " + options.object_name;
+        return Result<BwObjectMetadata, Error>::Err(std::move(error));
     }
     if (http.status_code != 200) {
         auto error = Error::FromHttpStatus("BwReadObject", path, http.status_code, http.body);
@@ -322,20 +357,77 @@ Result<BwObjectMetadata, Error> BwReadObject(
 }
 
 // ---------------------------------------------------------------------------
+// BwCreateObject
+// ---------------------------------------------------------------------------
+Result<BwCreateResult, Error> BwCreateObject(
+    IAdtSession& session,
+    const BwCreateOptions& options) {
+    if (options.object_type.empty()) {
+        return Result<BwCreateResult, Error>::Err(Error{
+            "BwCreateObject", "", std::nullopt,
+            "Object type must not be empty", std::nullopt});
+    }
+    if (options.object_name.empty()) {
+        return Result<BwCreateResult, Error>::Err(Error{
+            "BwCreateObject", "", std::nullopt,
+            "Object name must not be empty", std::nullopt});
+    }
+
+    const auto create_url = BuildCreateUrl(options);
+    const auto ct = (options.content_type.has_value() && !options.content_type->empty())
+        ? *options.content_type
+        : GetDefaultAcceptType(options.object_type);
+    const auto body = options.content.has_value() ? *options.content : "";
+
+    auto response = session.Post(create_url, body, ct);
+    if (response.IsErr()) {
+        return Result<BwCreateResult, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (!adt_utils::HasStatus(http.status_code, {200, 201, 202, 204})) {
+        auto error = Error::FromHttpStatus(
+            "BwCreateObject", create_url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwCreateResult, Error>::Err(std::move(error));
+    }
+
+    BwCreateResult out;
+    out.http_status = http.status_code;
+    auto location = adt_utils::FindHeaderValueCi(http.headers, "Location");
+    if (location.has_value()) {
+        out.uri = *location;
+    } else {
+        out.uri = BuildObjectPath(options.object_type, options.object_name);
+    }
+    return Result<BwCreateResult, Error>::Ok(std::move(out));
+}
+
+// ---------------------------------------------------------------------------
 // BwLockObject
 // ---------------------------------------------------------------------------
 Result<BwLockResult, Error> BwLockObject(
     IAdtSession& session,
-    const std::string& object_type,
-    const std::string& object_name,
-    const std::string& activity) {
-    auto path = BuildObjectPath(object_type, object_name);
-    auto lock_url = path + "?action=lock";
+    const BwLockOptions& options) {
+    if (options.object_type.empty()) {
+        return Result<BwLockResult, Error>::Err(Error{
+            "BwLockObject", "", std::nullopt,
+            "Object type must not be empty", std::nullopt});
+    }
+    if (options.object_name.empty()) {
+        return Result<BwLockResult, Error>::Err(Error{
+            "BwLockObject", "", std::nullopt,
+            "Object name must not be empty", std::nullopt});
+    }
+
+    auto path = BuildObjectPath(options.object_type, options.object_name);
+    auto lock_url = BuildLockUrl(options);
 
     HttpHeaders headers;
-    if (activity != "CHAN") {
-        headers["activity_context"] = activity;
+    if (options.activity != "CHAN") {
+        headers["activity_context"] = options.activity;
     }
+    ApplyBwContextHeaders(options.context_headers, headers);
 
     auto response = session.Post(lock_url, "", "application/xml", headers);
     if (response.IsErr()) {
@@ -352,10 +444,26 @@ Result<BwLockResult, Error> BwLockObject(
     if (http.status_code != 200) {
         auto error = Error::FromHttpStatus("BwLockObject", path, http.status_code, http.body);
         AddBwHint(error);
+        if (http.status_code == 400 && !error.hint.has_value()) {
+            error.hint = "BW lock requires a stateful session. "
+                         "Use --session-file to persist session state across commands.";
+        }
         return Result<BwLockResult, Error>::Err(std::move(error));
     }
 
     return ParseLockResponse(http.body, http.headers, path);
+}
+
+Result<BwLockResult, Error> BwLockObject(
+    IAdtSession& session,
+    const std::string& object_type,
+    const std::string& object_name,
+    const std::string& activity) {
+    BwLockOptions options;
+    options.object_type = object_type;
+    options.object_name = object_name;
+    options.activity = activity;
+    return BwLockObject(session, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +516,16 @@ Result<void, Error> BwSaveObject(
         ? *options.content_type
         : GetDefaultAcceptType(options.object_type);
 
-    auto response = session.Put(save_url, options.content, ct);
+    HttpHeaders headers;
+    auto context = options.context_headers;
+    if (!options.transport.empty() &&
+        (!context.transport_lock_holder.has_value() ||
+         context.transport_lock_holder->empty())) {
+        context.transport_lock_holder = options.transport;
+    }
+    ApplyBwContextHeaders(context, headers);
+
+    auto response = session.Put(save_url, options.content, ct, headers);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
@@ -428,17 +545,23 @@ Result<void, Error> BwSaveObject(
 // ---------------------------------------------------------------------------
 Result<void, Error> BwDeleteObject(
     IAdtSession& session,
-    const std::string& object_type,
-    const std::string& object_name,
-    const std::string& lock_handle,
-    const std::string& transport) {
-    auto path = BuildObjectPath(object_type, object_name);
-    auto delete_url = path + "?lockHandle=" + lock_handle;
-    if (!transport.empty()) {
-        delete_url += "&corrNr=" + transport;
+    const BwDeleteOptions& options) {
+    auto path = BuildObjectPath(options.object_type, options.object_name);
+    auto delete_url = path + "?lockHandle=" + options.lock_handle;
+    if (!options.transport.empty()) {
+        delete_url += "&corrNr=" + options.transport;
     }
 
-    auto response = session.Delete(delete_url);
+    HttpHeaders headers;
+    auto context = options.context_headers;
+    if (!options.transport.empty() &&
+        (!context.transport_lock_holder.has_value() ||
+         context.transport_lock_holder->empty())) {
+        context.transport_lock_holder = options.transport;
+    }
+    ApplyBwContextHeaders(context, headers);
+
+    auto response = session.Delete(delete_url, headers);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
@@ -451,6 +574,20 @@ Result<void, Error> BwDeleteObject(
     }
 
     return Result<void, Error>::Ok();
+}
+
+Result<void, Error> BwDeleteObject(
+    IAdtSession& session,
+    const std::string& object_type,
+    const std::string& object_name,
+    const std::string& lock_handle,
+    const std::string& transport) {
+    BwDeleteOptions options;
+    options.object_type = object_type;
+    options.object_name = object_name;
+    options.lock_handle = lock_handle;
+    options.transport = transport;
+    return BwDeleteObject(session, options);
 }
 
 } // namespace erpl_adt

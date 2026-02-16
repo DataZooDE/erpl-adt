@@ -1,5 +1,5 @@
 #include <erpl_adt/adt/activation.hpp>
-#include "adt_utils.hpp"
+#include "protocol_kernel.hpp"
 
 #include <tinyxml2.h>
 
@@ -144,32 +144,18 @@ Result<ActivationResult, Error> ActivateAll(
 
     // Async: 202 + Location → poll until complete.
     if (http.status_code == 202) {
-        auto location = adt_utils::RequireHeaderCi(http.headers, "Location",
-                                                   "ActivateAll",
-                                                   kActivationPath, 202);
-        if (location.IsErr()) {
-            return Result<ActivationResult, Error>::Err(
-                std::move(location).Error());
-        }
-
-        auto poll = session.PollUntilComplete(location.Value(), timeout);
-        if (poll.IsErr()) {
-            return Result<ActivationResult, Error>::Err(std::move(poll).Error());
-        }
-        if (poll.Value().status == PollStatus::Failed) {
-            return Result<ActivationResult, Error>::Err(Error{
-                "ActivateAll", kActivationPath, std::nullopt,
-                "async activation operation failed", std::nullopt,
-                ErrorCategory::ActivationError});
-        }
-        if (poll.Value().status == PollStatus::Running) {
-            return Result<ActivationResult, Error>::Err(Error{
+        auto poll = protocol_kernel::PollAcceptedOperation(
+            session,
+            http,
+            timeout,
+            protocol_kernel::AsyncContract{
                 "ActivateAll",
                 kActivationPath,
-                std::nullopt,
+                "async activation operation failed",
                 "async activation operation did not complete within timeout",
-                std::nullopt,
-                ErrorCategory::Timeout});
+                ErrorCategory::ActivationError});
+        if (poll.IsErr()) {
+            return Result<ActivationResult, Error>::Err(std::move(poll).Error());
         }
 
         return codec.ParseActivationResponse(poll.Value().body);
@@ -212,36 +198,22 @@ Result<ActivationResult, Error> ActivateObject(
 
     // Async: 202 + Location -> poll until complete.
     if (http.status_code == 202) {
-        auto location = adt_utils::RequireHeaderCi(http.headers, "Location",
-                                                   "ActivateObject",
-                                                   kActivateObjectPath, 202);
-        if (location.IsErr()) {
-            return Result<ActivationResult, Error>::Err(
-                std::move(location).Error());
-        }
-
-        auto poll = session.PollUntilComplete(location.Value(), timeout);
+        auto poll = protocol_kernel::PollAcceptedOperation(
+            session,
+            http,
+            timeout,
+            protocol_kernel::AsyncContract{
+                "ActivateObject",
+                kActivateObjectPath,
+                "async activation operation failed",
+                "async activation operation did not complete within timeout",
+                ErrorCategory::ActivationError});
         if (poll.IsErr()) {
             return Result<ActivationResult, Error>::Err(std::move(poll).Error());
         }
-        if (poll.Value().status == PollStatus::Failed) {
-            return Result<ActivationResult, Error>::Err(Error{
-                "ActivateObject", kActivateObjectPath, std::nullopt,
-                "async activation operation failed", std::nullopt,
-                ErrorCategory::ActivationError});
-        }
-        if (poll.Value().status == PollStatus::Running) {
-            return Result<ActivationResult, Error>::Err(Error{
-                "ActivateObject",
-                kActivateObjectPath,
-                std::nullopt,
-                "async activation operation did not complete within timeout",
-                std::nullopt,
-                ErrorCategory::Timeout});
-        }
 
-        return Result<ActivationResult, Error>::Ok(
-            ParseActivationResultXml(poll.Value().body));
+        return Result<ActivationResult, Error>::Ok(ParseActivationResultXml(
+            poll.Value().body));
     }
 
     // Synchronous: 200 with activation result.

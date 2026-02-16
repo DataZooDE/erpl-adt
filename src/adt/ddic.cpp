@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/ddic.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <tinyxml2.h>
 
 #include <queue>
@@ -23,10 +25,11 @@ Result<std::vector<PackageEntry>, Error> ParseNodeStructure(
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<PackageEntry>, Error>::Err(Error{
-            "ListPackageContents", "", std::nullopt,
-            "Failed to parse node structure XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "ListPackageContents", "",
+            "Failed to parse node structure XML")) {
+        return Result<std::vector<PackageEntry>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<PackageEntry> entries;
@@ -70,10 +73,10 @@ Result<std::vector<PackageEntry>, Error> ParseNodeStructure(
 Result<TableInfo, Error> ParseTableDefinition(
     std::string_view xml, const std::string& table_name) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<TableInfo, Error>::Err(Error{
-            "GetTableDefinition", table_name, std::nullopt,
-            "Failed to parse table XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "GetTableDefinition", table_name,
+            "Failed to parse table XML")) {
+        return Result<TableInfo, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -84,16 +87,9 @@ Result<TableInfo, Error> ParseTableDefinition(
     }
 
     TableInfo info;
-    // Try namespaced then plain attributes.
-    auto get_attr = [&](const char* ns_name, const char* plain = nullptr) -> std::string {
-        const char* val = root->Attribute(ns_name);
-        if (!val && plain) val = root->Attribute(plain);
-        return val ? val : "";
-    };
-
-    info.name = get_attr("adtcore:name", "name");
-    info.description = get_attr("adtcore:description", "description");
-    info.delivery_class = get_attr("tabl:deliveryClass", "deliveryClass");
+    info.name = xml_utils::AttrAny(root, "adtcore:name", "name");
+    info.description = xml_utils::AttrAny(root, "adtcore:description", "description");
+    info.delivery_class = xml_utils::AttrAny(root, "tabl:deliveryClass", "deliveryClass");
 
     // Parse fields from child elements.
     for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
@@ -105,21 +101,10 @@ Result<TableInfo, Error> ParseTableDefinition(
         }
 
         TableField field;
-        const char* name = el->Attribute("adtcore:name");
-        if (!name) name = el->Attribute("name");
-        field.name = name ? name : "";
-
-        const char* type = el->Attribute("tabl:type");
-        if (!type) type = el->Attribute("type");
-        field.type = type ? type : "";
-
-        const char* desc = el->Attribute("adtcore:description");
-        if (!desc) desc = el->Attribute("description");
-        field.description = desc ? desc : "";
-
-        const char* key = el->Attribute("tabl:keyField");
-        if (!key) key = el->Attribute("keyField");
-        field.key_field = key && std::string(key) == "true";
+        field.name = xml_utils::AttrAny(el, "adtcore:name", "name");
+        field.type = xml_utils::AttrAny(el, "tabl:type", "type");
+        field.description = xml_utils::AttrAny(el, "adtcore:description", "description");
+        field.key_field = (xml_utils::AttrAny(el, "tabl:keyField", "keyField") == "true");
 
         if (!field.name.empty()) {
             info.fields.push_back(std::move(field));

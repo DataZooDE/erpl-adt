@@ -1,5 +1,5 @@
 #include <erpl_adt/adt/abapgit.hpp>
-#include "adt_utils.hpp"
+#include "protocol_kernel.hpp"
 
 #include <string>
 
@@ -85,28 +85,18 @@ Result<RepoInfo, Error> CloneRepo(
 
     // Async: 202 with Location header — poll until complete.
     if (http.status_code == 202) {
-        auto location = adt_utils::RequireHeaderCi(http.headers, "Location",
-                                                   "CloneRepo",
-                                                   kReposPath, 202);
-        if (location.IsErr()) {
-            return Result<RepoInfo, Error>::Err(std::move(location).Error());
-        }
-
-        auto poll = session.PollUntilComplete(location.Value(), timeout);
+        auto poll = protocol_kernel::PollAcceptedOperation(
+            session,
+            http,
+            timeout,
+            protocol_kernel::AsyncContract{
+                "CloneRepo",
+                kReposPath,
+                "async clone operation failed",
+                "async clone operation did not complete within timeout",
+                ErrorCategory::CloneError});
         if (poll.IsErr()) {
             return Result<RepoInfo, Error>::Err(std::move(poll).Error());
-        }
-        if (poll.Value().status == PollStatus::Failed) {
-            return Result<RepoInfo, Error>::Err(Error{
-                "CloneRepo", kReposPath, std::nullopt,
-                "async clone operation failed", std::nullopt,
-                ErrorCategory::CloneError});
-        }
-        if (poll.Value().status == PollStatus::Running) {
-            return Result<RepoInfo, Error>::Err(Error{
-                "CloneRepo", kReposPath, std::nullopt,
-                "async clone operation did not complete within timeout",
-                std::nullopt, ErrorCategory::Timeout});
         }
 
         return codec.ParseRepoListResponse(poll.Value().body)
@@ -167,22 +157,20 @@ Result<PollResult, Error> PullRepo(
 
     // Pull is always async: 202 + Location.
     if (http.status_code == 202) {
-        auto location = adt_utils::RequireHeaderCi(http.headers, "Location",
-                                                   "PullRepo", path, 202);
-        if (location.IsErr()) {
-            return Result<PollResult, Error>::Err(std::move(location).Error());
-        }
-        auto poll = session.PollUntilComplete(location.Value(), timeout);
+        auto poll = protocol_kernel::PollAcceptedOperation(
+            session,
+            http,
+            timeout,
+            protocol_kernel::AsyncContract{
+                "PullRepo",
+                path,
+                "async pull operation failed",
+                "async pull operation did not complete within timeout",
+                ErrorCategory::PullError});
         if (poll.IsErr()) {
             return Result<PollResult, Error>::Err(std::move(poll).Error());
         }
-        if (poll.Value().status == PollStatus::Running) {
-            return Result<PollResult, Error>::Err(Error{
-                "PullRepo", path, std::nullopt,
-                "async pull operation did not complete within timeout",
-                std::nullopt, ErrorCategory::Timeout});
-        }
-        return poll;
+        return Result<PollResult, Error>::Ok(poll.Value());
     }
 
     // Synchronous success (e.g. no changes needed).

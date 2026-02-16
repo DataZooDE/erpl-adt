@@ -88,6 +88,33 @@ TEST_CASE("BwGetXrefs: sends correct URL with all params", "[adt][bw][xref]") {
     CHECK(path.find("associatedObjectType=IOBJ") != std::string::npos);
 }
 
+TEST_CASE("BwGetXrefs: max_results adds $top parameter", "[adt][bw][xref]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwXrefOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "0CALDAY";
+    opts.max_results = 5;
+    auto result = BwGetXrefs(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("$top=5") != std::string::npos);
+}
+
+TEST_CASE("BwGetXrefs: zero max_results omits $top", "[adt][bw][xref]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    auto result = BwGetXrefs(mock, MakeXrefOptions("ADSO", "TEST"));
+    REQUIRE(result.IsOk());
+
+    auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("$top") == std::string::npos);
+}
+
 TEST_CASE("BwGetXrefs: sends Accept atom+xml header", "[adt][bw][xref]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));

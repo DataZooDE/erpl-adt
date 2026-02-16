@@ -33,11 +33,13 @@ struct BwXrefEntry {
 // ---------------------------------------------------------------------------
 
 struct BwXrefOptions {
+    std::optional<std::string> endpoint_override;      // Full endpoint URL override
     std::string object_type;                            // Required
     std::string object_name;                            // Required
     std::optional<std::string> object_version;          // "A", "M"
     std::optional<std::string> association;              // Filter by association code
     std::optional<std::string> associated_object_type;  // Filter by related type
+    int max_results = 0;                                // 0 = no limit
 };
 
 [[nodiscard]] Result<std::vector<BwXrefEntry>, Error> BwGetXrefs(

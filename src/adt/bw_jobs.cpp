@@ -1,10 +1,10 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
-#include <exception>
 #include <string>
 
 namespace erpl_adt {
@@ -12,6 +12,7 @@ namespace erpl_adt {
 namespace {
 
 const char* kBwJobsBase = "/sap/bw/modeling/jobs/";
+const char* kBwJobsCollectionPath = "/sap/bw/modeling/jobs";
 
 std::string JobUrl(const std::string& guid, const std::string& sub_resource = "") {
     auto url = std::string(kBwJobsBase) + guid;
@@ -21,13 +22,116 @@ std::string JobUrl(const std::string& guid, const std::string& sub_resource = ""
     return url;
 }
 
-// Get attribute or empty string.
-std::string Attr(const tinyxml2::XMLElement* el, const char* name) {
-    const char* val = el->Attribute(name);
-    return val ? val : "";
+BwJobInfo ParseJobInfoElement(const tinyxml2::XMLElement* root,
+                              const std::string& fallback_guid = "") {
+    BwJobInfo result;
+    result.guid = xml_utils::AttrAny(root, "guid", "id");
+    if (result.guid.empty()) {
+        result.guid = fallback_guid;
+    }
+    result.status = xml_utils::AttrAny(root, "status", "value");
+    result.job_type = xml_utils::Attr(root, "jobType");
+    result.description = xml_utils::Attr(root, "description");
+    return result;
 }
 
 } // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// BwListJobs
+// ---------------------------------------------------------------------------
+Result<std::vector<BwJobInfo>, Error> BwListJobs(IAdtSession& session) {
+    std::string url = kBwJobsCollectionPath;
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs+xml";
+
+    auto response = session.Get(url, headers);
+    if (response.IsErr()) {
+        return Result<std::vector<BwJobInfo>, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200) {
+        auto error = Error::FromHttpStatus("BwListJobs", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<std::vector<BwJobInfo>, Error>::Err(std::move(error));
+    }
+
+    tinyxml2::XMLDocument doc;
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwListJobs", url, "Failed to parse jobs list XML")) {
+        return Result<std::vector<BwJobInfo>, Error>::Err(std::move(*parse_error));
+    }
+
+    std::vector<BwJobInfo> jobs;
+    auto* root = doc.RootElement();
+    if (!root) {
+        return Result<std::vector<BwJobInfo>, Error>::Ok(std::move(jobs));
+    }
+
+    if (std::string(root->Name()) == "job" ||
+        std::string(root->Name()).find(":job") != std::string::npos) {
+        jobs.push_back(ParseJobInfoElement(root));
+        return Result<std::vector<BwJobInfo>, Error>::Ok(std::move(jobs));
+    }
+
+    for (auto* child = root->FirstChildElement(); child;
+         child = child->NextSiblingElement()) {
+        const auto* name = child->Name();
+        if (!name) {
+            continue;
+        }
+        std::string name_str(name);
+        if (name_str == "job" || name_str.find(":job") != std::string::npos) {
+            jobs.push_back(ParseJobInfoElement(child));
+        }
+    }
+    return Result<std::vector<BwJobInfo>, Error>::Ok(std::move(jobs));
+}
+
+// ---------------------------------------------------------------------------
+// BwGetJobResult
+// ---------------------------------------------------------------------------
+Result<BwJobInfo, Error> BwGetJobResult(IAdtSession& session,
+                                        const std::string& job_guid) {
+    if (job_guid.empty()) {
+        return Result<BwJobInfo, Error>::Err(Error{
+            "BwGetJobResult", "", std::nullopt,
+            "Job GUID must not be empty", std::nullopt});
+    }
+
+    auto url = JobUrl(job_guid);
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs.job+xml";
+
+    auto response = session.Get(url, headers);
+    if (response.IsErr()) {
+        return Result<BwJobInfo, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200) {
+        auto error = Error::FromHttpStatus("BwGetJobResult", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwJobInfo, Error>::Err(std::move(error));
+    }
+
+    tinyxml2::XMLDocument doc;
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobResult", url,
+            "Failed to parse job result XML")) {
+        return Result<BwJobInfo, Error>::Err(std::move(*parse_error));
+    }
+
+    auto* root = doc.RootElement();
+    BwJobInfo info;
+    if (root) {
+        info = ParseJobInfoElement(root, job_guid);
+    } else {
+        info.guid = job_guid;
+    }
+    return Result<BwJobInfo, Error>::Ok(std::move(info));
+}
 
 // ---------------------------------------------------------------------------
 // BwGetJobStatus
@@ -68,10 +172,9 @@ Result<BwJobStatus, Error> BwGetJobStatus(
     BwJobStatus result;
     result.guid = job_guid;
     if (root) {
-        result.status = Attr(root, "status");
-        if (result.status.empty()) result.status = Attr(root, "value");
-        result.job_type = Attr(root, "jobType");
-        result.description = Attr(root, "description");
+        result.status = xml_utils::AttrAny(root, "status", "value");
+        result.job_type = xml_utils::Attr(root, "jobType");
+        result.description = xml_utils::Attr(root, "description");
         if (result.status.empty() && root->GetText()) {
             result.status = root->GetText();
         }
@@ -119,22 +222,12 @@ Result<BwJobProgress, Error> BwGetJobProgress(
     BwJobProgress result;
     result.guid = job_guid;
     if (root) {
-        result.status = Attr(root, "status");
-        result.description = Attr(root, "description");
-        const char* pct = root->Attribute("percentage");
-        if (!pct) pct = root->Attribute("value");
-        if (pct) {
-            try {
-                result.percentage = std::stoi(pct);
-            } catch (const std::exception&) {
-                result.percentage = 0;
-            }
-        }
-        if (result.percentage == 0 && root->GetText()) {
-            try {
-                result.percentage = std::stoi(root->GetText());
-            } catch (const std::exception&) {
-            }
+        result.status = xml_utils::Attr(root, "status");
+        result.description = xml_utils::Attr(root, "description");
+        result.percentage = xml_utils::ParseIntOrDefault(
+            xml_utils::AttrAny(root, "percentage", "value"), 0);
+        if (result.percentage == 0) {
+            result.percentage = xml_utils::TextIntOr(root, 0);
         }
     }
 
@@ -184,9 +277,9 @@ Result<std::vector<BwJobStep>, Error> BwGetJobSteps(
         for (auto* step = root->FirstChildElement(); step;
              step = step->NextSiblingElement()) {
             BwJobStep s;
-            s.name = Attr(step, "name");
-            s.status = Attr(step, "status");
-            s.description = Attr(step, "description");
+            s.name = xml_utils::Attr(step, "name");
+            s.status = xml_utils::Attr(step, "status");
+            s.description = xml_utils::Attr(step, "description");
             if (s.description.empty() && step->GetText()) {
                 s.description = step->GetText();
             }
@@ -195,6 +288,63 @@ Result<std::vector<BwJobStep>, Error> BwGetJobSteps(
     }
 
     return Result<std::vector<BwJobStep>, Error>::Ok(std::move(steps));
+}
+
+// ---------------------------------------------------------------------------
+// BwGetJobStep
+// ---------------------------------------------------------------------------
+Result<BwJobStep, Error> BwGetJobStep(
+    IAdtSession& session,
+    const std::string& job_guid,
+    const std::string& step) {
+    if (job_guid.empty()) {
+        return Result<BwJobStep, Error>::Err(Error{
+            "BwGetJobStep", "", std::nullopt,
+            "Job GUID must not be empty", std::nullopt});
+    }
+    if (step.empty()) {
+        return Result<BwJobStep, Error>::Err(Error{
+            "BwGetJobStep", "", std::nullopt,
+            "Step must not be empty", std::nullopt});
+    }
+
+    auto url = JobUrl(job_guid, "steps/" + step);
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs.step+xml";
+
+    auto response = session.Get(url, headers);
+    if (response.IsErr()) {
+        return Result<BwJobStep, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200) {
+        auto error = Error::FromHttpStatus("BwGetJobStep", url, http.status_code, http.body);
+        AddBwHint(error);
+        return Result<BwJobStep, Error>::Err(std::move(error));
+    }
+
+    tinyxml2::XMLDocument doc;
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwGetJobStep", url,
+            "Failed to parse job step XML")) {
+        return Result<BwJobStep, Error>::Err(std::move(*parse_error));
+    }
+
+    auto* root = doc.RootElement();
+    BwJobStep result;
+    result.name = step;
+    if (root) {
+        if (!xml_utils::Attr(root, "name").empty()) {
+            result.name = xml_utils::Attr(root, "name");
+        }
+        result.status = xml_utils::Attr(root, "status");
+        result.description = xml_utils::Attr(root, "description");
+        if (result.description.empty() && root->GetText()) {
+            result.description = root->GetText();
+        }
+    }
+    return Result<BwJobStep, Error>::Ok(std::move(result));
 }
 
 // ---------------------------------------------------------------------------
@@ -240,10 +390,9 @@ Result<std::vector<BwJobMessage>, Error> BwGetJobMessages(
         for (auto* msg = root->FirstChildElement(); msg;
              msg = msg->NextSiblingElement()) {
             BwJobMessage m;
-            m.severity = Attr(msg, "severity");
-            if (m.severity.empty()) m.severity = Attr(msg, "type");
-            m.object_name = Attr(msg, "objectName");
-            m.text = Attr(msg, "text");
+            m.severity = xml_utils::AttrAny(msg, "severity", "type");
+            m.object_name = xml_utils::Attr(msg, "objectName");
+            m.text = xml_utils::Attr(msg, "text");
             if (m.text.empty() && msg->GetText()) {
                 m.text = msg->GetText();
             }

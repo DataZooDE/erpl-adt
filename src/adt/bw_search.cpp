@@ -1,6 +1,8 @@
 #include <erpl_adt/adt/bw_search.hpp>
 
+#include "atom_parser.hpp"
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
@@ -24,6 +26,11 @@ void AppendParam(std::string& url, const char* name,
 }
 
 std::string BuildSearchUrl(const BwSearchOptions& options) {
+    if (options.endpoint_override.has_value() &&
+        !options.endpoint_override->empty()) {
+        return *options.endpoint_override;
+    }
+
     std::string url = std::string(kBwSearchPath) +
         "?searchTerm=" + UrlEncode(options.query) +
         "&maxSize=" + std::to_string(options.max_results);
@@ -48,14 +55,6 @@ std::string BuildSearchUrl(const BwSearchOptions& options) {
     return url;
 }
 
-// Get attribute trying both namespaced and plain names.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* ns_name, const char* plain_name) {
-    const char* val = el->Attribute(ns_name);
-    if (!val) val = el->Attribute(plain_name);
-    return val ? val : "";
-}
-
 Result<std::vector<BwSearchResult>, Error> ParseSearchResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
@@ -77,47 +76,36 @@ Result<std::vector<BwSearchResult>, Error> ParseSearchResponse(
     // Atom feed: <feed> -> <entry> elements
     for (auto* entry = root->FirstChildElement(); entry;
          entry = entry->NextSiblingElement()) {
-        const char* entry_name = entry->Name();
-        if (!entry_name) continue;
-
-        std::string name_str(entry_name);
-        bool is_entry = (name_str == "entry" ||
-                         name_str.find(":entry") != std::string::npos);
-        if (!is_entry) continue;
+        if (!atom_parser::HasLocalName(entry, "entry")) continue;
 
         BwSearchResult r;
 
-        // Get title (description)
+        r.description = atom_parser::ChildTextByLocalName(entry, "title");
+        r.uri = atom_parser::ChildTextByLocalName(entry, "id");
+
+        if (const auto* props = atom_parser::AtomEntryProperties(entry)) {
+            r.name = xml_utils::AttrAny(props, "bwModel:objectName", "objectName");
+            r.type = xml_utils::AttrAny(props, "bwModel:objectType", "objectType");
+            r.subtype = xml_utils::AttrAny(props, "bwModel:objectSubtype", "objectSubtype");
+            r.version = xml_utils::AttrAny(props, "bwModel:objectVersion", "objectVersion");
+            r.status = xml_utils::AttrAny(props, "bwModel:objectStatus", "objectStatus");
+            r.technical_name = xml_utils::AttrAny(props, "bwModel:technicalObjectName", "technicalObjectName");
+            r.last_changed = xml_utils::AttrAny(props, "bwModel:lastChangedAt", "lastChangedAt");
+            if (r.description.empty()) {
+                r.description = xml_utils::AttrAny(props, "bwModel:objectDesc", "objectDesc");
+            }
+        }
+
         for (auto* child = entry->FirstChildElement(); child;
              child = child->NextSiblingElement()) {
-            const char* child_name = child->Name();
-            if (!child_name) continue;
-            std::string cn(child_name);
-
-            if (cn == "title" || cn.find(":title") != std::string::npos) {
-                if (child->GetText()) r.description = child->GetText();
-            } else if (cn == "id" || cn.find(":id") != std::string::npos) {
-                if (child->GetText()) r.uri = child->GetText();
-            } else if (cn == "content" || cn.find(":content") != std::string::npos) {
-                // Content element has the attributes
-                auto* props = child->FirstChildElement();
-                if (props) {
-                    r.name = GetAttr(props, "bwModel:objectName", "objectName");
-                    r.type = GetAttr(props, "bwModel:objectType", "objectType");
-                    r.subtype = GetAttr(props, "bwModel:objectSubtype", "objectSubtype");
-                    r.version = GetAttr(props, "bwModel:objectVersion", "objectVersion");
-                    r.status = GetAttr(props, "bwModel:objectStatus", "objectStatus");
-                    r.technical_name = GetAttr(props, "bwModel:technicalObjectName", "technicalObjectName");
-                    r.last_changed = GetAttr(props, "bwModel:lastChangedAt", "lastChangedAt");
-                    if (r.description.empty()) {
-                        r.description = GetAttr(props, "bwModel:objectDesc", "objectDesc");
-                    }
-                }
-            } else if (cn == "link" || cn.find(":link") != std::string::npos) {
-                const char* rel = child->Attribute("rel");
-                if (rel && std::string(rel) == "self") {
-                    const char* href = child->Attribute("href");
-                    if (href && r.uri.empty()) r.uri = href;
+            if (!atom_parser::HasLocalName(child, "link")) {
+                continue;
+            }
+            const char* rel = child->Attribute("rel");
+            if (rel && std::string(rel) == "self") {
+                const char* href = child->Attribute("href");
+                if (href && r.uri.empty()) {
+                    r.uri = href;
                 }
             }
         }

@@ -47,6 +47,35 @@ struct BwJobMessage {
 };
 
 // ---------------------------------------------------------------------------
+// BwJobInfo — summary or result resource for a BW background job.
+// ---------------------------------------------------------------------------
+struct BwJobInfo {
+    std::string guid;
+    std::string status;
+    std::string job_type;
+    std::string description;
+};
+
+// ---------------------------------------------------------------------------
+// BwListJobs — list BW background jobs.
+//
+// Endpoint: GET /sap/bw/modeling/jobs
+// Accept:   application/vnd.sap-bw-modeling.jobs+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<std::vector<BwJobInfo>, Error> BwListJobs(
+    IAdtSession& session);
+
+// ---------------------------------------------------------------------------
+// BwGetJobResult — read single BW background job result resource.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}
+// Accept:   application/vnd.sap-bw-modeling.jobs.job+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwJobInfo, Error> BwGetJobResult(
+    IAdtSession& session,
+    const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
 // BwGetJobStatus — get status of a background job.
 //
 // Endpoint: GET /sap/bw/modeling/jobs/{guid}/status
@@ -75,6 +104,17 @@ struct BwJobMessage {
 [[nodiscard]] Result<std::vector<BwJobStep>, Error> BwGetJobSteps(
     IAdtSession& session,
     const std::string& job_guid);
+
+// ---------------------------------------------------------------------------
+// BwGetJobStep — get one step resource from a BW background job.
+//
+// Endpoint: GET /sap/bw/modeling/jobs/{guid}/steps/{step}
+// Accept:   application/vnd.sap-bw-modeling.jobs.step+xml
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwJobStep, Error> BwGetJobStep(
+    IAdtSession& session,
+    const std::string& job_guid,
+    const std::string& step);
 
 // ---------------------------------------------------------------------------
 // BwGetJobMessages — get messages from a background job.

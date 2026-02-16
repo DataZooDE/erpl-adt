@@ -57,10 +57,10 @@ nlohmann::json ParseContent(const ToolResult& result) {
 // Registration
 // ===========================================================================
 
-TEST_CASE("RegisterAdtTools: registers 31 tools", "[mcp][handlers]") {
+TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 45);
+    CHECK(registry.Tools().size() == 60);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -752,6 +752,36 @@ TEST_CASE("adt_release_transport: missing transport_number", "[mcp][handlers][tr
 }
 
 // ===========================================================================
+// adt_activate
+// ===========================================================================
+
+TEST_CASE("adt_activate: happy path", "[mcp][handlers][activation]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("token123"));
+    auto xml = LoadFixture("activation_response.xml");
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_activate",
+                           {{"uri", "/sap/bc/adt/oo/classes/zcl_test_flight"}});
+    auto j = ParseContent(result);
+
+    CHECK(j.contains("activated"));
+    CHECK(j.contains("failed"));
+    CHECK(j.contains("error_messages"));
+    CHECK(j["error_messages"].is_array());
+}
+
+TEST_CASE("adt_activate: missing uri", "[mcp][handlers][activation]") {
+    MockAdtSession mock;
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_activate",
+                           nlohmann::json::object());
+    CHECK(result.is_error);
+}
+
+// ===========================================================================
 // adt_discover
 // ===========================================================================
 
@@ -791,6 +821,88 @@ TEST_CASE("adt_discover: workspace filter", "[mcp][handlers][discover]") {
 }
 
 // ===========================================================================
+// BW utility tools
+// ===========================================================================
+
+TEST_CASE("bw_search_metadata: happy path", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    std::string xml = R"(
+        <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <title>Object Type</title>
+                <content type="application/xml">
+                    <properties name="objectType" value="ADSO" category="basic"/>
+                </content>
+            </entry>
+        </feed>
+    )";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_search_metadata", nlohmann::json::object());
+    auto j = ParseContent(result);
+    REQUIRE(j.is_array());
+    REQUIRE(j.size() == 1);
+    CHECK(j[0]["name"] == "objectType");
+    CHECK(j[0]["value"] == "ADSO");
+}
+
+TEST_CASE("bw_nodepath: requires object_uri", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_nodepath", nlohmann::json::object());
+    CHECK(result.is_error);
+}
+
+TEST_CASE("bw_validate: happy path", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    std::string xml = R"(
+        <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <title>Validation warning</title>
+                <content type="application/xml">
+                    <properties severity="W" objectType="ADSO" objectName="ZSALES" code="BW123"/>
+                </content>
+            </entry>
+        </feed>
+    )";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_validate",
+                           {{"object_type", "ADSO"},
+                            {"object_name", "ZSALES"}});
+    auto j = ParseContent(result);
+    REQUIRE(j.is_array());
+    REQUIRE(j.size() == 1);
+    CHECK(j[0]["severity"] == "W");
+    CHECK(j[0]["code"] == "BW123");
+}
+
+TEST_CASE("bw_move_requests: happy path", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    std::string xml = R"(
+        <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <title>Move Request 1</title>
+                <content type="application/xml">
+                    <properties request="MOVE0001" owner="DEVELOPER" status="OPEN"/>
+                </content>
+            </entry>
+        </feed>
+    )";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_move_requests", nlohmann::json::object());
+    auto j = ParseContent(result);
+    REQUIRE(j.is_array());
+    REQUIRE(j.size() == 1);
+    CHECK(j[0]["request"] == "MOVE0001");
+}
+
+// ===========================================================================
 // Integration: McpServer + tool handlers end-to-end
 // ===========================================================================
 
@@ -814,7 +926,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 45);
+    CHECK(tools.size() == 60);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
@@ -828,6 +940,12 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     CHECK(names.count("adt_lock") == 1);
     CHECK(names.count("adt_unlock") == 1);
     CHECK(names.count("adt_discover") == 1);
+    CHECK(names.count("bw_search_metadata") == 1);
+    CHECK(names.count("bw_validate") == 1);
+    CHECK(names.count("bw_move_requests") == 1);
+    CHECK(names.count("bw_create_object") == 1);
+    CHECK(names.count("bw_valuehelp") == 1);
+    CHECK(names.count("bw_reporting") == 1);
 }
 
 TEST_CASE("MCP end-to-end: tools/call adt_search", "[mcp][handlers][e2e]") {

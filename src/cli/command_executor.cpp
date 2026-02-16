@@ -13,11 +13,15 @@
 #include <erpl_adt/adt/bw_lineage.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_locks.hpp>
+#include <erpl_adt/adt/bw_repo_utils.hpp>
+#include <erpl_adt/adt/bw_reporting.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
 #include <erpl_adt/adt/bw_system.hpp>
 #include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
 #include <erpl_adt/adt/bw_transport_collect.hpp>
+#include <erpl_adt/adt/bw_validation.hpp>
+#include <erpl_adt/adt/bw_valuehelp.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
@@ -446,6 +450,26 @@ BwTemplateParams BuildBwObjectPathParams(const BwReadOptions& opts) {
         params["datasource"] = opts.object_name;
     }
     return params;
+}
+
+BwContextHeaders ParseBwContextHeaders(const CommandArgs& args) {
+    BwContextHeaders context;
+    if (HasFlag(args, "transport-lock-holder")) {
+        context.transport_lock_holder = GetFlag(args, "transport-lock-holder");
+    }
+    if (HasFlag(args, "foreign-objects")) {
+        context.foreign_objects = GetFlag(args, "foreign-objects");
+    }
+    if (HasFlag(args, "foreign-object-locks")) {
+        context.foreign_object_locks = GetFlag(args, "foreign-object-locks");
+    }
+    if (HasFlag(args, "foreign-correction-number")) {
+        context.foreign_correction_number = GetFlag(args, "foreign-correction-number");
+    }
+    if (HasFlag(args, "foreign-package")) {
+        context.foreign_package = GetFlag(args, "foreign-package");
+    }
+    return context;
 }
 
 // ---------------------------------------------------------------------------
@@ -1840,6 +1864,13 @@ int HandleBwRead(const CommandArgs& args) {
     } else {
         // Build detail sections for tree view
         std::string title = meta.type + " " + meta.name;
+        if (!meta.long_description.empty()) {
+            title += " — " + meta.long_description;
+        } else if (!meta.short_description.empty()) {
+            title += " — " + meta.short_description;
+        } else if (!meta.description.empty()) {
+            title += " — " + meta.description;
+        }
 
         OutputFormatter::DetailSection main_section;
         if (!meta.description.empty())
@@ -1906,9 +1937,19 @@ int HandleBwLock(const CommandArgs& args) {
     if (!session) return 99;
     session->SetStateful(true);
 
-    auto activity = GetFlag(args, "activity", "CHAN");
-    auto result = BwLockObject(*session, args.positional[0],
-                                args.positional[1], activity);
+    BwLockOptions lock_options;
+    lock_options.object_type = args.positional[0];
+    lock_options.object_name = args.positional[1];
+    lock_options.activity = GetFlag(args, "activity", "CHAN");
+    if (HasFlag(args, "parent-name")) {
+        lock_options.parent_name = GetFlag(args, "parent-name");
+    }
+    if (HasFlag(args, "parent-type")) {
+        lock_options.parent_type = GetFlag(args, "parent-type");
+    }
+    lock_options.context_headers = ParseBwContextHeaders(args);
+
+    auto result = BwLockObject(*session, lock_options);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -2008,6 +2049,7 @@ int HandleBwSave(const CommandArgs& args) {
     opts.lock_handle = lock_handle;
     opts.transport = GetFlag(args, "transport");
     opts.timestamp = GetFlag(args, "timestamp");
+    opts.context_headers = ParseBwContextHeaders(args);
 
     auto result = BwSaveObject(*session, opts);
     if (result.IsErr()) {
@@ -2040,9 +2082,14 @@ int HandleBwDelete(const CommandArgs& args) {
     auto session = RequireSession(args, fmt);
     if (!session) return 99;
 
-    auto result = BwDeleteObject(*session, args.positional[0],
-                                  args.positional[1], lock_handle,
-                                  GetFlag(args, "transport"));
+    BwDeleteOptions opts;
+    opts.object_type = args.positional[0];
+    opts.object_name = args.positional[1];
+    opts.lock_handle = lock_handle;
+    opts.transport = GetFlag(args, "transport");
+    opts.context_headers = ParseBwContextHeaders(args);
+
+    auto result = BwDeleteObject(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -2087,6 +2134,10 @@ int HandleBwActivate(const CommandArgs& args) {
         opts.mode = BwActivationMode::Background;
     }
     opts.force = HasFlag(args, "force");
+    opts.exec_checks = HasFlag(args, "exec-check");
+    opts.with_cto = HasFlag(args, "with-cto");
+    opts.sort = HasFlag(args, "sort");
+    opts.only_inactive = HasFlag(args, "only-ina");
     if (HasFlag(args, "transport")) {
         opts.transport = GetFlag(args, "transport");
     }
@@ -2168,6 +2219,16 @@ int HandleBwXref(const CommandArgs& args) {
     if (HasFlag(args, "assoc-type")) {
         opts.associated_object_type = GetFlag(args, "assoc-type");
     }
+    if (HasFlag(args, "max")) {
+        auto max_result = ParseIntInRange(
+            GetFlag(args, "max"), 1,
+            std::numeric_limits<int>::max(), "--max");
+        if (max_result.IsErr()) {
+            fmt.PrintError(max_result.Error());
+            return 99;
+        }
+        opts.max_results = max_result.Value();
+    }
 
     BwTemplateParams path_params;
     BwTemplateParams query_params{
@@ -2177,6 +2238,7 @@ int HandleBwXref(const CommandArgs& args) {
     if (opts.object_version.has_value()) query_params["objectVersion"] = *opts.object_version;
     if (opts.association.has_value()) query_params["association"] = *opts.association;
     if (opts.associated_object_type.has_value()) query_params["associatedObjectType"] = *opts.associated_object_type;
+    if (opts.max_results > 0) query_params["$top"] = std::to_string(opts.max_results);
 
     auto endpoint = TryResolveBwEndpoint(
         *session, "http://www.sap.com/bw/modeling/repo", "xref",
@@ -2285,6 +2347,579 @@ int HandleBwNodes(const CommandArgs& args) {
             rows.push_back({r.name, r.type, r.subtype, r.status, r.description});
         }
         fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw search-md
+// ---------------------------------------------------------------------------
+int HandleBwSearchMetadata(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwGetSearchMetadata(*session);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& entries = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& e : entries) {
+            nlohmann::json row{
+                {"name", e.name},
+                {"value", e.value},
+                {"description", e.description},
+                {"category", e.category}};
+            j.push_back(std::move(row));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Name", "Value", "Category", "Description"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& e : entries) {
+            rows.push_back({e.name, e.value, e.category, e.description});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw favorites (sub-actions: list, clear)
+// ---------------------------------------------------------------------------
+int HandleBwFavorites(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto sub_action = args.positional.empty() ? "list" : args.positional[0];
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    if (sub_action == "clear") {
+        auto result = BwDeleteAllBackendFavorites(*session);
+        if (result.IsErr()) {
+            fmt.PrintError(result.Error());
+            return result.Error().ExitCode();
+        }
+        fmt.PrintSuccess("BW backend favorites cleared");
+        return 0;
+    }
+
+    if (sub_action != "list") {
+        fmt.PrintError(MakeValidationError(
+            "Unknown favorites action: " + sub_action + ". Use list or clear."));
+        return 99;
+    }
+
+    auto result = BwListBackendFavorites(*session);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& favorites = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& f : favorites) {
+            j.push_back({{"name", f.name},
+                         {"type", f.type},
+                         {"description", f.description},
+                         {"uri", f.uri}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Name", "Type", "Description", "URI"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& f : favorites) {
+            rows.push_back({f.name, f.type, f.description, f.uri});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw nodepath
+// ---------------------------------------------------------------------------
+int HandleBwNodePath(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    std::string object_uri;
+    if (HasFlag(args, "object-uri")) {
+        object_uri = GetFlag(args, "object-uri");
+    } else if (!args.positional.empty()) {
+        object_uri = args.positional[0];
+    }
+
+    if (object_uri.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw nodepath --object-uri <bw object uri>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwGetNodePath(*session, object_uri);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& nodes = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& n : nodes) {
+            j.push_back({{"name", n.name},
+                         {"type", n.type},
+                         {"uri", n.uri}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Name", "Type", "URI"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& n : nodes) {
+            rows.push_back({n.name, n.type, n.uri});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw applog
+// ---------------------------------------------------------------------------
+int HandleBwApplicationLog(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwApplicationLogOptions opts;
+    if (HasFlag(args, "username")) {
+        opts.username = GetFlag(args, "username");
+    }
+    if (HasFlag(args, "start")) {
+        opts.start_timestamp = GetFlag(args, "start");
+    }
+    if (HasFlag(args, "end")) {
+        opts.end_timestamp = GetFlag(args, "end");
+    }
+
+    auto result = BwGetApplicationLog(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& logs = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& l : logs) {
+            j.push_back({{"identifier", l.identifier},
+                         {"user", l.user},
+                         {"timestamp", l.timestamp},
+                         {"severity", l.severity},
+                         {"text", l.text}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Identifier", "User", "Timestamp", "Severity", "Text"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& l : logs) {
+            rows.push_back({l.identifier, l.user, l.timestamp, l.severity, l.text});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw message
+// ---------------------------------------------------------------------------
+int HandleBwMessage(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw message <identifier> <textype> [--msgv1=...] [--msgv2=...] [--msgv3=...] [--msgv4=...]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwMessageTextOptions opts;
+    opts.identifier = args.positional[0];
+    opts.text_type = args.positional[1];
+    if (HasFlag(args, "msgv1")) opts.msgv1 = GetFlag(args, "msgv1");
+    if (HasFlag(args, "msgv2")) opts.msgv2 = GetFlag(args, "msgv2");
+    if (HasFlag(args, "msgv3")) opts.msgv3 = GetFlag(args, "msgv3");
+    if (HasFlag(args, "msgv4")) opts.msgv4 = GetFlag(args, "msgv4");
+
+    auto result = BwGetMessageText(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& message = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j{
+            {"identifier", message.identifier},
+            {"text_type", message.text_type},
+            {"text", message.text}};
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << message.text << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw validate
+// ---------------------------------------------------------------------------
+int HandleBwValidate(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw validate <type> <name> [--action=validate]"));
+        return 99;
+    }
+
+    BwValidationOptions opts;
+    opts.object_type = args.positional[0];
+    opts.object_name = args.positional[1];
+    opts.action = GetFlag(args, "action", "validate");
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwValidateObject(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& messages = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& m : messages) {
+            j.push_back({{"severity", m.severity},
+                         {"text", m.text},
+                         {"object_type", m.object_type},
+                         {"object_name", m.object_name},
+                         {"code", m.code}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Severity", "Code", "Type", "Name", "Text"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& m : messages) {
+            rows.push_back({m.severity, m.code, m.object_type, m.object_name, m.text});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw move (sub-actions: list)
+// ---------------------------------------------------------------------------
+int HandleBwMove(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto sub_action = args.positional.empty() ? "list" : args.positional[0];
+    if (sub_action != "list") {
+        fmt.PrintError(MakeValidationError(
+            "Unknown move action: " + sub_action + ". Use list."));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwListMoveRequests(*session);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& entries = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& e : entries) {
+            j.push_back({{"request", e.request},
+                         {"owner", e.owner},
+                         {"status", e.status},
+                         {"description", e.description}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::vector<std::string> headers = {"Request", "Owner", "Status", "Description"};
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& e : entries) {
+            rows.push_back({e.request, e.owner, e.status, e.description});
+        }
+        fmt.PrintTable(headers, rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw create
+// ---------------------------------------------------------------------------
+int HandleBwCreate(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw create <type> <name> [--package=...] [--copy-from-name=...] [--copy-from-type=...] [--file=...]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwCreateOptions opts;
+    opts.object_type = args.positional[0];
+    opts.object_name = args.positional[1];
+    if (HasFlag(args, "package")) opts.package_name = GetFlag(args, "package");
+    if (HasFlag(args, "copy-from-name")) opts.copy_from_name = GetFlag(args, "copy-from-name");
+    if (HasFlag(args, "copy-from-type")) opts.copy_from_type = GetFlag(args, "copy-from-type");
+    if (HasFlag(args, "file")) {
+        std::ifstream ifs(GetFlag(args, "file"));
+        if (!ifs) {
+            fmt.PrintError(MakeValidationError("Unable to read --file path"));
+            return 99;
+        }
+        std::ostringstream buffer;
+        buffer << ifs.rdbuf();
+        opts.content = buffer.str();
+    }
+
+    auto result = BwCreateObject(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["uri"] = result.Value().uri;
+        j["http_status"] = result.Value().http_status;
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Created: " << opts.object_type << " " << opts.object_name << "\n";
+        std::cout << "  URI: " << result.Value().uri << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw valuehelp
+// ---------------------------------------------------------------------------
+int HandleBwValueHelp(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw valuehelp <domain> [--query='k=v&k2=v2'] [--max=100] [--pattern=...]"));
+        return 99;
+    }
+
+    BwValueHelpOptions opts;
+    opts.domain = args.positional[0];
+    if (HasFlag(args, "query")) opts.raw_query = GetFlag(args, "query");
+    if (HasFlag(args, "max")) {
+        auto max_result = ParseIntInRange(GetFlag(args, "max"), 1, 100000, "--max");
+        if (max_result.IsErr()) {
+            fmt.PrintError(max_result.Error());
+            return 99;
+        }
+        opts.max_rows = max_result.Value();
+    }
+    if (HasFlag(args, "pattern")) opts.pattern = GetFlag(args, "pattern");
+    if (HasFlag(args, "type")) opts.object_type = GetFlag(args, "type");
+    if (HasFlag(args, "infoprovider")) opts.infoprovider = GetFlag(args, "infoprovider");
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwGetValueHelp(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& rows = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& row : rows) {
+            nlohmann::json r = nlohmann::json::object();
+            for (const auto& [k, v] : row.fields) r[k] = v;
+            j.push_back(std::move(r));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Rows: " << rows.size() << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw virtualfolders
+// ---------------------------------------------------------------------------
+int HandleBwVirtualFolders(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    std::optional<std::string> package_name;
+    std::optional<std::string> object_type;
+    std::optional<std::string> user_name;
+    if (HasFlag(args, "package")) package_name = GetFlag(args, "package");
+    if (HasFlag(args, "type")) object_type = GetFlag(args, "type");
+    if (HasFlag(args, "user")) user_name = GetFlag(args, "user");
+
+    auto result = BwGetVirtualFolders(*session, package_name, object_type, user_name);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& row : result.Value()) {
+            nlohmann::json r = nlohmann::json::object();
+            for (const auto& [k, v] : row.fields) r[k] = v;
+            j.push_back(std::move(r));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Rows: " << result.Value().size() << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw datavolumes
+// ---------------------------------------------------------------------------
+int HandleBwDataVolumes(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    std::optional<std::string> infoprovider;
+    std::optional<int> max_rows;
+    if (HasFlag(args, "infoprovider")) infoprovider = GetFlag(args, "infoprovider");
+    if (HasFlag(args, "max")) {
+        auto max_result = ParseIntInRange(GetFlag(args, "max"), 1, 100000, "--max");
+        if (max_result.IsErr()) {
+            fmt.PrintError(max_result.Error());
+            return 99;
+        }
+        max_rows = max_result.Value();
+    }
+
+    auto result = BwGetDataVolumes(*session, infoprovider, max_rows);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& row : result.Value()) {
+            nlohmann::json r = nlohmann::json::object();
+            for (const auto& [k, v] : row.fields) r[k] = v;
+            j.push_back(std::move(r));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Rows: " << result.Value().size() << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw reporting
+// ---------------------------------------------------------------------------
+int HandleBwReporting(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw reporting <compid> [--dbgmode] [--metadata-only] [--incl-metadata]"));
+        return 99;
+    }
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwReportingOptions opts;
+    opts.compid = args.positional[0];
+    opts.dbgmode = HasFlag(args, "dbgmode");
+    opts.metadata_only = HasFlag(args, "metadata-only");
+    opts.incl_metadata = HasFlag(args, "incl-metadata");
+    opts.incl_object_values = HasFlag(args, "incl-object-values");
+    opts.incl_except_def = HasFlag(args, "incl-except-def");
+    opts.compact_mode = HasFlag(args, "compact-mode");
+    if (HasFlag(args, "from-row")) {
+        auto p = ParseIntInRange(GetFlag(args, "from-row"), 0, 1000000, "--from-row");
+        if (p.IsErr()) {
+            fmt.PrintError(p.Error());
+            return 99;
+        }
+        opts.from_row = p.Value();
+    }
+    if (HasFlag(args, "to-row")) {
+        auto p = ParseIntInRange(GetFlag(args, "to-row"), 0, 1000000, "--to-row");
+        if (p.IsErr()) {
+            fmt.PrintError(p.Error());
+            return 99;
+        }
+        opts.to_row = p.Value();
+    }
+
+    auto result = BwGetReportingMetadata(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& row : result.Value()) {
+            nlohmann::json r = nlohmann::json::object();
+            for (const auto& [k, v] : row.fields) r[k] = v;
+            j.push_back(std::move(r));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Records: " << result.Value().size() << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw qprops
+// ---------------------------------------------------------------------------
+int HandleBwQueryProperties(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = BwGetQueryProperties(*session);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& row : result.Value()) {
+            nlohmann::json r = nlohmann::json::object();
+            for (const auto& [k, v] : row.fields) r[k] = v;
+            j.push_back(std::move(r));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Records: " << result.Value().size() << "\n";
     }
     return 0;
 }
@@ -2521,8 +3156,15 @@ int HandleBwTransport(const CommandArgs& args) {
     if (!session) return 99;
 
     if (sub_action == "check" || sub_action == "list") {
-        bool own_only = HasFlag(args, "own-only");
-        auto result = BwTransportCheck(*session, own_only);
+        BwTransportCheckOptions options;
+        options.own_only = HasFlag(args, "own-only");
+        options.read_properties = HasFlag(args, "rdprops");
+        options.all_messages = HasFlag(args, "allmsgs");
+        if (HasFlag(args, "rddetails")) {
+            options.read_details = GetFlag(args, "rddetails");
+        }
+
+        auto result = BwTransportCheck(*session, options);
         if (result.IsErr()) {
             fmt.PrintError(result.Error());
             return result.Error().ExitCode();
@@ -2623,6 +3265,8 @@ int HandleBwTransport(const CommandArgs& args) {
         opts.transport = GetFlag(args, "transport");
         opts.package_name = GetFlag(args, "package");
         opts.simulate = HasFlag(args, "simulate");
+        opts.all_messages = HasFlag(args, "allmsgs");
+        opts.context_headers = ParseBwContextHeaders(args);
 
         if (opts.transport.empty()) {
             fmt.PrintError(MakeValidationError("Missing --transport flag"));
@@ -2666,6 +3310,7 @@ int HandleBwTransport(const CommandArgs& args) {
         if (HasFlag(args, "transport")) {
             opts.transport = GetFlag(args, "transport");
         }
+        opts.context_headers = ParseBwContextHeaders(args);
 
         auto result = BwTransportCollect(*session, opts);
         if (result.IsErr()) {
@@ -3070,18 +3715,82 @@ int HandleBwAdtUri(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
-// bw job (sub-actions: status, progress, steps, messages, cancel)
+// bw job (sub-actions: list, result, status, progress, steps, step, messages,
+// cancel, restart, cleanup)
 // ---------------------------------------------------------------------------
 int HandleBwJob(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
-            "Usage: erpl-adt bw job <status|progress|steps|messages|cancel|restart|cleanup> <guid>"));
+            "Usage: erpl-adt bw job <list|result|status|progress|steps|step|messages|cancel|restart|cleanup> [args]"));
         return 99;
     }
 
     auto sub_action = args.positional[0];
+
+    if (sub_action == "list") {
+        auto session = RequireSession(args, fmt);
+        if (!session) return 99;
+
+        auto result = BwListJobs(*session);
+        if (result.IsErr()) {
+            fmt.PrintError(result.Error());
+            return result.Error().ExitCode();
+        }
+        const auto& jobs = result.Value();
+        if (fmt.IsJsonMode()) {
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& job : jobs) {
+                j.push_back({{"guid", job.guid},
+                             {"status", job.status},
+                             {"job_type", job.job_type},
+                             {"description", job.description}});
+            }
+            fmt.PrintJson(j.dump());
+        } else {
+            std::vector<std::string> headers = {"GUID", "Status", "Type", "Description"};
+            std::vector<std::vector<std::string>> rows;
+            for (const auto& job : jobs) {
+                rows.push_back({job.guid, job.status, job.job_type, job.description});
+            }
+            fmt.PrintTable(headers, rows);
+        }
+        return 0;
+    }
+
+    if (sub_action == "result") {
+        if (args.positional.size() < 2) {
+            fmt.PrintError(MakeValidationError("Missing job GUID"));
+            return 99;
+        }
+        auto session = RequireSession(args, fmt);
+        if (!session) return 99;
+
+        auto result = BwGetJobResult(*session, args.positional[1]);
+        if (result.IsErr()) {
+            fmt.PrintError(result.Error());
+            return result.Error().ExitCode();
+        }
+        const auto& job = result.Value();
+        if (fmt.IsJsonMode()) {
+            nlohmann::json j;
+            j["guid"] = job.guid;
+            j["status"] = job.status;
+            j["job_type"] = job.job_type;
+            j["description"] = job.description;
+            fmt.PrintJson(j.dump());
+        } else {
+            std::cout << "Job " << job.guid << ": " << job.status << "\n";
+            if (!job.job_type.empty()) {
+                std::cout << "  Type: " << job.job_type << "\n";
+            }
+            if (!job.description.empty()) {
+                std::cout << "  Description: " << job.description << "\n";
+            }
+        }
+        return 0;
+    }
 
     if (sub_action == "cancel") {
         if (args.positional.size() < 2) {
@@ -3216,6 +3925,29 @@ int HandleBwJob(const CommandArgs& args) {
         return 0;
     }
 
+    if (sub_action == "step") {
+        if (args.positional.size() < 3) {
+            fmt.PrintError(MakeValidationError("Usage: erpl-adt bw job step <guid> <step>"));
+            return 99;
+        }
+        auto result = BwGetJobStep(*session, guid, args.positional[2]);
+        if (result.IsErr()) {
+            fmt.PrintError(result.Error());
+            return result.Error().ExitCode();
+        }
+        const auto& step = result.Value();
+        if (fmt.IsJsonMode()) {
+            nlohmann::json j;
+            j["name"] = step.name;
+            j["status"] = step.status;
+            j["description"] = step.description;
+            fmt.PrintJson(j.dump());
+        } else {
+            std::cout << step.name << " [" << step.status << "] " << step.description << "\n";
+        }
+        return 0;
+    }
+
     if (sub_action == "messages") {
         auto result = BwGetJobMessages(*session, guid);
         if (result.IsErr()) {
@@ -3241,7 +3973,7 @@ int HandleBwJob(const CommandArgs& args) {
 
     fmt.PrintError(MakeValidationError(
         "Unknown job action: " + sub_action +
-        ". Use status, progress, steps, messages, cancel, restart, or cleanup."));
+        ". Use list, result, status, progress, steps, step, messages, cancel, restart, or cleanup."));
     return 99;
 }
 
@@ -3545,7 +4277,12 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--help" || arg == "--activate" || arg == "--raw" ||
            arg == "--datasource" || arg == "--search-desc" ||
            arg == "--own-only" || arg == "--simulate" ||
-           arg == "--validate" || arg == "--background" || arg == "--force";
+           arg == "--validate" || arg == "--background" || arg == "--force" ||
+           arg == "--sort" || arg == "--only-ina" || arg == "--exec-check" ||
+           arg == "--with-cto" || arg == "--rdprops" || arg == "--allmsgs" ||
+           arg == "--dbgmode" || arg == "--metadata-only" ||
+           arg == "--incl-metadata" || arg == "--incl-object-values" ||
+           arg == "--incl-except-def" || arg == "--compact-mode";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -3640,9 +4377,12 @@ void PrintBwGroupHelp(const CommandRouter& router, std::ostream& out, bool color
     };
     const std::vector<Category> categories = {
         {"SEARCH & READ",    {"search", "read", "read-adso", "read-trfn", "read-dtp", "discover"}},
-        {"CROSS-REFERENCES", {"xref", "nodes"}},
-        {"LIFECYCLE",        {"lock", "unlock", "save", "delete", "activate"}},
+        {"CROSS-REFERENCES", {"xref", "nodes", "nodepath"}},
+        {"REPOSITORY",       {"search-md", "favorites", "applog", "message"}},
+        {"LIFECYCLE",        {"create", "lock", "unlock", "save", "delete", "activate"}},
         {"TRANSPORT",        {"transport"}},
+        {"VALIDATION",       {"validate", "move"}},
+        {"ADVANCED",         {"valuehelp", "virtualfolders", "datavolumes", "reporting", "qprops"}},
         {"JOBS",             {"job"}},
         {"SYSTEM",           {"sysinfo", "changeability", "dbinfo", "adturi"}},
         {"LOCKS",            {"locks"}},
@@ -4360,12 +5100,39 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw lock
     {
         CommandHelp help;
+        help.usage = "erpl-adt bw create <type> <name> [flags]";
+        help.args_description = "<type>    Object type\n  <name>    Object name";
+        help.long_description = "Create a BW modeling object. Some object types require --file XML content or copy-from flags.";
+        help.flags = {
+            {"package", "<pkg>", "Target package", false},
+            {"copy-from-name", "<name>", "Copy source object name", false},
+            {"copy-from-type", "<type>", "Copy source object type", false},
+            {"file", "<path>", "Optional XML payload file for create request body", false},
+        };
+        help.examples = {
+            "erpl-adt bw create ADSO ZNEW_ADSO --package=ZPKG",
+            "erpl-adt bw create IOBJ ZNEW_IOBJ --copy-from-name=0MATERIAL --copy-from-type=IOBJ",
+        };
+        router.Register("bw", "create", "Create BW object",
+                         HandleBwCreate, std::move(help));
+    }
+
+    // bw lock
+    {
+        CommandHelp help;
         help.usage = "erpl-adt bw lock <type> <name> [flags]";
         help.args_description = "<type>    Object type\n  <name>    Object name";
         help.long_description = "Lock a BW object for editing. Returns lock handle "
             "and transport information.";
         help.flags = {
             {"activity", "<code>", "Activity: CHAN (default), DELE, MAIN", false},
+            {"parent-name", "<name>", "Parent object name (lock context)", false},
+            {"parent-type", "<type>", "Parent object type (lock context)", false},
+            {"transport-lock-holder", "<corrnr>", "Explicit Transport-Lock-Holder header", false},
+            {"foreign-objects", "<value>", "Foreign-Objects header", false},
+            {"foreign-object-locks", "<value>", "Foreign-Object-Locks header", false},
+            {"foreign-correction-number", "<corrnr>", "Foreign-Correction-Number header", false},
+            {"foreign-package", "<pkg>", "Foreign-Package header", false},
             {"session-file", "<path>", "Save session state for multi-step workflow", false},
         };
         help.examples = {
@@ -4399,6 +5166,11 @@ void RegisterAllCommands(CommandRouter& router) {
             {"lock-handle", "<handle>", "Lock handle from bw lock", true},
             {"transport", "<corrnr>", "Transport request number", false},
             {"timestamp", "<ts>", "Server timestamp from lock response", false},
+            {"transport-lock-holder", "<corrnr>", "Explicit Transport-Lock-Holder header", false},
+            {"foreign-objects", "<value>", "Foreign-Objects header", false},
+            {"foreign-object-locks", "<value>", "Foreign-Object-Locks header", false},
+            {"foreign-correction-number", "<corrnr>", "Foreign-Correction-Number header", false},
+            {"foreign-package", "<pkg>", "Foreign-Package header", false},
         };
         help.examples = {
             "erpl-adt bw save ADSO ZSALES --lock-handle=ABC123 < modified.xml",
@@ -4416,6 +5188,11 @@ void RegisterAllCommands(CommandRouter& router) {
         help.flags = {
             {"lock-handle", "<handle>", "Lock handle", true},
             {"transport", "<corrnr>", "Transport request number", false},
+            {"transport-lock-holder", "<corrnr>", "Explicit Transport-Lock-Holder header", false},
+            {"foreign-objects", "<value>", "Foreign-Objects header", false},
+            {"foreign-object-locks", "<value>", "Foreign-Object-Locks header", false},
+            {"foreign-correction-number", "<corrnr>", "Foreign-Correction-Number header", false},
+            {"foreign-package", "<pkg>", "Foreign-Package header", false},
         };
         help.examples = {
             "erpl-adt bw delete ADSO ZSALES --lock-handle=ABC123 --transport=K900001",
@@ -4437,6 +5214,10 @@ void RegisterAllCommands(CommandRouter& router) {
             {"simulate", "", "Dry run of activation", false},
             {"background", "", "Run as background job", false},
             {"force", "", "Force activation even with warnings", false},
+            {"exec-check", "", "Set execChk=true in activation payload", false},
+            {"with-cto", "", "Set withCTO=true in activation payload", false},
+            {"sort", "", "Validate mode: sort dependency order", false},
+            {"only-ina", "", "Validate mode: only inactive objects", false},
             {"transport", "<corrnr>", "Transport request", false},
         };
         help.examples = {
@@ -4460,10 +5241,12 @@ void RegisterAllCommands(CommandRouter& router) {
             {"version", "<v>", "Object version: A (active), M (modified)", false},
             {"association", "<code>", "Filter by association code (001, 002, 003, ...)", false},
             {"assoc-type", "<type>", "Filter by associated object type (IOBJ, ADSO, ...)", false},
+            {"max", "<n>", "Maximum number of results to return", false},
         };
         help.examples = {
             "erpl-adt bw xref ADSO ZSALES_DATA",
             "erpl-adt bw xref ADSO ZSALES_DATA --association=001",
+            "erpl-adt bw xref IOBJ 0MATERIAL --max=10",
             "erpl-adt --json bw xref IOBJ 0MATERIAL",
         };
         router.Register("bw", "xref", "Show BW cross-references",
@@ -4492,6 +5275,211 @@ void RegisterAllCommands(CommandRouter& router) {
                          HandleBwNodes, std::move(help));
     }
 
+    // bw search-md
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw search-md";
+        help.long_description = "Read BW search metadata definitions used by the BW repository search service.";
+        help.examples = {
+            "erpl-adt bw search-md",
+            "erpl-adt --json bw search-md",
+        };
+        router.Register("bw", "search-md", "Show BW search metadata",
+                         HandleBwSearchMetadata, std::move(help));
+    }
+
+    // bw favorites
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw favorites [list|clear]";
+        help.long_description = "List backend favorites or clear all backend favorites.";
+        help.examples = {
+            "erpl-adt bw favorites",
+            "erpl-adt bw favorites list",
+            "erpl-adt bw favorites clear",
+        };
+        router.Register("bw", "favorites", "List/clear BW backend favorites",
+                         HandleBwFavorites, std::move(help));
+    }
+
+    // bw nodepath
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw nodepath --object-uri <uri>";
+        help.long_description = "Resolve repository node path for a BW object URI.";
+        help.flags = {
+            {"object-uri", "<uri>", "BW object URI (e.g. /sap/bw/modeling/adso/...) ", true},
+        };
+        help.examples = {
+            "erpl-adt bw nodepath --object-uri=/sap/bw/modeling/adso/ZSALES/a",
+            "erpl-adt --json bw nodepath /sap/bw/modeling/adso/ZSALES/a",
+        };
+        router.Register("bw", "nodepath", "Resolve BW object node path",
+                         HandleBwNodePath, std::move(help));
+    }
+
+    // bw valuehelp
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw valuehelp <domain> [flags]";
+        help.args_description = "<domain>   Value-help domain path segment (e.g. infoareas, infoobject)";
+        help.long_description = "Read BW value-help endpoints under /sap/bw/modeling/is/values/*.";
+        help.flags = {
+            {"query", "<qs>", "Raw query string (k=v&k2=v2)", false},
+            {"max", "<n>", "Max rows", false},
+            {"pattern", "<text>", "Pattern filter", false},
+            {"type", "<code>", "Object type filter", false},
+            {"infoprovider", "<name>", "InfoProvider filter", false},
+        };
+        help.examples = {
+            "erpl-adt bw valuehelp infoareas --max=100",
+            "erpl-adt bw valuehelp infoobject --query='feedSize=20&pattern=0*'",
+        };
+        router.Register("bw", "valuehelp", "BW value-help lookup",
+                         HandleBwValueHelp, std::move(help));
+    }
+
+    // bw virtualfolders
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw virtualfolders [flags]";
+        help.long_description = "Read BW virtual folder tree when service is available.";
+        help.flags = {
+            {"package", "<pkg>", "Package filter", false},
+            {"type", "<type>", "Object type filter", false},
+            {"user", "<user>", "User filter", false},
+        };
+        help.examples = {
+            "erpl-adt bw virtualfolders",
+            "erpl-adt bw virtualfolders --package=ZPKG",
+        };
+        router.Register("bw", "virtualfolders", "Read BW virtual folders",
+                         HandleBwVirtualFolders, std::move(help));
+    }
+
+    // bw datavolumes
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw datavolumes [flags]";
+        help.long_description = "Read BW data-volume service when available.";
+        help.flags = {
+            {"infoprovider", "<name>", "InfoProvider filter", false},
+            {"max", "<n>", "Max rows", false},
+        };
+        help.examples = {
+            "erpl-adt bw datavolumes --infoprovider=ZSALES",
+        };
+        router.Register("bw", "datavolumes", "Read BW data volumes",
+                         HandleBwDataVolumes, std::move(help));
+    }
+
+    // bw applog
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw applog [flags]";
+        help.long_description = "List BW repository application log entries.";
+        help.flags = {
+            {"username", "<user>", "Filter by user", false},
+            {"start", "<timestamp>", "Filter by start timestamp", false},
+            {"end", "<timestamp>", "Filter by end timestamp", false},
+        };
+        help.examples = {
+            "erpl-adt bw applog",
+            "erpl-adt bw applog --username=DEVELOPER",
+            "erpl-adt --json bw applog --start=20260101000000 --end=20261231235959",
+        };
+        router.Register("bw", "applog", "Read BW repository application logs",
+                         HandleBwApplicationLog, std::move(help));
+    }
+
+    // bw message
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw message <identifier> <textype> [flags]";
+        help.args_description = "<identifier>    Message class/identifier\n"
+                                "  <textype>      Message text type";
+        help.long_description = "Resolve localized BW message text for a message identifier and type.";
+        help.flags = {
+            {"msgv1", "<value>", "Message variable 1", false},
+            {"msgv2", "<value>", "Message variable 2", false},
+            {"msgv3", "<value>", "Message variable 3", false},
+            {"msgv4", "<value>", "Message variable 4", false},
+        };
+        help.examples = {
+            "erpl-adt bw message RSDHA 001",
+            "erpl-adt bw message RSDHA 001 --msgv1=ZOBJ --msgv2=ADSO",
+        };
+        router.Register("bw", "message", "Resolve BW message text",
+                         HandleBwMessage, std::move(help));
+    }
+
+    // bw validate
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw validate <type> <name> [--action=validate]";
+        help.args_description = "<type>    BW object type\n  <name>    BW object name";
+        help.long_description = "Run BW validation endpoint for a specific BW object.";
+        help.flags = {
+            {"action", "<name>", "Validation action name (default: validate)", false},
+        };
+        help.examples = {
+            "erpl-adt bw validate ADSO ZSALES",
+            "erpl-adt --json bw validate ADSO ZSALES --action=check",
+        };
+        router.Register("bw", "validate", "Validate BW object",
+                         HandleBwValidate, std::move(help));
+    }
+
+    // bw reporting
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw reporting <compid> [flags]";
+        help.args_description = "<compid>   Query/component id";
+        help.long_description = "Run BW reporting metadata request (BICS reporting endpoint).";
+        help.flags = {
+            {"dbgmode", "", "Set dbgmode=true query parameter", false},
+            {"metadata-only", "", "MetadataOnly header", false},
+            {"incl-metadata", "", "InclMetadata header", false},
+            {"incl-object-values", "", "InclObjectValues header", false},
+            {"incl-except-def", "", "InclExceptDef header", false},
+            {"compact-mode", "", "CompactMode header", false},
+            {"from-row", "<n>", "FromRow header", false},
+            {"to-row", "<n>", "ToRow header", false},
+        };
+        help.examples = {
+            "erpl-adt bw reporting 0D_FC_NW_C01_Q0007 --metadata-only --incl-metadata",
+        };
+        router.Register("bw", "reporting", "Read BW reporting metadata",
+                         HandleBwReporting, std::move(help));
+    }
+
+    // bw qprops
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw qprops";
+        help.long_description = "Read BW query-properties rule service (rules/qprops).";
+        help.examples = {
+            "erpl-adt bw qprops",
+            "erpl-adt --json bw qprops",
+        };
+        router.Register("bw", "qprops", "Read BW query properties rules",
+                         HandleBwQueryProperties, std::move(help));
+    }
+
+    // bw move
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw move [list]";
+        help.long_description = "List BW move request entries from the BW move-requests endpoint.";
+        help.examples = {
+            "erpl-adt bw move",
+            "erpl-adt bw move list",
+            "erpl-adt --json bw move",
+        };
+        router.Register("bw", "move", "List BW move requests",
+                         HandleBwMove, std::move(help));
+    }
+
     // bw transport
     {
         CommandHelp help;
@@ -4504,8 +5492,16 @@ void RegisterAllCommands(CommandRouter& router) {
             {"transport", "<corrnr>", "Transport number (for write/collect)", false},
             {"package", "<pkg>", "Package name (for write)", false},
             {"own-only", "", "Show only own transport requests", false},
+            {"rddetails", "<mode>", "Check/list detail mode: off|objs|all (default all)", false},
+            {"rdprops", "", "Check/list include properties section", false},
+            {"allmsgs", "", "Include all messages where supported", false},
             {"simulate", "", "Dry run (write only)", false},
-            {"mode", "<code>", "Collection mode: 000 (necessary), 001 (complete), 003 (above), 004 (below)", false},
+            {"mode", "<code>", "Collection mode (e.g. 000,001,002,003,004,005,033)", false},
+            {"transport-lock-holder", "<corrnr>", "Explicit Transport-Lock-Holder header", false},
+            {"foreign-objects", "<value>", "Foreign-Objects header", false},
+            {"foreign-object-locks", "<value>", "Foreign-Object-Locks header", false},
+            {"foreign-correction-number", "<corrnr>", "Foreign-Correction-Number header", false},
+            {"foreign-package", "<pkg>", "Foreign-Package header", false},
         };
         help.examples = {
             "erpl-adt bw transport check",
@@ -4600,13 +5596,17 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw job
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw job <action> <guid>";
-        help.args_description = "<action>    status, progress, steps, messages, cancel, restart, or cleanup\n"
-                                "  <guid>      25-character job GUID";
+        help.usage = "erpl-adt bw job <action> [args]";
+        help.args_description = "<action>    list, result, status, progress, steps, step, messages, cancel, restart, cleanup\n"
+                                "  [guid]      25-character job GUID (not required for list)\n"
+                                "  [step]      Step name/id (required for 'step')";
         help.long_description = "Monitor and manage BW background jobs. "
             "'restart' restarts a failed job. 'cleanup' removes temporary job resources.";
         help.examples = {
+            "erpl-adt bw job list",
+            "erpl-adt bw job result ABC12345678901234567890",
             "erpl-adt bw job status ABC12345678901234567890",
+            "erpl-adt bw job step ABC12345678901234567890 ACTIVATE",
             "erpl-adt bw job messages ABC12345678901234567890",
             "erpl-adt bw job cancel ABC12345678901234567890",
             "erpl-adt bw job restart ABC12345678901234567890",

@@ -55,15 +55,18 @@ All arrows point downward. No cycles. Every horizontal boundary is a pure abstra
 - `adt/i_adt_session.hpp` — Abstract HTTP session (`Get`, `Post`, `Put`, `Delete`, stateful sessions)
 - `adt/i_xml_codec.hpp` — Abstract XML codec (legacy, used only by deploy workflow)
 - `adt/{search,object,locking,source,testing,checks,transport,ddic}.hpp` — Operation modules, stateless free functions taking `IAdtSession&`
-- `adt/{packages,abapgit,activation}.hpp` — Legacy deploy workflow operations (use `IXmlCodec`)
+- `adt/{packages,abapgit,activation}.hpp` — Deploy/bootstrap operations (`packages` uses `IXmlCodec`; `abapgit` and `activation` use shared async protocol contracts)
 - `cli/command_router.hpp` — Two-level dispatch: `erpl-adt <group> <action> [args]`
 - `cli/output_formatter.hpp` — Human-readable table and JSON output
 - `mcp/mcp_server.hpp` — JSON-RPC 2.0 server over stdio (MCP 2024-11-05)
 - `mcp/tool_registry.hpp` — Tool name → handler mapping
 - `config/config_loader.hpp` — Merges CLI args (argparse) + YAML (yaml-cpp) into `AppConfig`
 - `workflow/deploy_workflow.hpp` — Idempotent state machine: discover → package → clone → pull → activate
+- `workflow/lock_workflow.hpp` — Lock transaction orchestration for CLI auto-lock flows
+- `src/adt/protocol_kernel.hpp` — Shared 202+Location async polling contract
+- `src/adt/{xml_utils,atom_parser}.hpp` — Shared parser primitives for namespaced XML/Atom feeds
 
-**XML parsing strategy:** New operation modules (search, object, source, testing, checks, transport, ddic) parse XML **directly with tinyxml2** inside anonymous namespaces in their `.cpp` files. They do NOT use `IXmlCodec`. The existing `IXmlCodec` is preserved for legacy deploy workflow operations only.
+**XML parsing strategy:** Operation modules parse XML with tinyxml2 and shared parser helpers (`xml_utils`, `atom_parser`) to reduce duplicated namespaced traversal logic. `IXmlCodec` is preserved for legacy deploy workflow paths.
 
 **Testing:** Hand-written mocks in `test/mocks/` implementing the abstract interfaces. No mocking framework. Test fixtures in `test/testdata/` are real captured Eclipse ADT XML traffic.
 

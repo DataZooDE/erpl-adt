@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/bw_lineage.hpp>
 
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -21,7 +22,7 @@ std::string ToLower(std::string s) {
 
 std::string BuildObjectPath(const std::string& type, const std::string& name,
                             const std::string& version) {
-    return std::string(kBwModelingBase) + ToLower(type) + "/" + name + "/" + version;
+    return std::string(kBwModelingBase) + ToLower(type) + "/" + ToLower(name) + "/" + version;
 }
 
 std::string GetDefaultAcceptType(const std::string& tlogo) {
@@ -30,12 +31,6 @@ std::string GetDefaultAcceptType(const std::string& tlogo) {
     if (lower == "trfn") return "application/vnd.sap.bw.modeling.trfn-v1_0_0+xml";
     if (lower == "dtpa") return "application/vnd.sap.bw.modeling.dtpa-v1_0_0+xml";
     return "application/vnd.sap.bw.modeling." + lower + "+xml";
-}
-
-// Get attribute or empty string.
-std::string Attr(const tinyxml2::XMLElement* el, const char* name) {
-    const char* val = el->Attribute(name);
-    return val ? val : "";
 }
 
 // Fetch object XML via GET.
@@ -81,10 +76,10 @@ std::vector<BwTransformationField> ParseTransformationFields(
     for (auto* f = parent->FirstChildElement(); f;
          f = f->NextSiblingElement()) {
         BwTransformationField field;
-        field.name = Attr(f, "name");
-        field.type = Attr(f, "intType");
-        field.aggregation = Attr(f, "aggregation");
-        field.key = (Attr(f, "keyFlag") == "X");
+        field.name = xml_utils::Attr(f, "name");
+        field.type = xml_utils::Attr(f, "intType");
+        field.aggregation = xml_utils::Attr(f, "aggregation");
+        field.key = (xml_utils::Attr(f, "keyFlag") == "X");
         if (!field.name.empty()) {
             fields.push_back(std::move(field));
         }
@@ -127,18 +122,18 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
 
     BwTransformationDetail detail;
     detail.name = name;
-    detail.description = Attr(root, "description");
+    detail.description = xml_utils::Attr(root, "description");
 
     // Source and target
     auto* source_el = root->FirstChildElement("source");
     if (source_el) {
-        detail.source_name = Attr(source_el, "objectName");
-        detail.source_type = Attr(source_el, "objectType");
+        detail.source_name = xml_utils::Attr(source_el, "objectName");
+        detail.source_type = xml_utils::Attr(source_el, "objectType");
     }
     auto* target_el = root->FirstChildElement("target");
     if (target_el) {
-        detail.target_name = Attr(target_el, "objectName");
-        detail.target_type = Attr(target_el, "objectType");
+        detail.target_name = xml_utils::Attr(target_el, "objectName");
+        detail.target_type = xml_utils::Attr(target_el, "objectType");
     }
 
     // Source fields
@@ -162,22 +157,22 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
 
                 if (rn == "rule") {
                     BwTransformationRule rule;
-                    rule.source_field = Attr(r, "sourceField");
-                    rule.target_field = Attr(r, "targetField");
-                    rule.rule_type = Attr(r, "ruleType");
-                    rule.formula = Attr(r, "formula");
-                    rule.constant = Attr(r, "constant");
+                    rule.source_field = xml_utils::Attr(r, "sourceField");
+                    rule.target_field = xml_utils::Attr(r, "targetField");
+                    rule.rule_type = xml_utils::Attr(r, "ruleType");
+                    rule.formula = xml_utils::Attr(r, "formula");
+                    rule.constant = xml_utils::Attr(r, "constant");
                     detail.rules.push_back(std::move(rule));
                 } else if (rn == "group") {
                     // Recurse into group
                     for (auto* gr = r->FirstChildElement("rule"); gr;
                          gr = gr->NextSiblingElement("rule")) {
                         BwTransformationRule rule;
-                        rule.source_field = Attr(gr, "sourceField");
-                        rule.target_field = Attr(gr, "targetField");
-                        rule.rule_type = Attr(gr, "ruleType");
-                        rule.formula = Attr(gr, "formula");
-                        rule.constant = Attr(gr, "constant");
+                        rule.source_field = xml_utils::Attr(gr, "sourceField");
+                        rule.target_field = xml_utils::Attr(gr, "targetField");
+                        rule.rule_type = xml_utils::Attr(gr, "ruleType");
+                        rule.formula = xml_utils::Attr(gr, "formula");
+                        rule.constant = xml_utils::Attr(gr, "constant");
                         detail.rules.push_back(std::move(rule));
                     }
                 }
@@ -220,8 +215,8 @@ Result<BwAdsoDetail, Error> BwReadAdsoDetail(
 
     BwAdsoDetail detail;
     detail.name = name;
-    detail.description = Attr(root, "description");
-    detail.package_name = Attr(root, "packageName");
+    detail.description = xml_utils::Attr(root, "description");
+    detail.package_name = xml_utils::Attr(root, "packageName");
 
     // Parse fields
     auto* fields_el = root->FirstChildElement("fields");
@@ -229,20 +224,14 @@ Result<BwAdsoDetail, Error> BwReadAdsoDetail(
         for (auto* f = fields_el->FirstChildElement(); f;
              f = f->NextSiblingElement()) {
             BwAdsoField field;
-            field.name = Attr(f, "name");
-            field.data_type = Attr(f, "type");
-            field.info_object = Attr(f, "infoObject");
-            field.description = Attr(f, "description");
-            field.key = (Attr(f, "keyFlag") == "X");
+            field.name = xml_utils::Attr(f, "name");
+            field.data_type = xml_utils::Attr(f, "type");
+            field.info_object = xml_utils::Attr(f, "infoObject");
+            field.description = xml_utils::Attr(f, "description");
+            field.key = (xml_utils::Attr(f, "keyFlag") == "X");
 
-            auto len_str = Attr(f, "length");
-            if (!len_str.empty()) {
-                field.length = std::stoi(len_str);
-            }
-            auto dec_str = Attr(f, "decimals");
-            if (!dec_str.empty()) {
-                field.decimals = std::stoi(dec_str);
-            }
+            field.length = xml_utils::AttrIntOr(f, "length", 0);
+            field.decimals = xml_utils::AttrIntOr(f, "decimals", 0);
 
             if (!field.name.empty()) {
                 detail.fields.push_back(std::move(field));
@@ -284,19 +273,19 @@ Result<BwDtpDetail, Error> BwReadDtpDetail(
 
     BwDtpDetail detail;
     detail.name = name;
-    detail.description = Attr(root, "description");
+    detail.description = xml_utils::Attr(root, "description");
 
     auto* source_el = root->FirstChildElement("source");
     if (source_el) {
-        detail.source_name = Attr(source_el, "objectName");
-        detail.source_type = Attr(source_el, "objectType");
-        detail.source_system = Attr(source_el, "sourceSystem");
+        detail.source_name = xml_utils::Attr(source_el, "objectName");
+        detail.source_type = xml_utils::Attr(source_el, "objectType");
+        detail.source_system = xml_utils::Attr(source_el, "sourceSystem");
     }
 
     auto* target_el = root->FirstChildElement("target");
     if (target_el) {
-        detail.target_name = Attr(target_el, "objectName");
-        detail.target_type = Attr(target_el, "objectType");
+        detail.target_name = xml_utils::Attr(target_el, "objectName");
+        detail.target_type = xml_utils::Attr(target_el, "objectType");
     }
 
     return Result<BwDtpDetail, Error>::Ok(std::move(detail));

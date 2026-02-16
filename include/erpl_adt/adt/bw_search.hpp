@@ -34,6 +34,7 @@ struct BwSearchResult {
 // ---------------------------------------------------------------------------
 
 struct BwSearchOptions {
+    std::optional<std::string> endpoint_override;      // Full endpoint URL override
     std::string query;                               // Required: search term
     int max_results = 100;                           // Maximum results
     std::optional<std::string> object_type;          // e.g. "ADSO", "IOBJ"

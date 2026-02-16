@@ -82,6 +82,21 @@ TEST_CASE("BwActivateObjects: validate mode sends mode=validate", "[adt][bw][act
     CHECK(mock.PostCalls()[0].path.find("mode=validate") != std::string::npos);
 }
 
+TEST_CASE("BwActivateObjects: validate mode sends sort/onlyina flags", "[adt][bw][activation]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto opts = MakeActivateOptions("ADSO", "ZSALES");
+    opts.mode = BwActivationMode::Validate;
+    opts.sort = true;
+    opts.only_inactive = true;
+    auto result = BwActivateObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    CHECK(mock.PostCalls()[0].path.find("sort=true") != std::string::npos);
+    CHECK(mock.PostCalls()[0].path.find("onlyina=true") != std::string::npos);
+}
+
 TEST_CASE("BwActivateObjects: simulate mode sends simu=true", "[adt][bw][activation]") {
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
@@ -144,6 +159,64 @@ TEST_CASE("BwActivateObjects: body contains object XML", "[adt][bw][activation]"
     CHECK(body.find("objectName=\"ZSALES\"") != std::string::npos);
     CHECK(body.find("objectType=\"ADSO\"") != std::string::npos);
     CHECK(body.find("bwActivation:objects") != std::string::npos);
+}
+
+TEST_CASE("BwActivateObjects: body includes execChk and withCTO root attributes",
+          "[adt][bw][activation]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto opts = MakeActivateOptions("ADSO", "ZSALES");
+    opts.exec_checks = true;
+    opts.with_cto = true;
+    auto result = BwActivateObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("execChk=\"true\"") != std::string::npos);
+    CHECK(body.find("withCTO=\"true\"") != std::string::npos);
+}
+
+TEST_CASE("BwActivateObjects: endpoint override is used", "[adt][bw][activation]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "<result/>"}));
+
+    BwActivateOptions opts;
+    opts.endpoint_override = "/sap/bw/modeling/activation/custom";
+    BwActivationObject object;
+    object.name = "ZADSO001";
+    object.type = "ADSO";
+    opts.objects.push_back(std::move(object));
+
+    auto result = BwActivateObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path.find("/sap/bw/modeling/activation/custom") == 0);
+}
+
+TEST_CASE("BwActivateObjects: escapes XML attribute values", "[adt][bw][activation]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwActivateOptions opts;
+    BwActivationObject obj;
+    obj.name = "Z&A\"<B>";
+    obj.type = "AD&SO";
+    obj.description = "desc <bad> & \"quote\"";
+    obj.package_name = "ZP&KG";
+    obj.transport = "K9&001";
+    obj.uri = "/sap/bw/modeling/adso/Z&A";
+    opts.objects.push_back(std::move(obj));
+
+    auto result = BwActivateObjects(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("objectName=\"Z&amp;A&quot;&lt;B&gt;\"") != std::string::npos);
+    CHECK(body.find("objectType=\"AD&amp;SO\"") != std::string::npos);
+    CHECK(body.find("objectDesc=\"desc &lt;bad&gt; &amp; &quot;quote&quot;\"") != std::string::npos);
+    CHECK(body.find("package=\"ZP&amp;KG\"") != std::string::npos);
 }
 
 TEST_CASE("BwActivateObjects: empty objects returns error", "[adt][bw][activation]") {

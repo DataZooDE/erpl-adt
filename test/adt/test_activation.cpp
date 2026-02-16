@@ -161,6 +161,28 @@ TEST_CASE("ActivateAll: handles async 202 with poll", "[adt][activation]") {
     CHECK(session.PollCalls()[0].location_url == "/poll/activation/789");
 }
 
+TEST_CASE("ActivateAll: handles lowercase location header", "[adt][activation]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    codec.SetBuildActivationXmlResponse(
+        Result<std::string, Error>::Ok(std::string("<xml/>")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"location", "/poll/activation/lower"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Completed, "<activation-result/>",
+                   std::chrono::milliseconds{2500}}));
+    codec.SetParseActivationResponse(
+        Result<ActivationResult, Error>::Ok(ActivationResult{1, 1, 0, {}}));
+
+    auto result = ActivateAll(session, codec, SampleObjects());
+
+    REQUIRE(result.IsOk());
+    REQUIRE(session.PollCallCount() == 1);
+    CHECK(session.PollCalls()[0].location_url == "/poll/activation/lower");
+}
+
 TEST_CASE("ActivateAll: returns error when poll fails", "[adt][activation]") {
     MockAdtSession session;
     MockXmlCodec codec;
@@ -177,6 +199,26 @@ TEST_CASE("ActivateAll: returns error when poll fails", "[adt][activation]") {
 
     REQUIRE(result.IsErr());
     CHECK(result.Error().message == "async activation operation failed");
+}
+
+TEST_CASE("ActivateAll: returns timeout error when poll stays running", "[adt][activation]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    codec.SetBuildActivationXmlResponse(
+        Result<std::string, Error>::Ok(std::string("<xml/>")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"Location", "/poll/activation/slow"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Running, "", std::chrono::milliseconds{5000}}));
+
+    auto result = ActivateAll(session, codec, SampleObjects());
+
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::Timeout);
+    CHECK(result.Error().message ==
+          "async activation operation did not complete within timeout");
 }
 
 TEST_CASE("ActivateAll: propagates CSRF error", "[adt][activation]") {

@@ -1,26 +1,20 @@
 #include <erpl_adt/adt/object.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <tinyxml2.h>
 
 namespace erpl_adt {
 
 namespace {
 
-// Helper: get attribute value from element, trying namespaced then plain name.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* ns_name, const char* plain_name = nullptr) {
-    const char* val = el->Attribute(ns_name);
-    if (!val && plain_name) val = el->Attribute(plain_name);
-    return val ? val : "";
-}
-
 Result<ObjectStructure, Error> ParseObjectStructure(
     std::string_view xml, const std::string& uri) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<ObjectStructure, Error>::Err(Error{
-            "GetObjectStructure", uri, std::nullopt,
-            "Failed to parse object metadata XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "GetObjectStructure", uri,
+            "Failed to parse object metadata XML")) {
+        return Result<ObjectStructure, Error>::Err(std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -33,17 +27,17 @@ Result<ObjectStructure, Error> ParseObjectStructure(
     ObjectStructure structure;
     auto& info = structure.info;
 
-    info.name = GetAttr(root, "adtcore:name", "name");
-    info.type = GetAttr(root, "adtcore:type", "type");
+    info.name = xml_utils::AttrAny(root, "adtcore:name", "name");
+    info.type = xml_utils::AttrAny(root, "adtcore:type", "type");
     info.uri = uri;
-    info.description = GetAttr(root, "adtcore:description", "description");
-    info.source_uri = GetAttr(root, "abapsource:sourceUri", "sourceUri");
-    info.version = GetAttr(root, "adtcore:version", "version");
-    info.language = GetAttr(root, "adtcore:language", "language");
-    info.responsible = GetAttr(root, "adtcore:responsible", "responsible");
-    info.changed_by = GetAttr(root, "adtcore:changedBy", "changedBy");
-    info.changed_at = GetAttr(root, "adtcore:changedAt", "changedAt");
-    info.created_at = GetAttr(root, "adtcore:createdAt", "createdAt");
+    info.description = xml_utils::AttrAny(root, "adtcore:description", "description");
+    info.source_uri = xml_utils::AttrAny(root, "abapsource:sourceUri", "sourceUri");
+    info.version = xml_utils::AttrAny(root, "adtcore:version", "version");
+    info.language = xml_utils::AttrAny(root, "adtcore:language", "language");
+    info.responsible = xml_utils::AttrAny(root, "adtcore:responsible", "responsible");
+    info.changed_by = xml_utils::AttrAny(root, "adtcore:changedBy", "changedBy");
+    info.changed_at = xml_utils::AttrAny(root, "adtcore:changedAt", "changedAt");
+    info.created_at = xml_utils::AttrAny(root, "adtcore:createdAt", "createdAt");
 
     // Parse includes (e.g. class:include elements).
     for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
@@ -55,10 +49,10 @@ Result<ObjectStructure, Error> ParseObjectStructure(
         }
 
         ObjectInclude inc;
-        inc.name = GetAttr(el, "adtcore:name", "name");
-        inc.type = GetAttr(el, "adtcore:type", "type");
-        inc.include_type = GetAttr(el, "class:includeType", "includeType");
-        inc.source_uri = GetAttr(el, "abapsource:sourceUri", "sourceUri");
+        inc.name = xml_utils::AttrAny(el, "adtcore:name", "name");
+        inc.type = xml_utils::AttrAny(el, "adtcore:type", "type");
+        inc.include_type = xml_utils::AttrAny(el, "class:includeType", "includeType");
+        inc.source_uri = xml_utils::AttrAny(el, "abapsource:sourceUri", "sourceUri");
 
         if (!inc.name.empty()) {
             structure.includes.push_back(std::move(inc));
@@ -182,7 +176,7 @@ Result<ObjectUri, Error> CreateObject(
     if (doc.Parse(http.body.data(), http.body.size()) == tinyxml2::XML_SUCCESS) {
         auto* root = doc.RootElement();
         if (root) {
-            auto uri_str = GetAttr(root, "adtcore:uri", "uri");
+            auto uri_str = xml_utils::AttrAny(root, "adtcore:uri", "uri");
             if (!uri_str.empty()) {
                 auto uri = ObjectUri::Create(uri_str);
                 if (uri.IsOk()) {

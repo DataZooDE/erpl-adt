@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/bw_context_headers.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
@@ -70,8 +71,31 @@ struct BwLockResult {
     std::string transport_owner;     // CORRUSER
     std::string timestamp;           // Server timestamp
     std::string package_name;        // Development-Class header
+    std::string foreign_object_locks;  // Foreign-Object-Locks header
     bool is_local = false;           // IS_LOCAL
 };
+
+// ---------------------------------------------------------------------------
+// BwCreateObject — create a BW object.
+// ---------------------------------------------------------------------------
+struct BwCreateOptions {
+    std::string object_type;
+    std::string object_name;
+    std::optional<std::string> package_name;
+    std::optional<std::string> copy_from_name;
+    std::optional<std::string> copy_from_type;
+    std::optional<std::string> content;
+    std::optional<std::string> content_type;
+};
+
+struct BwCreateResult {
+    std::string uri;
+    int http_status = 0;
+};
+
+[[nodiscard]] Result<BwCreateResult, Error> BwCreateObject(
+    IAdtSession& session,
+    const BwCreateOptions& options);
 
 // ---------------------------------------------------------------------------
 // BwLockObject — lock a BW object for editing.
@@ -79,6 +103,19 @@ struct BwLockResult {
 // Endpoint: POST /sap/bw/modeling/{tlogo}/{name}?action=lock
 // Requires stateful session + CSRF token.
 // ---------------------------------------------------------------------------
+struct BwLockOptions {
+    std::string object_type;
+    std::string object_name;
+    std::string activity = "CHAN";
+    std::optional<std::string> parent_name;
+    std::optional<std::string> parent_type;
+    BwContextHeaders context_headers;
+};
+
+[[nodiscard]] Result<BwLockResult, Error> BwLockObject(
+    IAdtSession& session,
+    const BwLockOptions& options);
+
 [[nodiscard]] Result<BwLockResult, Error> BwLockObject(
     IAdtSession& session,
     const std::string& object_type,
@@ -109,6 +146,7 @@ struct BwSaveOptions {
     std::string transport;           // CORRNR
     std::string timestamp;
     std::optional<std::string> content_type;   // From discovery, overrides default Content-Type
+    BwContextHeaders context_headers;
 };
 
 [[nodiscard]] Result<void, Error> BwSaveObject(
@@ -120,6 +158,18 @@ struct BwSaveOptions {
 //
 // Endpoint: DELETE /sap/bw/modeling/{tlogo}/{name}?lockHandle=...&corrNr=...
 // ---------------------------------------------------------------------------
+struct BwDeleteOptions {
+    std::string object_type;
+    std::string object_name;
+    std::string lock_handle;
+    std::string transport;
+    BwContextHeaders context_headers;
+};
+
+[[nodiscard]] Result<void, Error> BwDeleteObject(
+    IAdtSession& session,
+    const BwDeleteOptions& options);
+
 [[nodiscard]] Result<void, Error> BwDeleteObject(
     IAdtSession& session,
     const std::string& object_type,

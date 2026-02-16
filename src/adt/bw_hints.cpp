@@ -54,15 +54,20 @@ void AddBwHint(Error& error) {
             return false;
         };
 
-        if (!has_activation_error()) return;
-
-        if (Contains(error.endpoint, "bwsearch")) {
-            error.hint = "Activate BW Search in transaction RSOSM";
-        } else if (Contains(error.endpoint, "/cto/") ||
-                   Contains(error.endpoint, "/cto?")) {
-            error.hint = "Activate BW CTO (transport organizer) in transaction RSOSM";
-        } else {
-            error.hint = "Activate the required BW service in transaction RSOSM";
+        if (has_activation_error()) {
+            if (Contains(error.endpoint, "bwsearch")) {
+                error.hint = "Activate BW Search in transaction RSOSM";
+            } else if (Contains(error.endpoint, "/cto/") ||
+                       Contains(error.endpoint, "/cto?")) {
+                error.hint = "Activate BW CTO (transport organizer) in transaction RSOSM";
+            } else {
+                error.hint = "Activate the required BW service in transaction RSOSM";
+            }
+        } else if (Contains(error.endpoint, "bwsearch")) {
+            // BW search 500 without activation error — likely invalid type filter.
+            error.hint = "Check your --type value. Valid BW types include: "
+                         "IOBJ, ADSO, TRFN, DTPA, CUBE, MPRO, APRO, HCPR, "
+                         "RSDS, LSYS, QUERY, DEST, FBP, DMOD, TRCS, DOCA";
         }
     }
 }

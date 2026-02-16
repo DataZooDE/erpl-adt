@@ -1,6 +1,8 @@
 #include <erpl_adt/adt/bw_transport_collect.hpp>
 
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
+#include <erpl_adt/adt/bw_context_headers.hpp>
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -13,12 +15,6 @@ namespace {
 const char* kBwCtoPath = "/sap/bw/modeling/cto";
 const char* kCtoContentType = "application/vnd.sap.bw.modeling.cto-v1_1_0+xml";
 const char* kCollectAccept = "application/vnd.sap-bw-modeling.trcollect+xml";
-
-// Get attribute or empty string.
-std::string Attr(const tinyxml2::XMLElement* el, const char* name) {
-    const char* val = el->Attribute(name);
-    return val ? val : "";
-}
 
 std::string BuildCollectUrl(const BwTransportCollectOptions& options) {
     std::string url = std::string(kBwCtoPath) +
@@ -67,27 +63,27 @@ Result<BwTransportCollectResult, Error> ParseCollectResponse(
             for (auto* obj = section->FirstChildElement(); obj;
                  obj = obj->NextSiblingElement()) {
                 BwCollectObject co;
-                co.name = Attr(obj, "name");
-                co.type = Attr(obj, "type");
-                co.description = Attr(obj, "description");
-                co.status = Attr(obj, "status");
-                co.uri = Attr(obj, "uri");
-                co.last_changed_by = Attr(obj, "lastChangedBy");
-                co.last_changed_at = Attr(obj, "lastChangedAt");
+                co.name = xml_utils::Attr(obj, "name");
+                co.type = xml_utils::Attr(obj, "type");
+                co.description = xml_utils::Attr(obj, "description");
+                co.status = xml_utils::Attr(obj, "status");
+                co.uri = xml_utils::Attr(obj, "uri");
+                co.last_changed_by = xml_utils::Attr(obj, "lastChangedBy");
+                co.last_changed_at = xml_utils::Attr(obj, "lastChangedAt");
                 result.details.push_back(std::move(co));
             }
         } else if (sn == "dependencies") {
             for (auto* dep = section->FirstChildElement(); dep;
                  dep = dep->NextSiblingElement()) {
                 BwCollectDependency cd;
-                cd.name = Attr(dep, "name");
-                cd.type = Attr(dep, "type");
-                cd.version = Attr(dep, "version");
-                cd.author = Attr(dep, "author");
-                cd.package_name = Attr(dep, "packageName");
-                cd.association_type = Attr(dep, "associationType");
-                cd.associated_name = Attr(dep, "associatedName");
-                cd.associated_type = Attr(dep, "associatedType");
+                cd.name = xml_utils::Attr(dep, "name");
+                cd.type = xml_utils::Attr(dep, "type");
+                cd.version = xml_utils::Attr(dep, "version");
+                cd.author = xml_utils::Attr(dep, "author");
+                cd.package_name = xml_utils::Attr(dep, "packageName");
+                cd.association_type = xml_utils::Attr(dep, "associationType");
+                cd.associated_name = xml_utils::Attr(dep, "associatedName");
+                cd.associated_type = xml_utils::Attr(dep, "associatedType");
                 result.dependencies.push_back(std::move(cd));
             }
         } else if (sn == "messages") {
@@ -96,7 +92,7 @@ Result<BwTransportCollectResult, Error> ParseCollectResponse(
                 if (msg->GetText()) {
                     result.messages.push_back(msg->GetText());
                 } else {
-                    auto text = Attr(msg, "text");
+                    auto text = xml_utils::Attr(msg, "text");
                     if (!text.empty()) result.messages.push_back(std::move(text));
                 }
             }
@@ -129,6 +125,13 @@ Result<BwTransportCollectResult, Error> BwTransportCollect(
 
     HttpHeaders extra_headers;
     extra_headers["Accept"] = kCollectAccept;
+    auto context = options.context_headers;
+    if (options.transport.has_value() && !options.transport->empty() &&
+        (!context.transport_lock_holder.has_value() ||
+         context.transport_lock_holder->empty())) {
+        context.transport_lock_holder = *options.transport;
+    }
+    ApplyBwContextHeaders(context, extra_headers);
 
     auto response = session.Post(url, body, kCtoContentType, extra_headers);
     if (response.IsErr()) {

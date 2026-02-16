@@ -5,13 +5,18 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_locks.hpp>
+#include <erpl_adt/adt/bw_repo_utils.hpp>
+#include <erpl_adt/adt/bw_reporting.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
 #include <erpl_adt/adt/bw_system.hpp>
 #include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
 #include <erpl_adt/adt/bw_transport_collect.hpp>
+#include <erpl_adt/adt/bw_validation.hpp>
+#include <erpl_adt/adt/bw_valuehelp.hpp>
 #include <erpl_adt/adt/bw_lineage.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
+#include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -663,6 +668,37 @@ ToolResult HandleReleaseTransport(IAdtSession& session,
     return MakeOkResult(j);
 }
 
+// adt_activate
+ToolResult HandleActivateObject(IAdtSession& session,
+                                const nlohmann::json& params) {
+    ToolResult err;
+    auto uri = RequireString(params, "uri", err);
+    if (!uri) return err;
+
+    ActivateObjectParams act_params;
+    act_params.uri = *uri;
+
+    auto type_str = OptString(params, "type");
+    if (!type_str.empty()) act_params.type = type_str;
+
+    auto name_str = OptString(params, "name");
+    if (!name_str.empty()) act_params.name = name_str;
+
+    auto result = ActivateObject(session, act_params);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+
+    const auto& act = result.Value();
+    nlohmann::json j;
+    j["activated"] = act.activated;
+    j["failed"] = act.failed;
+    nlohmann::json msgs = nlohmann::json::array();
+    for (const auto& m : act.error_messages) {
+        msgs.push_back(m);
+    }
+    j["error_messages"] = msgs;
+    return MakeOkResult(j);
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -904,6 +940,19 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             return HandleReleaseTransport(session, params);
         });
 
+    registry.Register(
+        "adt_activate",
+        "Activate an inactive ABAP object after writing source code. "
+        "Optionally provide type and name for more reliable activation.",
+        MakeSchema(
+            {{"uri", StringProp("Object URI (e.g., /sap/bc/adt/oo/classes/ZCL_MY_CLASS)")},
+             {"type", StringProp("Object type (e.g., CLAS/OC)")},
+             {"name", StringProp("Object name (e.g., ZCL_MY_CLASS)")}},
+            {"uri"}),
+        [&session](const nlohmann::json& params) {
+            return HandleActivateObject(session, params);
+        });
+
     // === BW Modeling tools ===
 
     registry.Register(
@@ -1071,6 +1120,45 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         });
 
     registry.Register(
+        "bw_create_object",
+        "Create a BW object. Depending on object type you may provide copy-from parameters or XML content.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type (ADSO, IOBJ, etc.)")},
+             {"object_name", StringProp("Object name")},
+             {"package_name", StringProp("Package name")},
+             {"copy_from_name", StringProp("Copy source object name")},
+             {"copy_from_type", StringProp("Copy source object type")},
+             {"content", StringProp("Optional XML payload")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto obj_type = RequireString(params, "object_type", err);
+            if (!obj_type) return err;
+            auto obj_name = RequireString(params, "object_name", err);
+            if (!obj_name) return err;
+
+            BwCreateOptions opts;
+            opts.object_type = *obj_type;
+            opts.object_name = *obj_name;
+            auto package_name = OptString(params, "package_name");
+            if (!package_name.empty()) opts.package_name = package_name;
+            auto copy_from_name = OptString(params, "copy_from_name");
+            if (!copy_from_name.empty()) opts.copy_from_name = copy_from_name;
+            auto copy_from_type = OptString(params, "copy_from_type");
+            if (!copy_from_type.empty()) opts.copy_from_type = copy_from_type;
+            auto content = OptString(params, "content");
+            if (!content.empty()) opts.content = content;
+
+            auto result = BwCreateObject(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j;
+            j["uri"] = result.Value().uri;
+            j["http_status"] = result.Value().http_status;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
         "bw_lock_object",
         "Lock a BW object for editing. Returns lock handle and transport info. "
         "Requires stateful session.",
@@ -1100,6 +1188,9 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["is_local"] = lock.is_local;
             if (!lock.transport_text.empty()) j["transport_text"] = lock.transport_text;
             if (!lock.transport_owner.empty()) j["transport_owner"] = lock.transport_owner;
+            if (!lock.foreign_object_locks.empty()) {
+                j["foreign_object_locks"] = lock.foreign_object_locks;
+            }
             return MakeOkResult(j);
         });
 
@@ -1575,7 +1666,8 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
              {"object_name", StringProp("Object name")},
              {"object_version", StringProp("Version: A (active), M (modified)")},
              {"association", StringProp("Filter by association code (001=Used by, 002=Uses, 003=Depends on)")},
-             {"associated_object_type", StringProp("Filter by related type (IOBJ, ADSO, etc.)")}},
+             {"associated_object_type", StringProp("Filter by related type (IOBJ, ADSO, etc.)")},
+             {"max_results", IntProp("Maximum number of results to return")}},
             {"object_type", "object_name"}),
         [&session](const nlohmann::json& params) -> ToolResult {
             ToolResult err;
@@ -1593,6 +1685,7 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             if (!assoc.empty()) opts.association = assoc;
             auto assoc_type = OptString(params, "associated_object_type");
             if (!assoc_type.empty()) opts.associated_object_type = assoc_type;
+            opts.max_results = OptInt(params, "max_results", 0);
 
             auto result = BwGetXrefs(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());
@@ -1653,6 +1746,366 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
                              {"version", r.version},
                              {"status", r.status},
                              {"uri", r.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_search_metadata",
+        "Get BW search metadata definitions (filters, fields, and search domains).",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetSearchMetadata(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& e : result.Value()) {
+                j.push_back({{"name", e.name},
+                             {"value", e.value},
+                             {"description", e.description},
+                             {"category", e.category}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_list_favorites",
+        "List BW backend favorites entries.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwListBackendFavorites(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& f : result.Value()) {
+                j.push_back({{"name", f.name},
+                             {"type", f.type},
+                             {"description", f.description},
+                             {"uri", f.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_clear_favorites",
+        "Delete all BW backend favorites.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwDeleteAllBackendFavorites(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j;
+            j["status"] = "cleared";
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_nodepath",
+        "Resolve the repository node path for a BW object URI.",
+        MakeSchema(
+            {{"object_uri", StringProp("BW object URI (for example /sap/bw/modeling/adso/ZSALES/a)")}},
+            {"object_uri"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto object_uri = RequireString(params, "object_uri", err);
+            if (!object_uri) return err;
+
+            auto result = BwGetNodePath(session, *object_uri);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& n : result.Value()) {
+                j.push_back({{"name", n.name},
+                             {"type", n.type},
+                             {"uri", n.uri}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_application_log",
+        "Query BW repository application log entries.",
+        MakeSchema(
+            {{"username", StringProp("Filter by username")},
+             {"start_timestamp", StringProp("Filter start timestamp")},
+             {"end_timestamp", StringProp("Filter end timestamp")}},
+            {}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            BwApplicationLogOptions opts;
+            auto username = OptString(params, "username");
+            if (!username.empty()) opts.username = username;
+            auto start = OptString(params, "start_timestamp");
+            if (!start.empty()) opts.start_timestamp = start;
+            auto end = OptString(params, "end_timestamp");
+            if (!end.empty()) opts.end_timestamp = end;
+
+            auto result = BwGetApplicationLog(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& e : result.Value()) {
+                j.push_back({{"identifier", e.identifier},
+                             {"user", e.user},
+                             {"timestamp", e.timestamp},
+                             {"severity", e.severity},
+                             {"text", e.text}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_message_text",
+        "Resolve formatted BW message text for a message identifier and text type.",
+        MakeSchema(
+            {{"identifier", StringProp("Message identifier")},
+             {"text_type", StringProp("Text type")},
+             {"msgv1", StringProp("Message variable 1")},
+             {"msgv2", StringProp("Message variable 2")},
+             {"msgv3", StringProp("Message variable 3")},
+             {"msgv4", StringProp("Message variable 4")}},
+            {"identifier", "text_type"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto identifier = RequireString(params, "identifier", err);
+            if (!identifier) return err;
+            auto text_type = RequireString(params, "text_type", err);
+            if (!text_type) return err;
+
+            BwMessageTextOptions opts;
+            opts.identifier = *identifier;
+            opts.text_type = *text_type;
+            auto msgv1 = OptString(params, "msgv1");
+            if (!msgv1.empty()) opts.msgv1 = msgv1;
+            auto msgv2 = OptString(params, "msgv2");
+            if (!msgv2.empty()) opts.msgv2 = msgv2;
+            auto msgv3 = OptString(params, "msgv3");
+            if (!msgv3.empty()) opts.msgv3 = msgv3;
+            auto msgv4 = OptString(params, "msgv4");
+            if (!msgv4.empty()) opts.msgv4 = msgv4;
+
+            auto result = BwGetMessageText(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& msg = result.Value();
+            nlohmann::json j;
+            j["identifier"] = msg.identifier;
+            j["text_type"] = msg.text_type;
+            j["text"] = msg.text;
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_validate",
+        "Run BW validation endpoint for an object.",
+        MakeSchema(
+            {{"object_type", StringProp("Object type")},
+             {"object_name", StringProp("Object name")},
+             {"action", StringProp("Validation action (default: validate)")}},
+            {"object_type", "object_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto object_type = RequireString(params, "object_type", err);
+            if (!object_type) return err;
+            auto object_name = RequireString(params, "object_name", err);
+            if (!object_name) return err;
+
+            BwValidationOptions opts;
+            opts.object_type = *object_type;
+            opts.object_name = *object_name;
+            opts.action = OptString(params, "action", "validate");
+
+            auto result = BwValidateObject(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& m : result.Value()) {
+                j.push_back({{"severity", m.severity},
+                             {"text", m.text},
+                             {"object_type", m.object_type},
+                             {"object_name", m.object_name},
+                             {"code", m.code}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_move_requests",
+        "List BW move request entries.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwListMoveRequests(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& e : result.Value()) {
+                j.push_back({{"request", e.request},
+                             {"owner", e.owner},
+                             {"status", e.status},
+                             {"description", e.description}});
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_valuehelp",
+        "Read BW value-help endpoints under /sap/bw/modeling/is/values/*.",
+        MakeSchema(
+            {{"domain", StringProp("Value-help domain (for example infoareas, infoobject)")},
+             {"query", StringProp("Raw query string k=v&k2=v2")},
+             {"max_rows", IntProp("Maximum rows")},
+             {"pattern", StringProp("Pattern filter")},
+             {"object_type", StringProp("Object type filter")},
+             {"infoprovider", StringProp("InfoProvider filter")}},
+            {"domain"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto domain = RequireString(params, "domain", err);
+            if (!domain) return err;
+
+            BwValueHelpOptions opts;
+            opts.domain = *domain;
+            auto query = OptString(params, "query");
+            if (!query.empty()) opts.raw_query = query;
+            if (params.contains("max_rows") && params["max_rows"].is_number_integer()) {
+                opts.max_rows = params["max_rows"].get<int>();
+            }
+            auto pattern = OptString(params, "pattern");
+            if (!pattern.empty()) opts.pattern = pattern;
+            auto object_type = OptString(params, "object_type");
+            if (!object_type.empty()) opts.object_type = object_type;
+            auto infoprovider = OptString(params, "infoprovider");
+            if (!infoprovider.empty()) opts.infoprovider = infoprovider;
+
+            auto result = BwGetValueHelp(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& row : result.Value()) {
+                nlohmann::json obj = nlohmann::json::object();
+                for (const auto& [k, v] : row.fields) obj[k] = v;
+                j.push_back(std::move(obj));
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_virtualfolders",
+        "Read BW virtual folders endpoint when available.",
+        MakeSchema(
+            {{"package_name", StringProp("Package filter")},
+             {"object_type", StringProp("Object type filter")},
+             {"user_name", StringProp("User filter")}},
+            {}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            std::optional<std::string> package_name;
+            std::optional<std::string> object_type;
+            std::optional<std::string> user_name;
+            auto p = OptString(params, "package_name");
+            if (!p.empty()) package_name = p;
+            auto t = OptString(params, "object_type");
+            if (!t.empty()) object_type = t;
+            auto u = OptString(params, "user_name");
+            if (!u.empty()) user_name = u;
+
+            auto result = BwGetVirtualFolders(session, package_name, object_type, user_name);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& row : result.Value()) {
+                nlohmann::json obj = nlohmann::json::object();
+                for (const auto& [k, v] : row.fields) obj[k] = v;
+                j.push_back(std::move(obj));
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_datavolumes",
+        "Read BW data volumes endpoint when available.",
+        MakeSchema(
+            {{"infoprovider", StringProp("InfoProvider filter")},
+             {"max_rows", IntProp("Maximum rows")}},
+            {}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            std::optional<std::string> infoprovider;
+            std::optional<int> max_rows;
+            auto ip = OptString(params, "infoprovider");
+            if (!ip.empty()) infoprovider = ip;
+            if (params.contains("max_rows") && params["max_rows"].is_number_integer()) {
+                max_rows = params["max_rows"].get<int>();
+            }
+
+            auto result = BwGetDataVolumes(session, infoprovider, max_rows);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& row : result.Value()) {
+                nlohmann::json obj = nlohmann::json::object();
+                for (const auto& [k, v] : row.fields) obj[k] = v;
+                j.push_back(std::move(obj));
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_reporting",
+        "Run BW reporting metadata request (BICS reporting endpoint).",
+        MakeSchema(
+            {{"compid", StringProp("Query/component id")},
+             {"dbgmode", {{"type", "boolean"}, {"description", "Set dbgmode=true"}}},
+             {"metadata_only", {{"type", "boolean"}, {"description", "MetadataOnly header"}}},
+             {"incl_metadata", {{"type", "boolean"}, {"description", "InclMetadata header"}}},
+             {"incl_object_values", {{"type", "boolean"}, {"description", "InclObjectValues header"}}},
+             {"incl_except_def", {{"type", "boolean"}, {"description", "InclExceptDef header"}}},
+             {"compact_mode", {{"type", "boolean"}, {"description", "CompactMode header"}}},
+             {"from_row", IntProp("FromRow header")},
+             {"to_row", IntProp("ToRow header")}},
+            {"compid"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto compid = RequireString(params, "compid", err);
+            if (!compid) return err;
+
+            BwReportingOptions opts;
+            opts.compid = *compid;
+            opts.dbgmode = params.value("dbgmode", false);
+            opts.metadata_only = params.value("metadata_only", false);
+            opts.incl_metadata = params.value("incl_metadata", false);
+            opts.incl_object_values = params.value("incl_object_values", false);
+            opts.incl_except_def = params.value("incl_except_def", false);
+            opts.compact_mode = params.value("compact_mode", false);
+            if (params.contains("from_row") && params["from_row"].is_number_integer()) {
+                opts.from_row = params["from_row"].get<int>();
+            }
+            if (params.contains("to_row") && params["to_row"].is_number_integer()) {
+                opts.to_row = params["to_row"].get<int>();
+            }
+
+            auto result = BwGetReportingMetadata(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& row : result.Value()) {
+                nlohmann::json obj = nlohmann::json::object();
+                for (const auto& [k, v] : row.fields) obj[k] = v;
+                j.push_back(std::move(obj));
+            }
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_query_properties",
+        "Read BW query properties rules endpoint.",
+        MakeSchema({}, {}),
+        [&session](const nlohmann::json&) -> ToolResult {
+            auto result = BwGetQueryProperties(session);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& row : result.Value()) {
+                nlohmann::json obj = nlohmann::json::object();
+                for (const auto& [k, v] : row.fields) obj[k] = v;
+                j.push_back(std::move(obj));
             }
             return MakeOkResult(j);
         });

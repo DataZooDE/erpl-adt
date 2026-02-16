@@ -109,7 +109,7 @@ TEST_CASE("BwReadTransformation: sends correct URL", "[adt][bw][lineage][trfn]")
     REQUIRE(result.IsOk());
 
     auto& path = mock.GetCalls()[0].path;
-    CHECK(path.find("/sap/bw/modeling/trfn/ZTRFN_SALES/m") != std::string::npos);
+    CHECK(path.find("/sap/bw/modeling/trfn/ztrfn_sales/m") != std::string::npos);
 }
 
 TEST_CASE("BwReadTransformation: 404 returns NotFound error", "[adt][bw][lineage][trfn]") {
@@ -182,7 +182,7 @@ TEST_CASE("BwReadAdsoDetail: sends correct URL", "[adt][bw][lineage][adso]") {
     REQUIRE(result.IsOk());
 
     auto& path = mock.GetCalls()[0].path;
-    CHECK(path.find("/sap/bw/modeling/adso/ZSALES_DATA/a") != std::string::npos);
+    CHECK(path.find("/sap/bw/modeling/adso/zsales_data/a") != std::string::npos);
 }
 
 TEST_CASE("BwReadAdsoDetail: 404 returns NotFound", "[adt][bw][lineage][adso]") {
@@ -224,7 +224,7 @@ TEST_CASE("BwReadDtpDetail: sends correct URL", "[adt][bw][lineage][dtp]") {
     REQUIRE(result.IsOk());
 
     auto& path = mock.GetCalls()[0].path;
-    CHECK(path.find("/sap/bw/modeling/dtpa/ZDTP_SALES/a") != std::string::npos);
+    CHECK(path.find("/sap/bw/modeling/dtpa/zdtp_sales/a") != std::string::npos);
 }
 
 TEST_CASE("BwReadDtpDetail: 404 returns NotFound", "[adt][bw][lineage][dtp]") {

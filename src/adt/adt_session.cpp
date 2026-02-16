@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <thread>
+#include <vector>
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -26,6 +27,27 @@ Error MakeSessionError(const std::string& operation,
     return Error{operation, endpoint, http_status, message, std::nullopt, category};
 }
 
+// Check if a 403 response body contains a SAP application error (XML).
+// BW lock conflicts return 403 with <exc:message> — these should NOT trigger
+// CSRF retry because they are real application errors, not token expiry.
+// Genuine CSRF expiry returns bare 403 with no XML error detail.
+bool HasSapErrorInBody(const std::string& body) {
+    if (body.empty()) return false;
+    return body.find("<exc:message>") != std::string::npos ||
+           body.find("<message>") != std::string::npos;
+}
+
+ErrorCategory CategoryFromHttpTransportError(httplib::Error error) {
+    switch (error) {
+        case httplib::Error::Timeout:
+        case httplib::Error::ConnectionTimeout:
+        case httplib::Error::Read:
+            return ErrorCategory::Timeout;
+        default:
+            return ErrorCategory::Connection;
+    }
+}
+
 // Convert httplib::Headers to our HttpHeaders map.
 HttpHeaders ToHttpHeaders(const httplib::Headers& hdrs) {
     HttpHeaders result;
@@ -40,7 +62,8 @@ httplib::Headers BuildRequestHeaders(
     const HttpHeaders& extra,
     const std::string& sap_client,
     const std::optional<std::string>& csrf_token,
-    const std::map<std::string, std::string>& cookies = {}) {
+    const std::map<std::string, std::string>& cookies = {},
+    bool stateful_mode = false) {
     httplib::Headers hdrs;
     hdrs.emplace("sap-client", sap_client);
     hdrs.emplace("Accept-Language", "en");
@@ -49,9 +72,40 @@ httplib::Headers BuildRequestHeaders(
     }
     if (!cookies.empty()) {
         std::string cookie_str;
-        for (const auto& [k, v] : cookies) {
+
+        const auto append_cookie = [&](const std::string& name) {
+            auto it = cookies.find(name);
+            if (it == cookies.end()) return;
             if (!cookie_str.empty()) cookie_str += "; ";
-            cookie_str += k + "=" + v;
+            cookie_str += it->first + "=" + it->second;
+        };
+
+        if (!stateful_mode) {
+            // Non-stateful requests: forward all cookies for CSRF/session
+            // continuity across standard ADT operations.
+            for (const auto& [name, _] : cookies) {
+                append_cookie(name);
+            }
+        } else {
+            // Stateful requests: pin context/session cookies only.
+            append_cookie("sap-contextid");
+            for (const auto& [name, _] : cookies) {
+                if (name.rfind("SAP_SESSIONID_", 0) == 0 ||
+                    name.rfind("sap-XSRF_", 0) == 0 ||
+                    name.rfind("SAP-XSRF_", 0) == 0) {
+                    append_cookie(name);
+                }
+            }
+            append_cookie("sap-usercontext");
+            for (const auto& [name, _] : cookies) {
+                if (name == "sap-contextid" || name == "sap-usercontext" ||
+                    name.rfind("SAP_SESSIONID_", 0) == 0 ||
+                    name.rfind("sap-XSRF_", 0) == 0 ||
+                    name.rfind("SAP-XSRF_", 0) == 0) {
+                    continue;
+                }
+                append_cookie(name);
+            }
         }
         hdrs.emplace("Cookie", cookie_str);
     }
@@ -146,6 +200,17 @@ struct AdtSession::Impl {
         hdrs.emplace("X-sap-adt-sessiontype", "stateful");
     }
 
+    // Inject BW default headers expected by BW modeling services.
+    void InjectBwHeaders(std::string_view path, httplib::Headers& hdrs) const {
+        if (!IsBwPath(path)) return;
+        auto has_bwmt_level = std::any_of(
+            hdrs.begin(), hdrs.end(),
+            [](const auto& kv) { return adt_utils::IEquals(kv.first, "bwmt-level"); });
+        if (!has_bwmt_level) {
+            hdrs.emplace("bwmt-level", "50");
+        }
+    }
+
     static bool IsSensitiveHeader(std::string_view key) {
         std::string lower_key(key);
         std::transform(lower_key.begin(), lower_key.end(),
@@ -191,16 +256,20 @@ struct AdtSession::Impl {
     Result<HttpResponse, Error> DoGet(std::string_view path,
                                       const HttpHeaders& extra_headers) {
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
-                                        CsrfTokenFor(path), cookies_);
+                                        CsrfTokenFor(path), cookies_,
+                                        stateful_);
         InjectStatefulHeaders(hdrs);
+        InjectBwHeaders(path, hdrs);
         LogInfo("http", "GET " + std::string(path));
         LogRequestHeaders(hdrs);
         auto res = client->Get(std::string(path), hdrs);
         if (!res) {
+            const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Get", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(res.error())));
+                                     httplib::to_string(http_error),
+                                 CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -215,17 +284,21 @@ struct AdtSession::Impl {
                                        std::string_view content_type,
                                        const HttpHeaders& extra_headers) {
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
-                                        CsrfTokenFor(path), cookies_);
+                                        CsrfTokenFor(path), cookies_,
+                                        stateful_);
         InjectStatefulHeaders(hdrs);
+        InjectBwHeaders(path, hdrs);
         LogInfo("http", "POST " + std::string(path));
         LogRequestHeaders(hdrs);
         auto res = client->Post(std::string(path), hdrs,
                                 std::string(body), std::string(content_type));
         if (!res) {
+            const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Post", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(res.error())));
+                                     httplib::to_string(http_error),
+                                 CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -240,17 +313,21 @@ struct AdtSession::Impl {
                                       std::string_view content_type,
                                       const HttpHeaders& extra_headers) {
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
-                                        CsrfTokenFor(path), cookies_);
+                                        CsrfTokenFor(path), cookies_,
+                                        stateful_);
         InjectStatefulHeaders(hdrs);
+        InjectBwHeaders(path, hdrs);
         LogInfo("http", "PUT " + std::string(path));
         LogRequestHeaders(hdrs);
         auto res = client->Put(std::string(path), hdrs,
                                std::string(body), std::string(content_type));
         if (!res) {
+            const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Put", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(res.error())));
+                                     httplib::to_string(http_error),
+                                 CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -263,16 +340,20 @@ struct AdtSession::Impl {
     Result<HttpResponse, Error> DoDelete(std::string_view path,
                                          const HttpHeaders& extra_headers) {
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
-                                        CsrfTokenFor(path), cookies_);
+                                        CsrfTokenFor(path), cookies_,
+                                        stateful_);
         InjectStatefulHeaders(hdrs);
+        InjectBwHeaders(path, hdrs);
         LogInfo("http", "DELETE " + std::string(path));
         LogRequestHeaders(hdrs);
         auto res = client->Delete(std::string(path), hdrs);
         if (!res) {
+            const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Delete", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(res.error())));
+                                     httplib::to_string(http_error),
+                                 CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -295,18 +376,21 @@ struct AdtSession::Impl {
         HttpHeaders extra;
         extra["x-csrf-token"] = "fetch";
         auto hdrs = BuildRequestHeaders(extra, sap_client, std::nullopt,
-                                        cookies_);
+                                        cookies_, stateful_);
         InjectStatefulHeaders(hdrs);
+        InjectBwHeaders(fetch_path, hdrs);
 
         LogInfo("http", "GET " + fetch_path + " (CSRF fetch)");
         LogRequestHeaders(hdrs);
         auto res = client->Get(fetch_path, hdrs);
         if (!res) {
+            const auto http_error = res.error();
             return Result<std::string, Error>::Err(
                 MakeSessionError("FetchCsrfToken", fetch_path,
                                  std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(res.error())));
+                                     httplib::to_string(http_error),
+                                 CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
         if (res->status != 200) {
@@ -363,8 +447,10 @@ Result<HttpResponse, Error> AdtSession::Get(std::string_view path,
         return result;
     }
 
-    // On 403, try re-fetching CSRF token and retry once.
-    if (result.Value().status_code == 403) {
+    // On 403, try re-fetching CSRF token and retry once — but only if the
+    // body doesn't contain a SAP application error (e.g., BW lock conflict).
+    if (result.Value().status_code == 403 &&
+        !HasSapErrorInBody(result.Value().body)) {
         auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
@@ -395,8 +481,10 @@ Result<HttpResponse, Error> AdtSession::Post(std::string_view path,
         return result;
     }
 
-    // On 403, re-fetch CSRF token and retry once.
-    if (result.Value().status_code == 403) {
+    // On 403, re-fetch CSRF token and retry once — but only if the
+    // body doesn't contain a SAP application error (e.g., BW lock conflict).
+    if (result.Value().status_code == 403 &&
+        !HasSapErrorInBody(result.Value().body)) {
         auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
@@ -425,8 +513,10 @@ Result<HttpResponse, Error> AdtSession::Delete(std::string_view path,
         return result;
     }
 
-    // On 403, re-fetch CSRF token and retry once.
-    if (result.Value().status_code == 403) {
+    // On 403, re-fetch CSRF token and retry once — but only if the
+    // body doesn't contain a SAP application error.
+    if (result.Value().status_code == 403 &&
+        !HasSapErrorInBody(result.Value().body)) {
         auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());
@@ -457,8 +547,10 @@ Result<HttpResponse, Error> AdtSession::Put(std::string_view path,
         return result;
     }
 
-    // On 403, re-fetch CSRF token and retry once.
-    if (result.Value().status_code == 403) {
+    // On 403, re-fetch CSRF token and retry once — but only if the
+    // body doesn't contain a SAP application error.
+    if (result.Value().status_code == 403 &&
+        !HasSapErrorInBody(result.Value().body)) {
         auto token_result = impl_->DoFetchCsrfToken(path);
         if (token_result.IsErr()) {
             return Result<HttpResponse, Error>::Err(std::move(token_result).Error());

@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/search.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
@@ -24,10 +26,11 @@ std::string BuildSearchUrl(const SearchOptions& options) {
 Result<std::vector<SearchResult>, Error> ParseSearchResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<SearchResult>, Error>::Err(Error{
-            "SearchObjects", kSearchPath, std::nullopt,
-            "Failed to parse search response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "SearchObjects", kSearchPath,
+            "Failed to parse search response XML")) {
+        return Result<std::vector<SearchResult>, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -43,18 +46,11 @@ Result<std::vector<SearchResult>, Error> ParseSearchResponse(
     for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
         SearchResult r;
 
-        // Try both namespaced and plain attributes.
-        auto get_attr = [&](const char* ns_name, const char* plain_name) -> std::string {
-            const char* val = el->Attribute(ns_name);
-            if (!val) val = el->Attribute(plain_name);
-            return val ? val : "";
-        };
-
-        r.uri = get_attr("adtcore:uri", "uri");
-        r.type = get_attr("adtcore:type", "type");
-        r.name = get_attr("adtcore:name", "name");
-        r.description = get_attr("adtcore:description", "description");
-        r.package_name = get_attr("adtcore:packageName", "packageName");
+        r.uri = xml_utils::AttrAny(el, "adtcore:uri", "uri");
+        r.type = xml_utils::AttrAny(el, "adtcore:type", "type");
+        r.name = xml_utils::AttrAny(el, "adtcore:name", "name");
+        r.description = xml_utils::AttrAny(el, "adtcore:description", "description");
+        r.package_name = xml_utils::AttrAny(el, "adtcore:packageName", "packageName");
 
         if (!r.name.empty()) {
             results.push_back(std::move(r));

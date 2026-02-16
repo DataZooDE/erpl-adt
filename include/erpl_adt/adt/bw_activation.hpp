@@ -63,6 +63,11 @@ struct BwActivateOptions {
     std::vector<BwActivationObject> objects;
     BwActivationMode mode = BwActivationMode::Activate;
     bool force = false;                     // Force activation with warnings
+    bool exec_checks = false;               // execChk
+    bool with_cto = false;                  // withCTO
+    bool sort = false;                      // validate: sort
+    bool only_inactive = false;             // validate: onlyina
+    std::optional<std::string> endpoint_override;  // Full endpoint URL override
     std::optional<std::string> transport;   // CORRNR for activation
 };
 

@@ -247,6 +247,50 @@ TEST_CASE("AdtSession: GET sends SAP headers", "[adt][session][live]") {
     CHECK_FALSE(received_auth.empty()); // Basic Auth header present
 }
 
+TEST_CASE("AdtSession: BW requests inject bwmt-level by default", "[adt][session][live]") {
+    httplib::Server svr;
+    std::string received_bwmt_level;
+
+    svr.Get("/sap/bw/modeling/discovery", [&](const httplib::Request& req,
+                                               httplib::Response& res) {
+        if (req.has_header("bwmt-level")) {
+            received_bwmt_level = req.get_header_value("bwmt-level");
+        }
+        res.set_content("<discovery/>", "application/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    auto result = session->Get("/sap/bw/modeling/discovery");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().status_code == 200);
+    CHECK(received_bwmt_level == "50");
+}
+
+TEST_CASE("AdtSession: caller bwmt-level overrides default", "[adt][session][live]") {
+    httplib::Server svr;
+    std::string received_bwmt_level;
+
+    svr.Get("/sap/bw/modeling/discovery", [&](const httplib::Request& req,
+                                               httplib::Response& res) {
+        if (req.has_header("bwmt-level")) {
+            received_bwmt_level = req.get_header_value("bwmt-level");
+        }
+        res.set_content("<discovery/>", "application/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    HttpHeaders headers;
+    headers["bwmt-level"] = "77";
+    auto result = session->Get("/sap/bw/modeling/discovery", headers);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().status_code == 200);
+    CHECK(received_bwmt_level == "77");
+}
+
 TEST_CASE("AdtSession: FetchCsrfToken extracts token from response", "[adt][session][live]") {
     httplib::Server svr;
 
@@ -379,6 +423,77 @@ TEST_CASE("AdtSession: POST 403 triggers CSRF re-fetch and retry", "[adt][sessio
     CHECK(discovery_count.load() == 2);
     // Should have attempted POST twice
     CHECK(post_count.load() == 2);
+}
+
+TEST_CASE("AdtSession: POST 403 with SAP error body does NOT retry", "[adt][session][live]") {
+    httplib::Server svr;
+
+    std::atomic<int> discovery_count{0};
+    std::atomic<int> post_count{0};
+
+    svr.Get("/sap/bw/modeling/discovery", [&](const httplib::Request&,
+                                               httplib::Response& res) {
+        ++discovery_count;
+        res.set_header("x-csrf-token", "token-123");
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    // BW lock conflict: SAP returns 403 with XML error body
+    svr.Post("/sap/bw/modeling/iobj/0calday", [&](const httplib::Request&,
+                                                    httplib::Response& res) {
+        ++post_count;
+        res.status = 403;
+        res.set_content(
+            R"(<?xml version="1.0" encoding="utf-8"?>)"
+            R"(<exc:exception xmlns:exc="http://www.sap.com/abap/exception">)"
+            R"(<exc:message>InfoObject 0CALDAY is locked by user DEVELOPER</exc:message>)"
+            R"(</exc:exception>)",
+            "application/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    auto result = session->Post("/sap/bw/modeling/iobj/0calday", "", "application/xml");
+    REQUIRE(result.IsOk());
+    // Should return the 403 directly — no retry
+    CHECK(result.Value().status_code == 403);
+    CHECK(result.Value().body.find("locked by user DEVELOPER") != std::string::npos);
+    // Only one CSRF fetch (initial) — no re-fetch on this 403
+    CHECK(discovery_count.load() == 1);
+    // Only one POST attempt — no retry
+    CHECK(post_count.load() == 1);
+}
+
+TEST_CASE("AdtSession: GET 403 with SAP error body does NOT retry", "[adt][session][live]") {
+    httplib::Server svr;
+
+    std::atomic<int> discovery_count{0};
+    std::atomic<int> get_count{0};
+
+    svr.Get("/sap/bc/adt/discovery", [&](const httplib::Request&,
+                                          httplib::Response& res) {
+        ++discovery_count;
+        res.set_header("x-csrf-token", "token-123");
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    svr.Get("/sap/bc/adt/some/resource", [&](const httplib::Request&,
+                                               httplib::Response& res) {
+        ++get_count;
+        res.status = 403;
+        res.set_content(
+            R"(<error><message>Access denied for resource</message></error>)",
+            "application/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    auto result = session->Get("/sap/bc/adt/some/resource");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().status_code == 403);
+    CHECK(get_count.load() == 1);  // No retry
 }
 
 TEST_CASE("AdtSession: DELETE auto-fetches CSRF and retries on 403", "[adt][session][live]") {
@@ -669,4 +784,47 @@ TEST_CASE("AdtSession: CSRF token is cached across requests", "[adt][session][li
     [[maybe_unused]] auto r2 = session->Post("/sap/bc/adt/abapgit/repos", "<xml2/>", "application/xml");
 
     CHECK(discovery_count.load() == 1);
+}
+
+TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt][session][live]") {
+    httplib::Server svr;
+
+    std::string received_cookie;
+
+    svr.Get("/sap/bc/adt/discovery", [](const httplib::Request&,
+                                         httplib::Response& res) {
+        res.set_header("x-csrf-token", "tok");
+        res.set_header("set-cookie",
+                       "sap-contextid=SID%3ATEST%3A123; path=/sap/bc/adt");
+        res.set_header("set-cookie",
+                       "sap-usercontext=sap-client=001; path=/");
+        // Intentionally large to reproduce ordering sensitivity in some SAP stacks.
+        res.set_header("set-cookie",
+                       "MYSAPSSO2=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz; path=/");
+        res.set_header("set-cookie",
+                       "SAP_SESSIONID_A4H_001=abc123%3d; path=/");
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    svr.Post("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
+                                                  httplib::Response& res) {
+        if (req.has_header("Cookie")) {
+            received_cookie = req.get_header_value("Cookie");
+        }
+        res.status = 200;
+        res.set_content("<ok/>", "text/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+    session->SetStateful(true);
+
+    auto result = session->Post(
+        "/sap/bc/adt/oo/classes/zfoo",
+        "",
+        "application/xml");
+
+    REQUIRE(result.IsOk());
+    REQUIRE_FALSE(received_cookie.empty());
+    CHECK(received_cookie.rfind("sap-contextid=", 0) == 0);
 }

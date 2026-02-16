@@ -33,6 +33,7 @@ struct BwNodeEntry {
 // ---------------------------------------------------------------------------
 
 struct BwNodesOptions {
+    std::optional<std::string> endpoint_override;   // Full endpoint URL override
     std::string object_type;                     // Required
     std::string object_name;                     // Required
     bool datasource = false;                     // Use datasourcestructure path

@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/bw_locks.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
@@ -11,17 +13,6 @@ namespace erpl_adt {
 namespace {
 
 const char* kBwLocksPath = "/sap/bw/modeling/utils/locks";
-
-std::string Attr(const tinyxml2::XMLElement* el, const char* name) {
-    const char* val = el->Attribute(name);
-    return val ? val : "";
-}
-
-int IntAttr(const tinyxml2::XMLElement* el, const char* name) {
-    int val = 0;
-    el->QueryIntAttribute(name, &val);
-    return val;
-}
 
 std::string BuildListUrl(const BwListLocksOptions& options) {
     std::string url = std::string(kBwLocksPath) + "?resultsize=" +
@@ -62,10 +53,11 @@ Result<std::vector<BwLockEntry>, Error> BwListLocks(
     }
 
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(http.body.data(), http.body.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwLockEntry>, Error>::Err(Error{
-            "BwListLocks", url, std::nullopt,
-            "Failed to parse locks response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, http.body, "BwListLocks", url,
+            "Failed to parse locks response XML")) {
+        return Result<std::vector<BwLockEntry>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<BwLockEntry> locks;
@@ -79,18 +71,18 @@ Result<std::vector<BwLockEntry>, Error> BwListLocks(
 
             if (n == "lock" || n.find(":lock") != std::string::npos) {
                 BwLockEntry entry;
-                entry.client = Attr(el, "client");
-                entry.user = Attr(el, "user");
-                entry.mode = Attr(el, "mode");
-                entry.table_name = Attr(el, "tableName");
-                entry.table_desc = Attr(el, "tableDesc");
-                entry.object = Attr(el, "object");
-                entry.arg = Attr(el, "arg");
-                entry.owner1 = Attr(el, "owner1");
-                entry.owner2 = Attr(el, "owner2");
-                entry.timestamp = Attr(el, "timestamp");
-                entry.upd_count = IntAttr(el, "updCount");
-                entry.dia_count = IntAttr(el, "diaCount");
+                entry.client = xml_utils::Attr(el, "client");
+                entry.user = xml_utils::Attr(el, "user");
+                entry.mode = xml_utils::Attr(el, "mode");
+                entry.table_name = xml_utils::Attr(el, "tableName");
+                entry.table_desc = xml_utils::Attr(el, "tableDesc");
+                entry.object = xml_utils::Attr(el, "object");
+                entry.arg = xml_utils::Attr(el, "arg");
+                entry.owner1 = xml_utils::Attr(el, "owner1");
+                entry.owner2 = xml_utils::Attr(el, "owner2");
+                entry.timestamp = xml_utils::Attr(el, "timestamp");
+                entry.upd_count = xml_utils::AttrIntOr(el, "updCount", 0);
+                entry.dia_count = xml_utils::AttrIntOr(el, "diaCount", 0);
                 locks.push_back(std::move(entry));
             }
         }

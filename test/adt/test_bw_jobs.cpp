@@ -31,6 +31,58 @@ std::string LoadFixture(const std::string& filename) {
 } // anonymous namespace
 
 // ===========================================================================
+// BwListJobs / BwGetJobResult
+// ===========================================================================
+
+TEST_CASE("BwListJobs: parses list response", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    const std::string xml =
+        "<jobs>"
+        "<job guid=\"GUID1\" status=\"R\" jobType=\"ACT\" description=\"Running\"/>"
+        "<job guid=\"GUID2\" status=\"S\" jobType=\"ACT\" description=\"Done\"/>"
+        "</jobs>";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwListJobs(mock);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().size() == 2);
+    CHECK(result.Value()[0].guid == "GUID1");
+    CHECK(result.Value()[0].status == "R");
+    CHECK(result.Value()[1].guid == "GUID2");
+    CHECK(result.Value()[1].description == "Done");
+}
+
+TEST_CASE("BwListJobs: sends collection URL and Accept header", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<jobs/>"}));
+
+    auto result = BwListJobs(mock);
+    REQUIRE(result.IsOk());
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/jobs");
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap-bw-modeling.jobs+xml");
+}
+
+TEST_CASE("BwGetJobResult: parses result resource", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<job status=\"S\" jobType=\"ACT\" description=\"Done\"/>"}));
+
+    auto result = BwGetJobResult(mock, "GUID123");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().guid == "GUID123");
+    CHECK(result.Value().status == "S");
+    CHECK(result.Value().job_type == "ACT");
+}
+
+TEST_CASE("BwGetJobResult: empty GUID returns error", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    auto result = BwGetJobResult(mock, "");
+    REQUIRE(result.IsErr());
+}
+
+// ===========================================================================
 // BwGetJobStatus
 // ===========================================================================
 
@@ -161,6 +213,27 @@ TEST_CASE("BwGetJobSteps: empty steps returns empty vector", "[adt][bw][jobs]") 
 TEST_CASE("BwGetJobSteps: empty GUID returns error", "[adt][bw][jobs]") {
     MockAdtSession mock;
     auto result = BwGetJobSteps(mock, "");
+    REQUIRE(result.IsErr());
+}
+
+TEST_CASE("BwGetJobStep: parses single step response", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<step name=\"ACTIVATE\" status=\"S\" description=\"Done\"/>"}));
+
+    auto result = BwGetJobStep(mock, "GUID123", "ACTIVATE");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().name == "ACTIVATE");
+    CHECK(result.Value().status == "S");
+    CHECK(result.Value().description == "Done");
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/jobs/GUID123/steps/ACTIVATE");
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap-bw-modeling.jobs.step+xml");
+}
+
+TEST_CASE("BwGetJobStep: empty step returns error", "[adt][bw][jobs]") {
+    MockAdtSession mock;
+    auto result = BwGetJobStep(mock, "GUID123", "");
     REQUIRE(result.IsErr());
 }
 

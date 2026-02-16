@@ -126,10 +126,21 @@ TEST_CASE("AddBwHint: 500 not implemented on bwsearch adds Search hint", "[bw_hi
 // 500 without "not activated" → no hint
 // ===========================================================================
 
-TEST_CASE("AddBwHint: 500 without activation message adds no hint", "[bw_hints]") {
+TEST_CASE("AddBwHint: 500 on bwsearch without activation message adds type hint", "[bw_hints]") {
     std::string body = R"(<exc:exception><exc:message>Internal processing error</exc:message></exc:exception>)";
     auto error = Error::FromHttpStatus(
         "BwSearchObjects", "/sap/bw/modeling/repo/is/bwsearch?searchTerm=*", 500, body);
+    AddBwHint(error);
+    REQUIRE(error.hint.has_value());
+    CHECK(error.hint->find("--type") != std::string::npos);
+    CHECK(error.hint->find("IOBJ") != std::string::npos);
+    CHECK(error.hint->find("ADSO") != std::string::npos);
+}
+
+TEST_CASE("AddBwHint: 500 on non-search BW endpoint without activation adds no hint", "[bw_hints]") {
+    std::string body = R"(<exc:exception><exc:message>Internal processing error</exc:message></exc:exception>)";
+    auto error = Error::FromHttpStatus(
+        "BwReadObject", "/sap/bw/modeling/iobj/0calday/a", 500, body);
     AddBwHint(error);
     CHECK_FALSE(error.hint.has_value());
 }

@@ -102,6 +102,26 @@ TEST_CASE("BwTransportCollect: sends Accept header", "[adt][bw][transport][colle
     CHECK(mock.PostCalls()[0].headers.at("Accept") == "application/vnd.sap-bw-modeling.trcollect+xml");
 }
 
+TEST_CASE("BwTransportCollect: context headers are forwarded",
+          "[adt][bw][transport][collect]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<trCollect:objects xmlns:trCollect=\"http://www.sap.com/bw/trcollect\"/>"}));
+
+    BwTransportCollectOptions opts = MakeCollectOptions("ADSO", "TEST");
+    opts.transport = "K900001";
+    opts.context_headers.transport_lock_holder = "K999999";
+    opts.context_headers.foreign_correction_number = "K123456";
+
+    auto result = BwTransportCollect(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& headers = mock.PostCalls()[0].headers;
+    CHECK(headers.at("Transport-Lock-Holder") == "K999999");
+    CHECK(headers.at("Foreign-Correction-Number") == "K123456");
+}
+
 TEST_CASE("BwTransportCollect: missing type returns error", "[adt][bw][transport][collect]") {
     MockAdtSession mock;
     auto result = BwTransportCollect(mock, MakeCollectOptions("", "NAME"));

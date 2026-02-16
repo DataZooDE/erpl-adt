@@ -1,6 +1,8 @@
 #include <erpl_adt/adt/bw_system.hpp>
 
+#include "atom_parser.hpp"
 #include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <tinyxml2.h>
 
@@ -15,41 +17,18 @@ const char* kSystemInfoPath = "/sap/bw/modeling/repo/is/systeminfo";
 const char* kChgInfoPath    = "/sap/bw/modeling/repo/is/chginfo";
 const char* kAdtUriPath     = "/sap/bw/modeling/repo/is/adturi";
 
-// Try both namespaced and plain attribute names.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* ns_name, const char* plain_name) {
-    const char* val = el->Attribute(ns_name);
-    if (!val) val = el->Attribute(plain_name);
-    return val ? val : "";
-}
-
 // Find child element by suffix, return an attribute value from it.
 std::string ElementAttr(const tinyxml2::XMLElement* parent,
                         const char* child_suffix, const char* attr_name) {
-    for (auto* child = parent->FirstChildElement(); child;
-         child = child->NextSiblingElement()) {
-        const char* name = child->Name();
-        if (!name) continue;
-        std::string n(name);
-        if (n == child_suffix || n.find(std::string(":") + child_suffix) != std::string::npos) {
-            const char* val = child->Attribute(attr_name);
-            return val ? val : "";
-        }
+    if (const auto* child = atom_parser::FirstChildByLocalName(
+            parent, child_suffix)) {
+        return xml_utils::Attr(child, attr_name);
     }
     return "";
 }
 
 std::string ElementText(const tinyxml2::XMLElement* parent, const char* child_suffix) {
-    for (auto* child = parent->FirstChildElement(); child;
-         child = child->NextSiblingElement()) {
-        const char* name = child->Name();
-        if (!name) continue;
-        std::string n(name);
-        if (n == child_suffix || n.find(std::string(":") + child_suffix) != std::string::npos) {
-            return child->GetText() ? child->GetText() : "";
-        }
-    }
-    return "";
+    return atom_parser::ChildTextByLocalName(parent, child_suffix);
 }
 
 Result<std::string, Error> FetchAtom(IAdtSession& session,
@@ -97,10 +76,10 @@ Result<BwDbInfo, Error> BwGetDbInfo(IAdtSession& session) {
     if (root) {
         // Atom feed: look for entry or content elements with db attributes
         // Try direct attributes first (flat response)
-        info.host = GetAttr(root, "dbHost", "host");
-        info.port = GetAttr(root, "dbPort", "port");
-        info.schema = GetAttr(root, "dbSchema", "schema");
-        info.database_type = GetAttr(root, "dbType", "databaseType");
+        info.host = xml_utils::AttrAny(root, "dbHost", "host");
+        info.port = xml_utils::AttrAny(root, "dbPort", "port");
+        info.schema = xml_utils::AttrAny(root, "dbSchema", "schema");
+        info.database_type = xml_utils::AttrAny(root, "dbType", "databaseType");
 
         // Also check Atom entry/content pattern
         for (auto* entry = root->FirstChildElement(); entry;
@@ -119,13 +98,13 @@ Result<BwDbInfo, Error> BwGetDbInfo(IAdtSession& session) {
                         if (props) {
                             // Try attributes on properties element
                             if (info.host.empty())
-                                info.host = GetAttr(props, "dbHost", "host");
+                                info.host = xml_utils::AttrAny(props, "dbHost", "host");
                             if (info.port.empty())
-                                info.port = GetAttr(props, "dbPort", "port");
+                                info.port = xml_utils::AttrAny(props, "dbPort", "port");
                             if (info.schema.empty())
-                                info.schema = GetAttr(props, "dbSchema", "schema");
+                                info.schema = xml_utils::AttrAny(props, "dbSchema", "schema");
                             if (info.database_type.empty())
-                                info.database_type = GetAttr(props, "dbType", "databaseType");
+                                info.database_type = xml_utils::AttrAny(props, "dbType", "databaseType");
 
                             // OData child-element text (e.g., <d:dbHost>val</d:dbHost>)
                             if (info.host.empty())
@@ -255,10 +234,10 @@ Result<std::vector<BwSystemProperty>, Error> BwGetSystemInfo(
                     if (cs == "content" || cs.find(":content") != std::string::npos) {
                         auto* props = child->FirstChildElement();
                         if (props) {
-                            prop.key = GetAttr(props, "key", "name");
-                            prop.value = GetAttr(props, "value", "val");
+                            prop.key = xml_utils::AttrAny(props, "key", "name");
+                            prop.value = xml_utils::AttrAny(props, "value", "val");
                             if (prop.description.empty()) {
-                                prop.description = GetAttr(props, "description", "desc");
+                                prop.description = xml_utils::AttrAny(props, "description", "desc");
                             }
                             // OData child-element text fallback
                             if (prop.key.empty())
@@ -283,9 +262,9 @@ Result<std::vector<BwSystemProperty>, Error> BwGetSystemInfo(
             // Also handle flat property elements
             else if (n == "property" || n.find(":property") != std::string::npos) {
                 BwSystemProperty prop;
-                prop.key = GetAttr(entry, "key", "name");
-                prop.value = GetAttr(entry, "value", "val");
-                prop.description = GetAttr(entry, "description", "desc");
+                prop.key = xml_utils::AttrAny(entry, "key", "name");
+                prop.value = xml_utils::AttrAny(entry, "value", "val");
+                prop.description = xml_utils::AttrAny(entry, "description", "desc");
                 if (entry->GetText() && prop.value.empty()) {
                     prop.value = entry->GetText();
                 }
@@ -340,11 +319,11 @@ Result<std::vector<BwChangeabilityEntry>, Error> BwGetChangeability(
                     if (cs == "content" || cs.find(":content") != std::string::npos) {
                         auto* props = child->FirstChildElement();
                         if (props) {
-                            e.object_type = GetAttr(props, "objectType", "tlogo");
-                            e.changeable = GetAttr(props, "changeable", "changeability");
-                            e.transportable = GetAttr(props, "transportable", "transport");
+                            e.object_type = xml_utils::AttrAny(props, "objectType", "tlogo");
+                            e.changeable = xml_utils::AttrAny(props, "changeable", "changeability");
+                            e.transportable = xml_utils::AttrAny(props, "transportable", "transport");
                             if (e.description.empty()) {
-                                e.description = GetAttr(props, "description", "desc");
+                                e.description = xml_utils::AttrAny(props, "description", "desc");
                             }
                             // OData child-element text fallback
                             if (e.object_type.empty())
@@ -374,10 +353,10 @@ Result<std::vector<BwChangeabilityEntry>, Error> BwGetChangeability(
             else if (n == "chginfo" || n == "changeability" ||
                      n.find(":chginfo") != std::string::npos) {
                 BwChangeabilityEntry e;
-                e.object_type = GetAttr(entry, "objectType", "tlogo");
-                e.changeable = GetAttr(entry, "changeable", "changeability");
-                e.transportable = GetAttr(entry, "transportable", "transport");
-                e.description = GetAttr(entry, "description", "desc");
+                e.object_type = xml_utils::AttrAny(entry, "objectType", "tlogo");
+                e.changeable = xml_utils::AttrAny(entry, "changeable", "changeability");
+                e.transportable = xml_utils::AttrAny(entry, "transportable", "transport");
+                e.description = xml_utils::AttrAny(entry, "description", "desc");
                 if (!e.object_type.empty()) {
                     entries.push_back(std::move(e));
                 }
@@ -428,10 +407,10 @@ Result<std::vector<BwAdtUriMapping>, Error> BwGetAdtUriMappings(
                     if (cs == "content" || cs.find(":content") != std::string::npos) {
                         auto* props = child->FirstChildElement();
                         if (props) {
-                            m.bw_type = GetAttr(props, "bwType", "bwObjectType");
-                            m.adt_type = GetAttr(props, "adtType", "adtObjectType");
-                            m.bw_uri_template = GetAttr(props, "bwUri", "bwUriTemplate");
-                            m.adt_uri_template = GetAttr(props, "adtUri", "adtUriTemplate");
+                            m.bw_type = xml_utils::AttrAny(props, "bwType", "bwObjectType");
+                            m.adt_type = xml_utils::AttrAny(props, "adtType", "adtObjectType");
+                            m.bw_uri_template = xml_utils::AttrAny(props, "bwUri", "bwUriTemplate");
+                            m.adt_uri_template = xml_utils::AttrAny(props, "adtUri", "adtUriTemplate");
                             // OData child-element text fallback
                             if (m.bw_type.empty())
                                 m.bw_type = ElementText(props, "bwType");
@@ -459,10 +438,10 @@ Result<std::vector<BwAdtUriMapping>, Error> BwGetAdtUriMappings(
             // Flat element format
             else if (n == "mapping" || n.find(":mapping") != std::string::npos) {
                 BwAdtUriMapping m;
-                m.bw_type = GetAttr(entry, "bwType", "bwObjectType");
-                m.adt_type = GetAttr(entry, "adtType", "adtObjectType");
-                m.bw_uri_template = GetAttr(entry, "bwUri", "bwUriTemplate");
-                m.adt_uri_template = GetAttr(entry, "adtUri", "adtUriTemplate");
+                m.bw_type = xml_utils::AttrAny(entry, "bwType", "bwObjectType");
+                m.adt_type = xml_utils::AttrAny(entry, "adtType", "adtObjectType");
+                m.bw_uri_template = xml_utils::AttrAny(entry, "bwUri", "bwUriTemplate");
+                m.adt_uri_template = xml_utils::AttrAny(entry, "adtUri", "adtUriTemplate");
                 if (!m.bw_type.empty() || !m.adt_type.empty()) {
                     mappings.push_back(std::move(m));
                 }

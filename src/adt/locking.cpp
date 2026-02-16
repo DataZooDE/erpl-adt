@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/locking.hpp>
 
+#include "adt_utils.hpp"
 #include <tinyxml2.h>
 
 namespace erpl_adt {
@@ -9,11 +10,11 @@ namespace {
 Result<LockResult, Error> ParseLockResponse(
     std::string_view xml, const std::string& uri) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<LockResult, Error>::Err(Error{
-            "LockObject", uri, std::nullopt,
-            "Failed to parse lock response XML", std::nullopt,
-            ErrorCategory::LockConflict});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "LockObject", uri,
+            "Failed to parse lock response XML",
+            ErrorCategory::LockConflict)) {
+        return Result<LockResult, Error>::Err(std::move(*parse_error));
     }
 
     // Navigate: asx:abap > asx:values > DATA

@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/bw_xref.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
@@ -13,6 +15,11 @@ namespace {
 const char* kBwXrefPath = "/sap/bw/modeling/repo/is/xref";
 
 std::string BuildXrefUrl(const BwXrefOptions& options) {
+    if (options.endpoint_override.has_value() &&
+        !options.endpoint_override->empty()) {
+        return *options.endpoint_override;
+    }
+
     std::string url = std::string(kBwXrefPath) +
         "?objectType=" + UrlEncode(options.object_type) +
         "&objectName=" + UrlEncode(options.object_name);
@@ -24,6 +31,9 @@ std::string BuildXrefUrl(const BwXrefOptions& options) {
     }
     if (options.associated_object_type.has_value()) {
         url += "&associatedObjectType=" + UrlEncode(*options.associated_object_type);
+    }
+    if (options.max_results > 0) {
+        url += "&$top=" + std::to_string(options.max_results);
     }
     return url;
 }
@@ -38,21 +48,14 @@ std::string AssociationLabel(const std::string& code) {
     return code;
 }
 
-// Get attribute trying both namespaced and plain names.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* ns_name, const char* plain_name) {
-    const char* val = el->Attribute(ns_name);
-    if (!val) val = el->Attribute(plain_name);
-    return val ? val : "";
-}
-
 Result<std::vector<BwXrefEntry>, Error> ParseXrefResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<BwXrefEntry>, Error>::Err(Error{
-            "BwGetXrefs", kBwXrefPath, std::nullopt,
-            "Failed to parse BW xref response XML", std::nullopt});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwGetXrefs", kBwXrefPath,
+            "Failed to parse BW xref response XML")) {
+        return Result<std::vector<BwXrefEntry>, Error>::Err(
+            std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
@@ -89,13 +92,13 @@ Result<std::vector<BwXrefEntry>, Error> ParseXrefResponse(
             } else if (cn == "content" || cn.find(":content") != std::string::npos) {
                 auto* props = child->FirstChildElement();
                 if (props) {
-                    r.name = GetAttr(props, "bwModel:objectName", "objectName");
-                    r.type = GetAttr(props, "bwModel:objectType", "objectType");
-                    r.version = GetAttr(props, "bwModel:objectVersion", "objectVersion");
-                    r.status = GetAttr(props, "bwModel:objectStatus", "objectStatus");
-                    r.association_type = GetAttr(props, "bwModel:associationType", "associationType");
+                    r.name = xml_utils::AttrAny(props, "bwModel:objectName", "objectName");
+                    r.type = xml_utils::AttrAny(props, "bwModel:objectType", "objectType");
+                    r.version = xml_utils::AttrAny(props, "bwModel:objectVersion", "objectVersion");
+                    r.status = xml_utils::AttrAny(props, "bwModel:objectStatus", "objectStatus");
+                    r.association_type = xml_utils::AttrAny(props, "bwModel:associationType", "associationType");
                     if (r.description.empty()) {
-                        r.description = GetAttr(props, "bwModel:objectDesc", "objectDesc");
+                        r.description = xml_utils::AttrAny(props, "bwModel:objectDesc", "objectDesc");
                     }
                 }
             } else if (cn == "link" || cn.find(":link") != std::string::npos) {

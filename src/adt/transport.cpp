@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/transport.hpp>
 
+#include "adt_utils.hpp"
+#include "xml_utils.hpp"
 #include <tinyxml2.h>
 
 #include <string>
@@ -8,22 +10,15 @@ namespace erpl_adt {
 
 namespace {
 
-// Get attribute value from element, trying multiple names.
-std::string GetAttr(const tinyxml2::XMLElement* el,
-                    const char* name1, const char* name2 = nullptr) {
-    const char* val = el->Attribute(name1);
-    if (!val && name2) val = el->Attribute(name2);
-    return val ? val : "";
-}
-
 Result<std::vector<TransportInfo>, Error> ParseTransportList(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
-    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
-        return Result<std::vector<TransportInfo>, Error>::Err(Error{
-            "ListTransports", "", std::nullopt,
-            "Failed to parse transport list XML", std::nullopt,
-            ErrorCategory::TransportError});
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "ListTransports", "",
+            "Failed to parse transport list XML",
+            ErrorCategory::TransportError)) {
+        return Result<std::vector<TransportInfo>, Error>::Err(
+            std::move(*parse_error));
     }
 
     std::vector<TransportInfo> transports;
@@ -36,11 +31,11 @@ Result<std::vector<TransportInfo>, Error> ParseTransportList(
     // Navigate through transport request elements.
     for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
         TransportInfo info;
-        info.number = GetAttr(el, "tm:number", "number");
-        info.description = GetAttr(el, "tm:desc", "desc");
-        info.owner = GetAttr(el, "tm:owner", "owner");
-        info.status = GetAttr(el, "tm:status", "status");
-        info.target = GetAttr(el, "tm:target", "target");
+        info.number = xml_utils::AttrAny(el, "tm:number", "number");
+        info.description = xml_utils::AttrAny(el, "tm:desc", "desc");
+        info.owner = xml_utils::AttrAny(el, "tm:owner", "owner");
+        info.status = xml_utils::AttrAny(el, "tm:status", "status");
+        info.target = xml_utils::AttrAny(el, "tm:target", "target");
 
         if (!info.number.empty()) {
             transports.push_back(std::move(info));
@@ -91,8 +86,8 @@ Result<std::string, Error> CreateTransport(
         "  <asx:values>\n"
         "    <DATA>\n"
         "      <OPERATION>I</OPERATION>\n"
-        "      <DEVCLASS>" + target_package + "</DEVCLASS>\n"
-        "      <REQUEST_TEXT>" + description + "</REQUEST_TEXT>\n"
+        "      <DEVCLASS>" + adt_utils::XmlEscape(target_package) + "</DEVCLASS>\n"
+        "      <REQUEST_TEXT>" + adt_utils::XmlEscape(description) + "</REQUEST_TEXT>\n"
         "    </DATA>\n"
         "  </asx:values>\n"
         "</asx:abap>\n";
