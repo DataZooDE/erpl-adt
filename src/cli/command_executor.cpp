@@ -11,10 +11,14 @@
 #include <erpl_adt/adt/bw_endpoint_resolver.hpp>
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_lineage.hpp>
+#include <erpl_adt/adt/bw_lineage_graph.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_locks.hpp>
 #include <erpl_adt/adt/bw_repo_utils.hpp>
 #include <erpl_adt/adt/bw_reporting.hpp>
+#include <erpl_adt/adt/bw_dataflow.hpp>
+#include <erpl_adt/adt/bw_query.hpp>
+#include <erpl_adt/adt/bw_rsds.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
 #include <erpl_adt/adt/bw_system.hpp>
 #include <erpl_adt/adt/bw_nodes.hpp>
@@ -42,6 +46,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <set>
@@ -749,6 +754,15 @@ int HandleObjectLock(const CommandArgs& args) {
     session->SetStateful(true);
 
     auto result = LockObject(*session, uri_result.Value());
+
+    // On "Session not found", the loaded session file had a stale context.
+    // Clear it and retry once with a fresh stateful establishment.
+    if (result.IsErr() && result.Error().http_status == 400 &&
+        result.Error().message.find("Session not found") != std::string::npos) {
+        session->ResetStatefulSession();
+        result = LockObject(*session, uri_result.Value());
+    }
+
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -1084,12 +1098,20 @@ int HandleTestRun(const CommandArgs& args) {
         nlohmann::json j;
         j["total_methods"] = tr.TotalMethods();
         j["total_failed"] = tr.TotalFailed();
+        j["total_skipped"] = tr.TotalSkipped();
         j["all_passed"] = tr.AllPassed();
-        if (tr.TotalMethods() == 0) {
+        if (tr.TotalMethods() == 0 && tr.TotalSkipped() == 0) {
             j["note"] = "No test methods found";
         }
         nlohmann::json classes = nlohmann::json::array();
         for (const auto& c : tr.classes) {
+            nlohmann::json class_alerts = nlohmann::json::array();
+            for (const auto& a : c.alerts) {
+                class_alerts.push_back({{"kind", a.kind},
+                                        {"severity", a.severity},
+                                        {"title", a.title},
+                                        {"detail", a.detail}});
+            }
             nlohmann::json methods = nlohmann::json::array();
             for (const auto& m : c.methods) {
                 nlohmann::json alerts = nlohmann::json::array();
@@ -1104,9 +1126,14 @@ int HandleTestRun(const CommandArgs& args) {
                                    {"passed", m.Passed()},
                                    {"alerts", alerts}});
             }
-            classes.push_back({{"name", c.name},
-                               {"uri", c.uri},
-                               {"methods", methods}});
+            nlohmann::json cj = {{"name", c.name},
+                                 {"uri", c.uri},
+                                 {"skipped", c.Skipped()},
+                                 {"methods", methods}};
+            if (!class_alerts.empty()) {
+                cj["alerts"] = class_alerts;
+            }
+            classes.push_back(cj);
         }
         j["classes"] = classes;
         fmt.PrintJson(j.dump());
@@ -1114,6 +1141,13 @@ int HandleTestRun(const CommandArgs& args) {
         std::cout << "Test results: " << tr.TotalMethods() << " methods, "
                   << tr.TotalFailed() << " failed\n";
         for (const auto& c : tr.classes) {
+            if (c.Skipped()) {
+                std::cout << "  [SKIP] " << c.name << "\n";
+                for (const auto& a : c.alerts) {
+                    std::cout << "    " << a.severity << ": " << a.title << "\n";
+                }
+                continue;
+            }
             for (const auto& m : c.methods) {
                 auto status = m.Passed() ? "PASS" : "FAIL";
                 std::cout << "  [" << status << "] " << c.name << "->" << m.name << "\n";
@@ -2962,6 +2996,10 @@ int HandleBwReadTrfn(const CommandArgs& args) {
         nlohmann::json j;
         j["name"] = detail.name;
         j["description"] = detail.description;
+        j["start_routine"] = detail.start_routine;
+        j["end_routine"] = detail.end_routine;
+        j["expert_routine"] = detail.expert_routine;
+        j["hana_runtime"] = detail.hana_runtime;
         j["source_name"] = detail.source_name;
         j["source_type"] = detail.source_type;
         j["target_name"] = detail.target_name;
@@ -2985,9 +3023,15 @@ int HandleBwReadTrfn(const CommandArgs& args) {
         for (const auto& r : detail.rules) {
             rules.push_back({{"source_field", r.source_field},
                              {"target_field", r.target_field},
+                             {"source_fields", r.source_fields},
+                             {"target_fields", r.target_fields},
+                             {"group_id", r.group_id},
+                             {"group_description", r.group_description},
+                             {"group_type", r.group_type},
                              {"rule_type", r.rule_type},
                              {"formula", r.formula},
-                             {"constant", r.constant}});
+                             {"constant", r.constant},
+                             {"step_attributes", r.step_attributes}});
         }
         j["rules"] = rules;
         fmt.PrintJson(j.dump());
@@ -3120,11 +3164,45 @@ int HandleBwReadDtp(const CommandArgs& args) {
         nlohmann::json j;
         j["name"] = detail.name;
         j["description"] = detail.description;
+        j["type"] = detail.type;
         j["source_name"] = detail.source_name;
         j["source_type"] = detail.source_type;
         j["target_name"] = detail.target_name;
         j["target_type"] = detail.target_type;
         j["source_system"] = detail.source_system;
+        j["request_selection_mode"] = detail.request_selection_mode;
+        j["extraction_settings"] = detail.extraction_settings;
+        j["execution_settings"] = detail.execution_settings;
+        j["runtime_properties"] = detail.runtime_properties;
+        j["error_handling"] = detail.error_handling;
+        j["dtp_execution"] = detail.dtp_execution;
+        j["semantic_group_fields"] = detail.semantic_group_fields;
+        nlohmann::json filter_fields = nlohmann::json::array();
+        for (const auto& f : detail.filter_fields) {
+            nlohmann::json selections = nlohmann::json::array();
+            for (const auto& s : f.selections) {
+                selections.push_back({{"low", s.low},
+                                      {"high", s.high},
+                                      {"op", s.op},
+                                      {"excluding", s.excluding}});
+            }
+            filter_fields.push_back({{"name", f.name},
+                                     {"field", f.field},
+                                     {"selected", f.selected},
+                                     {"filter_selection", f.filter_selection},
+                                     {"selection_type", f.selection_type},
+                                     {"selections", selections}});
+        }
+        j["filter_fields"] = std::move(filter_fields);
+
+        nlohmann::json program_flow = nlohmann::json::array();
+        for (const auto& p : detail.program_flow) {
+            program_flow.push_back({{"id", p.id},
+                                    {"type", p.type},
+                                    {"name", p.name},
+                                    {"next", p.next}});
+        }
+        j["program_flow"] = std::move(program_flow);
         fmt.PrintJson(j.dump());
     } else {
         std::cout << "DTP: " << detail.name << "\n";
@@ -3135,6 +3213,584 @@ int HandleBwReadDtp(const CommandArgs& args) {
         if (!detail.source_system.empty())
             std::cout << "  Source System: " << detail.source_system << "\n";
     }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw read-rsds
+// ---------------------------------------------------------------------------
+int HandleBwReadRsds(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty() || !HasFlag(args, "source-system")) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw read-rsds <name> --source-system=<logsys> "
+            "[--version=a|m|d]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    const auto name = args.positional[0];
+    const auto source_system = GetFlag(args, "source-system");
+    const auto version = GetFlag(args, "version", "a");
+
+    std::string resolved_ct;
+    {
+        auto disc = BwDiscover(*session);
+        if (disc.IsOk()) {
+            resolved_ct = BwResolveContentType(disc.Value(), "RSDS");
+        }
+    }
+
+    auto result = BwReadRsdsDetail(*session, name, source_system, version, resolved_ct);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& detail = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["name"] = detail.name;
+        j["source_system"] = detail.source_system;
+        j["description"] = detail.description;
+        j["package"] = detail.package_name;
+        nlohmann::json fields = nlohmann::json::array();
+        for (const auto& f : detail.fields) {
+            fields.push_back({{"segment_id", f.segment_id},
+                              {"name", f.name},
+                              {"description", f.description},
+                              {"data_type", f.data_type},
+                              {"length", f.length},
+                              {"decimals", f.decimals},
+                              {"key", f.key}});
+        }
+        j["fields"] = fields;
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "RSDS: " << detail.name << "\n";
+        std::cout << "  Source System: " << detail.source_system << "\n";
+        if (!detail.description.empty()) {
+            std::cout << "  Description: " << detail.description << "\n";
+        }
+        if (!detail.package_name.empty()) {
+            std::cout << "  Package: " << detail.package_name << "\n";
+        }
+        std::cout << "  Fields: " << detail.fields.size() << "\n";
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw read-query
+// ---------------------------------------------------------------------------
+int HandleBwReadQuery(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw read-query <name> [--version=a|m|d] [--format=mermaid|table] "
+            "[--layout=compact|detailed] [--direction=TD|LR]\n"
+            "       erpl-adt bw read-query <query|variable|rkf|ckf|filter|structure> <name> [--version=a|m|d] "
+            "[--format=mermaid|table] [--layout=compact|detailed] [--direction=TD|LR]"));
+        return 99;
+    }
+
+    std::string component_type = "query";
+    std::string name;
+    if (args.positional.size() == 1) {
+        name = args.positional[0];
+    } else if (args.positional.size() == 2) {
+        component_type = args.positional[0];
+        name = args.positional[1];
+    } else {
+        fmt.PrintError(MakeValidationError(
+            "Too many arguments. Usage: erpl-adt bw read-query <name> [--version=a|m|d] [--format=mermaid|table] "
+            "[--layout=compact|detailed] [--direction=TD|LR]"));
+        return 99;
+    }
+
+    const auto version = GetFlag(args, "version", "a");
+    const auto format = GetFlag(args, "format", "mermaid");
+    const auto layout = GetFlag(args, "layout", "detailed");
+    const auto direction = GetFlag(args, "direction", "TD");
+    const auto focus_role = GetFlag(args, "focus-role", "");
+    const auto max_nodes_per_role = GetFlag(args, "max-nodes-per-role", "");
+    const auto json_shape = GetFlag(args, "json-shape", "legacy");
+    const auto upstream_dtp = GetFlag(args, "upstream-dtp", "");
+    const auto upstream_max_xref = GetFlag(args, "upstream-max-xref", "100");
+    const bool upstream_no_xref = HasFlag(args, "upstream-no-xref");
+    const auto component_type_lc = ToLowerCopy(component_type);
+    static const std::set<std::string> kAllowedComponentTypes = {
+        "query", "variable", "rkf", "ckf", "filter", "structure"};
+    if (kAllowedComponentTypes.count(component_type_lc) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Unsupported query component type: " + component_type +
+            ". Allowed: query, variable, rkf, ckf, filter, structure"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedVersions = {"a", "m", "d"};
+    if (kAllowedVersions.count(ToLowerCopy(version)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --version: " + version + ". Allowed: a, m, d"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedFormats = {"mermaid", "table"};
+    if (kAllowedFormats.count(ToLowerCopy(format)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --format: " + format + ". Allowed: mermaid, table"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedLayouts = {"compact", "detailed"};
+    if (kAllowedLayouts.count(ToLowerCopy(layout)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --layout: " + layout + ". Allowed: compact, detailed"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedDirections = {"td", "lr"};
+    if (kAllowedDirections.count(ToLowerCopy(direction)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --direction: " + direction + ". Allowed: TD, LR"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedJsonShapes = {"legacy", "catalog"};
+    if (kAllowedJsonShapes.count(ToLowerCopy(json_shape)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --json-shape: " + json_shape + ". Allowed: legacy, catalog"));
+        return 99;
+    }
+    if (!upstream_dtp.empty() && component_type_lc != "query") {
+        fmt.PrintError(MakeValidationError(
+            "--upstream-dtp is only supported for query components."));
+        return 99;
+    }
+    int upstream_max_xref_value = 100;
+    try {
+        upstream_max_xref_value = std::stoi(upstream_max_xref);
+    } catch (const std::exception&) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --upstream-max-xref: " + upstream_max_xref +
+            ". Must be a positive integer."));
+        return 99;
+    }
+    if (upstream_max_xref_value <= 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --upstream-max-xref: " + upstream_max_xref +
+            ". Must be a positive integer."));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedRoles = {
+        "rows", "columns", "free", "filter", "member", "subcomponent", "component"};
+    if (!focus_role.empty() && kAllowedRoles.count(ToLowerCopy(focus_role)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --focus-role: " + focus_role +
+            ". Allowed: rows, columns, free, filter, member, subcomponent, component"));
+        return 99;
+    }
+    size_t max_nodes_per_role_value = 0;
+    if (!max_nodes_per_role.empty()) {
+        try {
+            max_nodes_per_role_value = static_cast<size_t>(std::stoul(max_nodes_per_role));
+        } catch (const std::exception&) {
+            fmt.PrintError(MakeValidationError(
+                "Invalid --max-nodes-per-role: " + max_nodes_per_role +
+                ". Must be a positive integer."));
+            return 99;
+        }
+        if (max_nodes_per_role_value == 0) {
+            fmt.PrintError(MakeValidationError(
+                "Invalid --max-nodes-per-role: 0. Must be a positive integer."));
+            return 99;
+        }
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    std::string resolved_ct;
+    {
+        auto disc = BwDiscover(*session);
+        if (disc.IsOk()) {
+            resolved_ct = BwResolveContentType(disc.Value(), component_type);
+        }
+    }
+
+    auto result = BwReadQueryComponent(*session, component_type, name, version, resolved_ct);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& detail = result.Value();
+    auto graph = BwBuildQueryGraph(detail);
+    if (component_type_lc == "query") {
+        auto assembled = BwAssembleQueryGraph(*session, detail, version);
+        if (assembled.IsErr()) {
+            fmt.PrintError(assembled.Error());
+            return assembled.Error().ExitCode();
+        }
+        graph = assembled.Value();
+    }
+    if (!upstream_dtp.empty()) {
+        BwLineageGraphOptions options;
+        options.dtp_name = upstream_dtp;
+        options.version = version;
+        options.include_xref = !upstream_no_xref;
+        options.max_xref = upstream_max_xref_value;
+        auto lineage_result = BwBuildLineageGraph(*session, options);
+        if (lineage_result.IsErr()) {
+            graph.warnings.push_back(
+                "Failed to compose upstream lineage for DTP " + upstream_dtp + ": " +
+                lineage_result.Error().message);
+        } else {
+            graph = BwMergeQueryAndLineageGraphs(graph, detail, lineage_result.Value());
+        }
+    }
+    BwQueryGraphReduceOptions reduction_options;
+    if (!focus_role.empty()) {
+        reduction_options.focus_role = ToLowerCopy(focus_role);
+    }
+    reduction_options.max_nodes_per_role = max_nodes_per_role_value;
+    auto reduced_graph = BwReduceQueryGraph(graph, reduction_options);
+    graph = std::move(reduced_graph.first);
+    const auto& reduction = reduced_graph.second;
+    const auto metrics = BwAnalyzeQueryGraph(graph);
+
+    if (fmt.IsJsonMode()) {
+        if (ToLowerCopy(json_shape) == "catalog") {
+            nlohmann::json j;
+            j["schema_version"] = "2.0";
+            j["contract"] = "bw.query.catalog";
+            j["root_component_type"] = detail.component_type;
+            j["root_component_name"] = detail.name;
+            j["root_node_id"] = graph.root_node_id;
+            j["provenance"] = graph.provenance;
+            j["warnings"] = graph.warnings;
+
+            nlohmann::json nodes = nlohmann::json::array();
+            for (const auto& n : graph.nodes) {
+                const auto business_key = n.type + ":" + n.name;
+                const bool is_summary = n.type == "SUMMARY";
+                nodes.push_back({
+                    {"node_id", n.id},
+                    {"business_key", business_key},
+                    {"object_type", n.type},
+                    {"object_name", n.name},
+                    {"role", n.role},
+                    {"label", n.label},
+                    {"is_summary", is_summary},
+                    {"source_component_type", detail.component_type},
+                    {"source_component_name", detail.name},
+                    {"attributes", n.attributes},
+                });
+            }
+            j["nodes"] = std::move(nodes);
+
+            nlohmann::json edges = nlohmann::json::array();
+            for (const auto& e : graph.edges) {
+                std::string from_business_key;
+                std::string to_business_key;
+                for (const auto& n : graph.nodes) {
+                    if (n.id == e.from) from_business_key = n.type + ":" + n.name;
+                    if (n.id == e.to) to_business_key = n.type + ":" + n.name;
+                }
+                edges.push_back({
+                    {"edge_id", e.id},
+                    {"from_node_id", e.from},
+                    {"to_node_id", e.to},
+                    {"from_business_key", from_business_key},
+                    {"to_business_key", to_business_key},
+                    {"edge_type", e.type},
+                    {"role", e.role},
+                    {"attributes", e.attributes},
+                    {"source_component_type", detail.component_type},
+                    {"source_component_name", detail.name},
+                });
+            }
+            j["edges"] = std::move(edges);
+            j["reduction"] = {
+                {"applied", reduction.applied},
+                {"focus_role", reduction.focus_role.has_value() ? *reduction.focus_role : ""},
+                {"max_nodes_per_role", reduction.max_nodes_per_role}
+            };
+            nlohmann::json reduction_summaries = nlohmann::json::array();
+            for (const auto& summary : reduction.summaries) {
+                reduction_summaries.push_back({
+                    {"summary_node_id", summary.summary_node_id},
+                    {"role", summary.role},
+                    {"omitted_node_ids", summary.omitted_node_ids},
+                    {"kept_node_ids", summary.kept_node_ids},
+                });
+            }
+            j["reduction"]["summaries"] = std::move(reduction_summaries);
+            j["metrics"] = {
+                {"node_count", metrics.node_count},
+                {"edge_count", metrics.edge_count},
+                {"max_out_degree", metrics.max_out_degree},
+                {"summary_node_count", metrics.summary_node_count},
+                {"high_fanout_node_ids", metrics.high_fanout_node_ids},
+                {"ergonomics_flags", metrics.ergonomics_flags},
+            };
+            fmt.PrintJson(j.dump());
+            return 0;
+        }
+
+        nlohmann::json j;
+        j["schema_version"] = graph.schema_version;
+        j["root_node_id"] = graph.root_node_id;
+        j["metadata"] = {
+            {"name", detail.name},
+            {"component_type", detail.component_type},
+            {"description", detail.description},
+            {"info_provider", detail.info_provider},
+            {"info_provider_type", detail.info_provider_type},
+            {"attributes", detail.attributes}
+        };
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto& n : graph.nodes) {
+            nodes.push_back({{"id", n.id},
+                             {"type", n.type},
+                             {"name", n.name},
+                             {"role", n.role},
+                             {"label", n.label},
+                             {"attributes", n.attributes}});
+        }
+        j["nodes"] = std::move(nodes);
+        nlohmann::json edges = nlohmann::json::array();
+        for (const auto& e : graph.edges) {
+            edges.push_back({{"id", e.id},
+                             {"from", e.from},
+                             {"to", e.to},
+                             {"type", e.type},
+                             {"role", e.role},
+                             {"attributes", e.attributes}});
+        }
+        j["edges"] = std::move(edges);
+        j["warnings"] = graph.warnings;
+        j["provenance"] = graph.provenance;
+        j["reduction"] = {
+            {"applied", reduction.applied},
+            {"focus_role", reduction.focus_role.has_value() ? *reduction.focus_role : ""},
+            {"max_nodes_per_role", reduction.max_nodes_per_role}
+        };
+        nlohmann::json reduction_summaries = nlohmann::json::array();
+        for (const auto& summary : reduction.summaries) {
+            reduction_summaries.push_back({
+                {"summary_node_id", summary.summary_node_id},
+                {"role", summary.role},
+                {"omitted_node_ids", summary.omitted_node_ids},
+                {"kept_node_ids", summary.kept_node_ids},
+            });
+        }
+        j["reduction"]["summaries"] = std::move(reduction_summaries);
+        j["metrics"] = {
+            {"node_count", metrics.node_count},
+            {"edge_count", metrics.edge_count},
+            {"max_out_degree", metrics.max_out_degree},
+            {"summary_node_count", metrics.summary_node_count},
+            {"high_fanout_node_ids", metrics.high_fanout_node_ids},
+            {"ergonomics_flags", metrics.ergonomics_flags},
+        };
+
+        // Backward-compatible fields retained during contract transition.
+        j["name"] = detail.name;
+        j["component_type"] = detail.component_type;
+        j["description"] = detail.description;
+        j["info_provider"] = detail.info_provider;
+        j["info_provider_type"] = detail.info_provider_type;
+        j["attributes"] = detail.attributes;
+        nlohmann::json refs = nlohmann::json::array();
+        for (const auto& r : detail.references) {
+            refs.push_back({{"name", r.name},
+                            {"type", r.type},
+                            {"role", r.role},
+                            {"attributes", r.attributes}});
+        }
+        j["references"] = std::move(refs);
+        fmt.PrintJson(j.dump());
+    } else {
+        if (format == "table") {
+            std::cout << detail.component_type << ": " << detail.name << "\n";
+            if (!detail.description.empty()) std::cout << "  Description: " << detail.description << "\n";
+            if (!detail.info_provider.empty()) {
+                std::cout << "  InfoProvider: " << detail.info_provider;
+                if (!detail.info_provider_type.empty()) {
+                    std::cout << " (" << detail.info_provider_type << ")";
+                }
+                std::cout << "\n";
+            }
+            std::cout << "  References: " << detail.references.size() << "\n";
+        } else {
+            BwQueryMermaidOptions mermaid_options;
+            mermaid_options.layout = layout;
+            mermaid_options.direction = direction;
+            std::cout << BwRenderQueryGraphMermaid(graph, mermaid_options);
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw read-dmod
+// ---------------------------------------------------------------------------
+int HandleBwReadDmod(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw read-dmod <name> [--version=a|m|d]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    const auto name = args.positional[0];
+    const auto version = GetFlag(args, "version", "a");
+    std::string resolved_ct;
+    {
+        auto disc = BwDiscover(*session);
+        if (disc.IsOk()) {
+            resolved_ct = BwResolveContentType(disc.Value(), "DMOD");
+        }
+    }
+
+    auto result = BwReadDataFlow(*session, name, version, resolved_ct);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& detail = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["name"] = detail.name;
+        j["description"] = detail.description;
+        j["attributes"] = detail.attributes;
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto& n : detail.nodes) {
+            nodes.push_back({{"id", n.id},
+                             {"name", n.name},
+                             {"type", n.type},
+                             {"attributes", n.attributes}});
+        }
+        j["nodes"] = std::move(nodes);
+        nlohmann::json connections = nlohmann::json::array();
+        for (const auto& c : detail.connections) {
+            connections.push_back({{"from", c.from},
+                                   {"to", c.to},
+                                   {"type", c.type},
+                                   {"attributes", c.attributes}});
+        }
+        j["connections"] = std::move(connections);
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "DMOD: " << detail.name << "\n";
+        if (!detail.description.empty()) std::cout << "  Description: " << detail.description << "\n";
+        std::cout << "  Nodes: " << detail.nodes.size() << "\n";
+        std::cout << "  Connections: " << detail.connections.size() << "\n";
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// bw lineage
+// ---------------------------------------------------------------------------
+int HandleBwLineage(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw lineage <dtp_name> [--trfn=<name>] "
+            "[--version=a|m|d] [--max-xref=<n>] [--no-xref]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwLineageGraphOptions opts;
+    opts.dtp_name = args.positional[0];
+    opts.version = GetFlag(args, "version", "a");
+    if (HasFlag(args, "trfn")) {
+        opts.trfn_name = GetFlag(args, "trfn");
+    }
+    opts.include_xref = !HasFlag(args, "no-xref");
+    if (HasFlag(args, "max-xref")) {
+        auto parsed = ParseIntInRange(GetFlag(args, "max-xref"), 1, 10000,
+                                      "--max-xref");
+        if (parsed.IsErr()) {
+            fmt.PrintError(parsed.Error());
+            return 99;
+        }
+        opts.max_xref = parsed.Value();
+    }
+
+    auto result = BwBuildLineageGraph(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& graph = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["schema_version"] = graph.schema_version;
+        j["root"] = {{"type", graph.root_type}, {"name", graph.root_name}};
+
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto& n : graph.nodes) {
+            nlohmann::json nj{
+                {"id", n.id},
+                {"type", n.type},
+                {"name", n.name},
+                {"role", n.role},
+            };
+            if (!n.uri.empty()) nj["uri"] = n.uri;
+            if (!n.version.empty()) nj["version"] = n.version;
+            if (!n.attributes.empty()) nj["attributes"] = n.attributes;
+            nodes.push_back(std::move(nj));
+        }
+        j["nodes"] = std::move(nodes);
+
+        nlohmann::json edges = nlohmann::json::array();
+        for (const auto& e : graph.edges) {
+            nlohmann::json ej{
+                {"id", e.id},
+                {"from", e.from},
+                {"to", e.to},
+                {"type", e.type},
+            };
+            if (!e.attributes.empty()) ej["attributes"] = e.attributes;
+            edges.push_back(std::move(ej));
+        }
+        j["edges"] = std::move(edges);
+
+        nlohmann::json prov = nlohmann::json::array();
+        for (const auto& p : graph.provenance) {
+            prov.push_back({{"operation", p.operation},
+                            {"endpoint", p.endpoint},
+                            {"status", p.status}});
+        }
+        j["provenance"] = std::move(prov);
+        j["warnings"] = graph.warnings;
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Lineage graph for DTP " << graph.root_name << "\n";
+        std::cout << "  Nodes: " << graph.nodes.size() << "\n";
+        std::cout << "  Edges: " << graph.edges.size() << "\n";
+        if (!graph.warnings.empty()) {
+            std::cout << "  Warnings: " << graph.warnings.size() << "\n";
+            for (const auto& w : graph.warnings) {
+                std::cout << "    - " << w << "\n";
+            }
+        }
+    }
+
     return 0;
 }
 
@@ -4282,7 +4938,8 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--with-cto" || arg == "--rdprops" || arg == "--allmsgs" ||
            arg == "--dbgmode" || arg == "--metadata-only" ||
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
-           arg == "--incl-except-def" || arg == "--compact-mode";
+           arg == "--incl-except-def" || arg == "--compact-mode" ||
+           arg == "--no-xref";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -4376,7 +5033,7 @@ void PrintBwGroupHelp(const CommandRouter& router, std::ostream& out, bool color
         std::vector<std::string> actions;
     };
     const std::vector<Category> categories = {
-        {"SEARCH & READ",    {"search", "read", "read-adso", "read-trfn", "read-dtp", "discover"}},
+        {"SEARCH & READ",    {"search", "read", "read-adso", "read-trfn", "read-dtp", "read-rsds", "read-query", "read-dmod", "lineage", "discover"}},
         {"CROSS-REFERENCES", {"xref", "nodes", "nodepath"}},
         {"REPOSITORY",       {"search-md", "favorites", "applog", "message"}},
         {"LIFECYCLE",        {"create", "lock", "unlock", "save", "delete", "activate"}},
@@ -4964,6 +5621,10 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt bw read-adso ZSALES_DATA   # structured field list",
         "$ erpl-adt bw read-trfn ZTRFN_SALES   # transformation lineage",
         "$ erpl-adt bw read-dtp DTP_ZSALES     # DTP connection details",
+        "$ erpl-adt bw read-rsds ZSRC --source-system=ECLCLNT100",
+        "$ erpl-adt bw read-query query ZQ_SALES",
+        "$ erpl-adt bw read-dmod ZDMOD_SALES",
+        "$ erpl-adt bw lineage DTP_ZSALES       # canonical lineage graph",
         "$ erpl-adt bw xref ADSO ZSALES_DATA",
         "$ erpl-adt bw nodes ADSO ZSALES_DATA",
         "$ erpl-adt bw discover",
@@ -5095,6 +5756,103 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("bw", "read-dtp", "Read BW DTP connection details",
                          HandleBwReadDtp, std::move(help));
+    }
+
+    // bw read-rsds
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw read-rsds <name> --source-system=<logsys> [--version=a|m|d]";
+        help.args_description = "<name>    DataSource (RSDS) name";
+        help.long_description = "Read BW DataSource (RSDS) with parsed segment/field metadata.";
+        help.flags = {
+            {"source-system", "<logsys>", "Source system (required, e.g. ECLCLNT100)", false},
+            {"version", "<v>", "Version: a (active, default), m (modified), d (delivery)", false},
+        };
+        help.examples = {
+            "erpl-adt bw read-rsds ZSRC_SALES --source-system=ECLCLNT100",
+            "erpl-adt --json bw read-rsds ZSRC_SALES --source-system=ECLCLNT100 --version=m",
+        };
+        router.Register("bw", "read-rsds", "Read BW RSDS field structure",
+                         HandleBwReadRsds, std::move(help));
+    }
+
+    // bw read-query
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw read-query <name> [--version=a|m|d] [--format=mermaid|table] [--layout=compact|detailed] [--direction=TD|LR]\n"
+                     "       erpl-adt bw read-query <query|variable|rkf|ckf|filter|structure> <name> [--version=a|m|d] [--format=mermaid|table] [--layout=compact|detailed] [--direction=TD|LR]\n"
+                     "       erpl-adt bw read-query <name> [--max-nodes-per-role=<n>] [--focus-role=<role>] [--json-shape=legacy|catalog]\n"
+                     "       erpl-adt bw read-query query <name> --upstream-dtp=<dtp> [--upstream-no-xref] [--upstream-max-xref=<n>]";
+        help.args_description = "<name>               Query component technical name\n"
+                                "  <component-type>     Optional explicit type (default: query)";
+        help.long_description = "Read BW query-family component definitions with structured references "
+            "for query lineage modeling. Non-JSON output defaults to Mermaid graph text.";
+        help.flags = {
+            {"version", "<v>", "Version: a (active, default), m (modified), d (delivery)", false},
+            {"format", "<f>", "Non-JSON output format: mermaid (default) or table", false},
+            {"layout", "<l>", "Mermaid layout: detailed (default) or compact", false},
+            {"direction", "<d>", "Mermaid direction: TD (default) or LR", false},
+            {"max-nodes-per-role", "<n>", "Reduce graph fan-out: keep at most n nodes per role; add summary nodes", false},
+            {"focus-role", "<r>", "Limit reduction to a specific role (rows|columns|free|filter|member|subcomponent|component)", false},
+            {"json-shape", "<s>", "JSON output shape: legacy (default) or catalog (flat ingestion contract)", false},
+            {"upstream-dtp", "<name>", "Compose query graph with upstream BW lineage rooted at DTP", false},
+            {"upstream-no-xref", "", "Disable xref expansion for upstream lineage composition", false},
+            {"upstream-max-xref", "<n>", "Maximum xref neighbors in upstream lineage composition (default: 100)", false},
+        };
+        help.examples = {
+            "erpl-adt bw read-query 0D_FC_NW_C01_Q0007",
+            "erpl-adt bw read-query 0D_FC_NW_C01_Q0007 --layout=detailed --direction=LR",
+            "erpl-adt --json bw read-query 0D_FC_NW_C01_Q0007 --max-nodes-per-role=5 --focus-role=filter",
+            "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --json-shape=catalog",
+            "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --upstream-dtp=DTP_ZSALES --upstream-no-xref",
+            "erpl-adt bw read-query query ZQ_SALES --format=table",
+            "erpl-adt --json bw read-query variable ZVAR_FISCYEAR",
+            "erpl-adt --json bw read-query rkf ZRKF_MARGIN",
+        };
+        router.Register("bw", "read-query", "Read BW query-family component",
+                         HandleBwReadQuery, std::move(help));
+    }
+
+    // bw read-dmod
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt bw read-dmod <name> [--version=a|m|d]";
+        help.args_description = "<name>    DataFlow (DMOD) name";
+        help.long_description = "Read BW DataFlow topology with nodes and connections.";
+        help.flags = {
+            {"version", "<v>", "Version: a (active, default), m (modified), d (delivery)", false},
+        };
+        help.examples = {
+            "erpl-adt bw read-dmod ZDMOD_SALES",
+            "erpl-adt --json bw read-dmod ZDMOD_SALES --version=m",
+        };
+        router.Register("bw", "read-dmod", "Read BW DMOD topology",
+                         HandleBwReadDmod, std::move(help));
+    }
+
+    // bw lineage
+    {
+        CommandHelp help;
+        help.usage =
+            "erpl-adt bw lineage <dtp_name> [--trfn=<name>] [--version=a|m|d] "
+            "[--max-xref=<n>] [--no-xref]";
+        help.args_description = "<dtp_name>    DTP name used as lineage root";
+        help.long_description =
+            "Build canonical BW lineage graph JSON combining DTP, TRFN field mappings, "
+            "and optional XREF relations.";
+        help.flags = {
+            {"trfn", "<name>", "Optional explicit transformation name", false},
+            {"version", "<v>", "Version: a (active, default), m (modified), d (delivery)", false},
+            {"max-xref", "<n>", "Maximum xref neighbors to include (default: 100)", false},
+            {"no-xref", "", "Disable xref expansion for a strict DTP/TRFN graph", false},
+        };
+        help.examples = {
+            "erpl-adt bw lineage DTP_ZSALES",
+            "erpl-adt --json bw lineage DTP_ZSALES --trfn=ZTRFN_SALES --max-xref=20",
+            "erpl-adt --json bw lineage DTP_ZSALES --no-xref",
+        };
+        router.Register("bw", "lineage", "Build canonical BW lineage graph",
+                         HandleBwLineage, std::move(help));
     }
 
     // bw lock

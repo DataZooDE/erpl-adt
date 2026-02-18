@@ -4,9 +4,11 @@
 #include "../../test/mocks/mock_adt_session.hpp"
 
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -790,9 +792,14 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
     httplib::Server svr;
 
     std::string received_cookie;
+    std::string csrf_fetch_path;
 
-    svr.Get("/sap/bc/adt/discovery", [](const httplib::Request&,
-                                         httplib::Response& res) {
+    svr.Get("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
+                                                httplib::Response& res) {
+        if (req.has_header("x-csrf-token") &&
+            req.get_header_value("x-csrf-token") == "fetch") {
+            csrf_fetch_path = req.path;
+        }
         res.set_header("x-csrf-token", "tok");
         res.set_header("set-cookie",
                        "sap-contextid=SID%3ATEST%3A123; path=/sap/bc/adt");
@@ -803,7 +810,7 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
                        "MYSAPSSO2=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz; path=/");
         res.set_header("set-cookie",
                        "SAP_SESSIONID_A4H_001=abc123%3d; path=/");
-        res.set_content("<discovery/>", "text/xml");
+        res.set_content("<class/>", "text/xml");
     });
 
     svr.Post("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
@@ -825,6 +832,106 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
         "application/xml");
 
     REQUIRE(result.IsOk());
+    CHECK(csrf_fetch_path == "/sap/bc/adt/oo/classes/zfoo");
     REQUIRE_FALSE(received_cookie.empty());
     CHECK(received_cookie.rfind("sap-contextid=", 0) == 0);
+}
+
+TEST_CASE("AdtSession: stateful CSRF fetch falls back to discovery on 404", "[adt][session][live]") {
+    httplib::Server svr;
+
+    int target_fetch_count = 0;
+    int discovery_fetch_count = 0;
+
+    svr.Get("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
+                                                httplib::Response& res) {
+        if (req.has_header("x-csrf-token") &&
+            req.get_header_value("x-csrf-token") == "fetch") {
+            ++target_fetch_count;
+            res.status = 404;
+            res.set_content("not found", "text/plain");
+            return;
+        }
+        res.set_content("<class/>", "text/xml");
+    });
+
+    svr.Get("/sap/bc/adt/discovery", [&](const httplib::Request& req,
+                                          httplib::Response& res) {
+        if (req.has_header("x-csrf-token") &&
+            req.get_header_value("x-csrf-token") == "fetch") {
+            ++discovery_fetch_count;
+        }
+        res.set_header("x-csrf-token", "tok");
+        res.set_header("set-cookie",
+                       "sap-contextid=SID%3ATEST%3A123; path=/sap/bc/adt");
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    svr.Post("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request&,
+                                                 httplib::Response& res) {
+        res.status = 200;
+        res.set_content("<ok/>", "text/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+    session->SetStateful(true);
+
+    auto result = session->Post("/sap/bc/adt/oo/classes/zfoo", "", "application/xml");
+
+    REQUIRE(result.IsOk());
+    CHECK(target_fetch_count == 1);
+    CHECK(discovery_fetch_count == 1);
+}
+
+TEST_CASE("AdtSession: ResetStatefulSession clears cookies and CSRF token", "[adt][session][live]") {
+    httplib::Server svr;
+
+    // First request: return CSRF token and a context cookie.
+    int csrf_fetch_count = 0;
+    svr.Get("/sap/bc/adt/discovery", [&](const httplib::Request& req,
+                                          httplib::Response& res) {
+        if (req.has_header("x-csrf-token") &&
+            req.get_header_value("x-csrf-token") == "fetch") {
+            ++csrf_fetch_count;
+        }
+        res.set_header("x-csrf-token", "tok-from-server");
+        res.set_header("set-cookie",
+                       "sap-contextid=CTX%3A123; path=/sap/bc/adt");
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    svr.Post("/sap/bc/adt/test", [&](const httplib::Request&,
+                                      httplib::Response& res) {
+        res.status = 200;
+        res.set_content("<ok/>", "text/xml");
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+    session->SetStateful(true);
+
+    // Warm up: POST triggers CSRF fetch which sets token and cookie.
+    auto r1 = session->Post("/sap/bc/adt/test", "", "application/xml");
+    REQUIRE(r1.IsOk());
+    CHECK(csrf_fetch_count == 1);
+
+    // After reset, the saved session is empty (no csrf_token, no cookies).
+    session->ResetStatefulSession();
+
+    // SaveSession into a temp file and verify no csrf_token or cookies are written.
+    const std::string tmp_path = "/tmp/test_reset_session.json";
+    auto save_result = session->SaveSession(tmp_path);
+    REQUIRE(save_result.IsOk());
+
+    std::ifstream ifs(tmp_path);
+    REQUIRE(ifs.is_open());
+    nlohmann::json j;
+    ifs >> j;
+
+    CHECK_FALSE(j.contains("csrf_token"));
+    CHECK(j.contains("context_id"));
+    CHECK(j["context_id"].get<std::string>().empty());
+    CHECK(j.contains("cookies"));
+    CHECK(j["cookies"].empty());
 }

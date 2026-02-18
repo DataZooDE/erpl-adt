@@ -1,6 +1,5 @@
 """Shared fixtures for ADT integration tests (CLI-based)."""
 
-import json
 import os
 import random
 import socket
@@ -94,7 +93,7 @@ def test_class_name():
 
 
 @pytest.fixture
-def test_class(cli, session_file, test_class_name):
+def test_class(cli, test_class_name):
     """Create a test ABAP class in $TMP, yield info dict, delete on teardown."""
     name = test_class_name
 
@@ -109,17 +108,8 @@ def test_class(cli, session_file, test_class_name):
 
     yield {"name": name, "uri": uri}
 
-    # Teardown: best-effort lock + delete.
-    try:
-        lock_data = cli.run_ok("object", "lock", uri, session_file=session_file)
-        handle = lock_data.get("handle", "")
-        if handle:
-            cli.run("object", "delete", uri, "--handle", handle,
-                    session_file=session_file)
-            cli.run("object", "unlock", uri, "--handle", handle,
-                    session_file=session_file)
-    except Exception:
-        pass
+    # Teardown: auto-lock mode handles lock→delete→unlock atomically.
+    cli.run("object", "delete", uri)
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +137,5 @@ def e2e_context(cli, tmp_path_factory):
     # Best-effort cleanup: delete the class if it was created.
     uri = ctx.get("uri")
     if uri:
-        sf = str(tmp / "cleanup.json")
-        try:
-            lock = cli.run("object", "lock", uri, session_file=sf)
-            if lock.returncode == 0:
-                handle = json.loads(lock.stdout).get("handle", "")
-                if handle:
-                    cli.run("object", "delete", uri,
-                            "--handle", handle, session_file=sf)
-                    cli.run("object", "unlock", uri,
-                            "--handle", handle, session_file=sf)
-        except Exception:
-            pass
+        # Auto-lock mode handles lock→delete→unlock atomically.
+        cli.run("object", "delete", uri)

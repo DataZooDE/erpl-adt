@@ -91,6 +91,10 @@ public:
     /// Load session state from a previously saved JSON file.
     [[nodiscard]] Result<void, Error> LoadSession(const std::string& path);
 
+    /// Clear cached session state (CSRF tokens, cookies, context ID).
+    /// Call before retrying after a "Session not found" error.
+    void ResetStatefulSession();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -57,6 +57,14 @@ HttpHeaders ToHttpHeaders(const httplib::Headers& hdrs) {
     return result;
 }
 
+std::string PathWithoutQuery(std::string_view path) {
+    const auto pos = path.find('?');
+    if (pos == std::string_view::npos) {
+        return std::string(path);
+    }
+    return std::string(path.substr(0, pos));
+}
+
 // Build httplib::Headers from our HttpHeaders map plus SAP-specific headers.
 httplib::Headers BuildRequestHeaders(
     const HttpHeaders& extra,
@@ -369,55 +377,69 @@ struct AdtSession::Impl {
     Result<std::string, Error> DoFetchCsrfToken(
             std::string_view request_path = "") {
         const bool bw = IsBwPath(request_path);
-        const std::string fetch_path = bw
-            ? "/sap/bw/modeling/discovery"
-            : "/sap/bc/adt/discovery";
+        const auto fetch_from = [&](const std::string& fetch_path) -> Result<std::string, Error> {
+            HttpHeaders extra;
+            extra["x-csrf-token"] = "fetch";
+            auto hdrs = BuildRequestHeaders(extra, sap_client, std::nullopt,
+                                            cookies_, stateful_);
+            InjectStatefulHeaders(hdrs);
+            InjectBwHeaders(fetch_path, hdrs);
 
-        HttpHeaders extra;
-        extra["x-csrf-token"] = "fetch";
-        auto hdrs = BuildRequestHeaders(extra, sap_client, std::nullopt,
-                                        cookies_, stateful_);
-        InjectStatefulHeaders(hdrs);
-        InjectBwHeaders(fetch_path, hdrs);
+            LogInfo("http", "GET " + fetch_path + " (CSRF fetch)");
+            LogRequestHeaders(hdrs);
+            auto res = client->Get(fetch_path, hdrs);
+            if (!res) {
+                const auto http_error = res.error();
+                return Result<std::string, Error>::Err(
+                    MakeSessionError("FetchCsrfToken", fetch_path,
+                                     std::nullopt,
+                                     "HTTP request failed: " +
+                                         httplib::to_string(http_error),
+                                     CategoryFromHttpTransportError(http_error)));
+            }
+            LogResponse(res->status, res->headers, res->body);
+            if (res->status != 200) {
+                return Result<std::string, Error>::Err(
+                    Error::FromHttpStatus("FetchCsrfToken", fetch_path, res->status, res->body));
+            }
 
-        LogInfo("http", "GET " + fetch_path + " (CSRF fetch)");
-        LogRequestHeaders(hdrs);
-        auto res = client->Get(fetch_path, hdrs);
-        if (!res) {
-            const auto http_error = res.error();
-            return Result<std::string, Error>::Err(
-                MakeSessionError("FetchCsrfToken", fetch_path,
-                                 std::nullopt,
-                                 "HTTP request failed: " +
-                                     httplib::to_string(http_error),
-                                 CategoryFromHttpTransportError(http_error)));
-        }
-        LogResponse(res->status, res->headers, res->body);
-        if (res->status != 200) {
-            return Result<std::string, Error>::Err(
-                Error::FromHttpStatus("FetchCsrfToken", fetch_path, res->status, res->body));
-        }
+            // Capture session cookies and context ID from the CSRF fetch response.
+            CaptureCookies(res->headers);
+            CaptureContextId(res->headers);
 
-        // Capture session cookies and context ID from the CSRF fetch response.
-        CaptureCookies(res->headers);
-        CaptureContextId(res->headers);
-
-        auto token = adt_utils::FindHeaderValueCi(
-            ToHttpHeaders(res->headers), "x-csrf-token");
-        if (token.has_value()) {
+            auto token = adt_utils::FindHeaderValueCi(
+                ToHttpHeaders(res->headers), "x-csrf-token");
+            if (!token.has_value()) {
+                return Result<std::string, Error>::Err(
+                    MakeSessionError("FetchCsrfToken", fetch_path,
+                                     res->status,
+                                     "No x-csrf-token header in response",
+                                     ErrorCategory::CsrfToken));
+            }
             if (bw) {
                 bw_csrf_token_ = *token;
             } else {
                 csrf_token = *token;
             }
             return Result<std::string, Error>::Ok(*token);
+        };
+
+        if (bw) {
+            return fetch_from("/sap/bw/modeling/discovery");
         }
 
-        return Result<std::string, Error>::Err(
-            MakeSessionError("FetchCsrfToken", fetch_path,
-                             res->status,
-                             "No x-csrf-token header in response",
-                             ErrorCategory::CsrfToken));
+        if (stateful_ && !request_path.empty()) {
+            auto target_result = fetch_from(PathWithoutQuery(request_path));
+            if (target_result.IsOk()) {
+                return target_result;
+            }
+            const auto& err = target_result.Error();
+            if (!(err.http_status.has_value() && *err.http_status == 404)) {
+                return target_result;
+            }
+        }
+
+        return fetch_from("/sap/bc/adt/discovery");
     }
 };
 
@@ -569,6 +591,13 @@ void AdtSession::SetStateful(bool enabled) {
     if (!enabled) {
         impl_->sap_context_id_.clear();
     }
+}
+
+void AdtSession::ResetStatefulSession() {
+    impl_->csrf_token.reset();
+    impl_->bw_csrf_token_.reset();
+    impl_->sap_context_id_.clear();
+    impl_->cookies_.clear();
 }
 
 bool AdtSession::IsStateful() const {
