@@ -24,6 +24,11 @@ struct BwSearchResult {
     std::string last_changed;
 };
 
+struct BwSearchResponse {
+    std::vector<BwSearchResult> results;
+    bool feed_incomplete = false;
+};
+
 // ---------------------------------------------------------------------------
 // BwSearchObjects — search the BW repository for modeling objects.
 //
@@ -54,6 +59,10 @@ struct BwSearchOptions {
 };
 
 [[nodiscard]] Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
+    IAdtSession& session,
+    const BwSearchOptions& options);
+
+[[nodiscard]] Result<BwSearchResponse, Error> BwSearchObjectsDetailed(
     IAdtSession& session,
     const BwSearchOptions& options);
 

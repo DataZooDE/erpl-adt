@@ -125,3 +125,59 @@ TEST_CASE("RunTests: unexpected status returns error", "[adt][testing]") {
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status.value() == 500);
 }
+
+TEST_CASE("RunTests: class-level alerts parsed when no test methods", "[adt][testing]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("testing/test_skipped_risk.xml");
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = RunTests(mock, "/sap/bc/adt/programs/programs/zactivate_bw");
+    REQUIRE(result.IsOk());
+
+    auto& run = result.Value();
+    CHECK(run.TotalMethods() == 0);
+    CHECK(run.TotalFailed() == 0);
+    CHECK(run.TotalSkipped() == 1);
+
+    REQUIRE(run.classes.size() == 1);
+    auto& cls = run.classes[0];
+    CHECK(cls.name == "LCL_ICF_ACTIVATOR");
+    CHECK(cls.risk_level == "dangerous");
+    CHECK(cls.Skipped());
+    CHECK(cls.methods.empty());
+
+    REQUIRE(cls.alerts.size() == 1);
+    CHECK(cls.alerts[0].kind == "warning");
+    CHECK(cls.alerts[0].severity == "tolerable");
+    CHECK(cls.alerts[0].title == "No execution, risk level of test class exceeds upper limit");
+    CHECK(cls.alerts[0].detail == "You can find further information in document");
+}
+
+TEST_CASE("RunTests: mixed skipped and executed classes", "[adt][testing]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("testing/test_mixed_skip.xml");
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = RunTests(mock, "/sap/bc/adt/oo/classes/zcl_test");
+    REQUIRE(result.IsOk());
+
+    auto& run = result.Value();
+    CHECK(run.TotalMethods() == 1);
+    CHECK(run.TotalFailed() == 0);
+    CHECK(run.TotalSkipped() == 1);
+
+    REQUIRE(run.classes.size() == 2);
+
+    // First class: executed normally
+    CHECK(run.classes[0].name == "LTC_SAFE");
+    CHECK_FALSE(run.classes[0].Skipped());
+    CHECK(run.classes[0].methods.size() == 1);
+    CHECK(run.classes[0].alerts.empty());
+
+    // Second class: skipped due to risk level
+    CHECK(run.classes[1].name == "LTC_RISKY");
+    CHECK(run.classes[1].Skipped());
+    CHECK(run.classes[1].methods.empty());
+    REQUIRE(run.classes[1].alerts.size() == 1);
+    CHECK(run.classes[1].alerts[0].title == "No execution, risk level of test class exceeds upper limit");
+}

@@ -85,6 +85,19 @@ TEST_CASE("LockObject: HTTP error propagated", "[adt][locking]") {
     REQUIRE(result.IsErr());
 }
 
+TEST_CASE("LockObject: 400 session not found adds actionable hint", "[adt][locking]") {
+    MockAdtSession mock;
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_ERR").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<html><body>Session not found</body></html>"}));
+
+    auto result = LockObject(mock, uri);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 400);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+}
+
 // ===========================================================================
 // UnlockObject
 // ===========================================================================

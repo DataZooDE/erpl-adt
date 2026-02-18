@@ -131,6 +131,26 @@ TEST_CASE("BwSearchObjects: empty feed returns empty vector", "[adt][bw][search]
     CHECK(result.Value().empty());
 }
 
+TEST_CASE("BwSearchObjectsDetailed: parses feedIncomplete flag", "[adt][bw][search]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                  "<feed xmlns=\"http://www.w3.org/2005/Atom\" "
+                  "xmlns:bwModel=\"http://www.sap.com/bw/modeling\" "
+                  "bwModel:feedIncomplete=\"true\">"
+                  "<entry><title>DTP</title><id>/sap/bw/modeling/dtpa/DTP_A/a</id>"
+                  "<content type=\"application/xml\">"
+                  "<bwModel:searchResult objectName=\"DTP_A\" objectType=\"DTPA\" "
+                  "objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                  "</content></entry></feed>"}));
+
+    auto result = BwSearchObjectsDetailed(mock, MakeSearchOptions("DTP*"));
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().feed_incomplete);
+    REQUIRE(result.Value().results.size() == 1);
+    CHECK(result.Value().results[0].name == "DTP_A");
+}
+
 TEST_CASE("BwSearchObjects: HTTP error propagated", "[adt][bw][search]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({500, {}, "Internal Error"}));

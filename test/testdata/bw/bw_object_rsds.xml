@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rsds:dataSource xmlns:rsds="http://www.sap.com/bw/modeling/BwRsds.ecore"
+                 name="ZSRC_SALES"
+                 description="Sales DataSource"
+                 packageName="ZPKG">
+  <segment ID="SEG_MAIN">
+    <fields>
+      <field name="MATNR" type="CHAR" length="18" key="X"
+             description="Material"/>
+      <field name="PLANT" type="CHAR" length="4" key="X"
+             description="Plant"/>
+      <field name="QUANTITY" type="DEC" length="13" decimals="3"
+             description="Quantity"/>
+    </fields>
+  </segment>
+</rsds:dataSource>
+

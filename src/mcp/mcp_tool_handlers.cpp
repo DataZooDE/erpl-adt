@@ -7,6 +7,9 @@
 #include <erpl_adt/adt/bw_locks.hpp>
 #include <erpl_adt/adt/bw_repo_utils.hpp>
 #include <erpl_adt/adt/bw_reporting.hpp>
+#include <erpl_adt/adt/bw_rsds.hpp>
+#include <erpl_adt/adt/bw_query.hpp>
+#include <erpl_adt/adt/bw_dataflow.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
 #include <erpl_adt/adt/bw_system.hpp>
 #include <erpl_adt/adt/bw_nodes.hpp>
@@ -15,6 +18,7 @@
 #include <erpl_adt/adt/bw_validation.hpp>
 #include <erpl_adt/adt/bw_valuehelp.hpp>
 #include <erpl_adt/adt/bw_lineage.hpp>
+#include <erpl_adt/adt/bw_lineage_graph.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/checks.hpp>
@@ -31,6 +35,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -226,9 +232,17 @@ ToolResult HandleRunTests(IAdtSession& session,
     nlohmann::json j;
     j["total_methods"] = tr.TotalMethods();
     j["total_failed"] = tr.TotalFailed();
+    j["total_skipped"] = tr.TotalSkipped();
     j["all_passed"] = tr.AllPassed();
     nlohmann::json classes = nlohmann::json::array();
     for (const auto& c : tr.classes) {
+        nlohmann::json class_alerts = nlohmann::json::array();
+        for (const auto& a : c.alerts) {
+            class_alerts.push_back({{"kind", a.kind},
+                                    {"severity", a.severity},
+                                    {"title", a.title},
+                                    {"detail", a.detail}});
+        }
         nlohmann::json methods = nlohmann::json::array();
         for (const auto& m : c.methods) {
             nlohmann::json alerts = nlohmann::json::array();
@@ -243,9 +257,14 @@ ToolResult HandleRunTests(IAdtSession& session,
                                {"passed", m.Passed()},
                                {"alerts", alerts}});
         }
-        classes.push_back({{"name", c.name},
-                           {"uri", c.uri},
-                           {"methods", methods}});
+        nlohmann::json cj = {{"name", c.name},
+                             {"uri", c.uri},
+                             {"skipped", c.Skipped()},
+                             {"methods", methods}};
+        if (!class_alerts.empty()) {
+            cj["alerts"] = class_alerts;
+        }
+        classes.push_back(cj);
     }
     j["classes"] = classes;
     return MakeOkResult(j);
@@ -2201,6 +2220,10 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             nlohmann::json j;
             j["name"] = detail.name;
             j["description"] = detail.description;
+            j["start_routine"] = detail.start_routine;
+            j["end_routine"] = detail.end_routine;
+            j["expert_routine"] = detail.expert_routine;
+            j["hana_runtime"] = detail.hana_runtime;
             j["source_name"] = detail.source_name;
             j["source_type"] = detail.source_type;
             j["target_name"] = detail.target_name;
@@ -2229,9 +2252,15 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
                 nlohmann::json rj;
                 rj["source_field"] = r.source_field;
                 rj["target_field"] = r.target_field;
+                rj["source_fields"] = r.source_fields;
+                rj["target_fields"] = r.target_fields;
+                rj["group_id"] = r.group_id;
+                rj["group_description"] = r.group_description;
+                rj["group_type"] = r.group_type;
                 rj["rule_type"] = r.rule_type;
                 if (!r.formula.empty()) rj["formula"] = r.formula;
                 if (!r.constant.empty()) rj["constant"] = r.constant;
+                if (!r.step_attributes.empty()) rj["step_attributes"] = r.step_attributes;
                 rules.push_back(std::move(rj));
             }
             j["rules"] = rules;
@@ -2314,11 +2343,299 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             nlohmann::json j;
             j["name"] = detail.name;
             j["description"] = detail.description;
+            j["type"] = detail.type;
             j["source_name"] = detail.source_name;
             j["source_type"] = detail.source_type;
             j["target_name"] = detail.target_name;
             j["target_type"] = detail.target_type;
             j["source_system"] = detail.source_system;
+            j["request_selection_mode"] = detail.request_selection_mode;
+            j["extraction_settings"] = detail.extraction_settings;
+            j["execution_settings"] = detail.execution_settings;
+            j["runtime_properties"] = detail.runtime_properties;
+            j["error_handling"] = detail.error_handling;
+            j["dtp_execution"] = detail.dtp_execution;
+            j["semantic_group_fields"] = detail.semantic_group_fields;
+            nlohmann::json filter_fields = nlohmann::json::array();
+            for (const auto& f : detail.filter_fields) {
+                nlohmann::json selections = nlohmann::json::array();
+                for (const auto& s : f.selections) {
+                    selections.push_back({{"low", s.low},
+                                          {"high", s.high},
+                                          {"op", s.op},
+                                          {"excluding", s.excluding}});
+                }
+                filter_fields.push_back({{"name", f.name},
+                                         {"field", f.field},
+                                         {"selected", f.selected},
+                                         {"filter_selection", f.filter_selection},
+                                         {"selection_type", f.selection_type},
+                                         {"selections", selections}});
+            }
+            j["filter_fields"] = std::move(filter_fields);
+
+            nlohmann::json program_flow = nlohmann::json::array();
+            for (const auto& p : detail.program_flow) {
+                program_flow.push_back({{"id", p.id},
+                                        {"type", p.type},
+                                        {"name", p.name},
+                                        {"next", p.next}});
+            }
+            j["program_flow"] = std::move(program_flow);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_rsds",
+        "Read a BW DataSource (RSDS) with parsed segments and fields.",
+        MakeSchema(
+            {{"name", StringProp("DataSource name")},
+             {"source_system", StringProp("Source system/logsys")},
+             {"version", StringProp("Version: a (default), m, d")}},
+            {"name", "source_system"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto source_system = RequireString(params, "source_system", err);
+            if (!source_system) return err;
+
+            auto version = OptString(params, "version", "a");
+            auto result = BwReadRsdsDetail(session, *name, *source_system, version);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& detail = result.Value();
+            nlohmann::json j;
+            j["name"] = detail.name;
+            j["source_system"] = detail.source_system;
+            j["description"] = detail.description;
+            j["package"] = detail.package_name;
+
+            nlohmann::json fields = nlohmann::json::array();
+            for (const auto& f : detail.fields) {
+                fields.push_back({{"segment_id", f.segment_id},
+                                  {"name", f.name},
+                                  {"description", f.description},
+                                  {"data_type", f.data_type},
+                                  {"length", f.length},
+                                  {"decimals", f.decimals},
+                                  {"key", f.key}});
+            }
+            j["fields"] = std::move(fields);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_query_component",
+        "Read query-family BW components (QUERY/VARIABLE/RKF/CKF/FILTER/STRUCTURE) "
+        "with structured references.",
+        MakeSchema(
+            {{"component_type", StringProp("Component type: query|variable|rkf|ckf|filter|structure")},
+             {"name", StringProp("Component name")},
+             {"version", StringProp("Version: a (default), m, d")}},
+            {"component_type", "name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto component_type = RequireString(params, "component_type", err);
+            if (!component_type) return err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto version = OptString(params, "version", "a");
+
+            std::string resolved_ct;
+            {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    resolved_ct = BwResolveContentType(disc.Value(), *component_type);
+                }
+            }
+
+            auto result = BwReadQueryComponent(session, *component_type, *name, version, resolved_ct);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+            const auto& detail = result.Value();
+            auto graph = BwBuildQueryGraph(detail);
+            std::string component_type_lc = *component_type;
+            std::transform(component_type_lc.begin(), component_type_lc.end(),
+                           component_type_lc.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (component_type_lc == "query") {
+                auto assembled = BwAssembleQueryGraph(session, detail, version);
+                if (assembled.IsErr()) return MakeErrorResult(assembled.Error());
+                graph = assembled.Value();
+            }
+
+            nlohmann::json j;
+            j["schema_version"] = graph.schema_version;
+            j["root_node_id"] = graph.root_node_id;
+            j["metadata"] = {
+                {"name", detail.name},
+                {"component_type", detail.component_type},
+                {"description", detail.description},
+                {"info_provider", detail.info_provider},
+                {"info_provider_type", detail.info_provider_type},
+                {"attributes", detail.attributes}
+            };
+            nlohmann::json nodes = nlohmann::json::array();
+            for (const auto& n : graph.nodes) {
+                nodes.push_back({{"id", n.id},
+                                 {"type", n.type},
+                                 {"name", n.name},
+                                 {"role", n.role},
+                                 {"label", n.label},
+                                 {"attributes", n.attributes}});
+            }
+            j["nodes"] = std::move(nodes);
+            nlohmann::json edges = nlohmann::json::array();
+            for (const auto& e : graph.edges) {
+                edges.push_back({{"id", e.id},
+                                 {"from", e.from},
+                                 {"to", e.to},
+                                 {"type", e.type},
+                                 {"role", e.role},
+                                 {"attributes", e.attributes}});
+            }
+            j["edges"] = std::move(edges);
+            j["warnings"] = graph.warnings;
+            j["provenance"] = graph.provenance;
+
+            // Backward-compatible fields retained during contract transition.
+            j["name"] = detail.name;
+            j["component_type"] = detail.component_type;
+            j["description"] = detail.description;
+            j["info_provider"] = detail.info_provider;
+            j["info_provider_type"] = detail.info_provider_type;
+            j["attributes"] = detail.attributes;
+            nlohmann::json refs = nlohmann::json::array();
+            for (const auto& r : detail.references) {
+                refs.push_back({{"name", r.name},
+                                {"type", r.type},
+                                {"role", r.role},
+                                {"attributes", r.attributes}});
+            }
+            j["references"] = std::move(refs);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_read_dataflow",
+        "Read BW DataFlow (DMOD) topology with nodes and connections.",
+        MakeSchema(
+            {{"name", StringProp("DMOD name")},
+             {"version", StringProp("Version: a (default), m, d")}},
+            {"name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto name = RequireString(params, "name", err);
+            if (!name) return err;
+            auto version = OptString(params, "version", "a");
+
+            std::string resolved_ct;
+            {
+                auto disc = BwDiscover(session);
+                if (disc.IsOk()) {
+                    resolved_ct = BwResolveContentType(disc.Value(), "DMOD");
+                }
+            }
+
+            auto result = BwReadDataFlow(session, *name, version, resolved_ct);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+            const auto& detail = result.Value();
+
+            nlohmann::json j;
+            j["name"] = detail.name;
+            j["description"] = detail.description;
+            j["attributes"] = detail.attributes;
+
+            nlohmann::json nodes = nlohmann::json::array();
+            for (const auto& node : detail.nodes) {
+                nodes.push_back({{"id", node.id},
+                                 {"name", node.name},
+                                 {"type", node.type},
+                                 {"attributes", node.attributes}});
+            }
+            j["nodes"] = std::move(nodes);
+
+            nlohmann::json connections = nlohmann::json::array();
+            for (const auto& connection : detail.connections) {
+                connections.push_back({{"from", connection.from},
+                                       {"to", connection.to},
+                                       {"type", connection.type},
+                                       {"attributes", connection.attributes}});
+            }
+            j["connections"] = std::move(connections);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "bw_lineage_graph",
+        "Build canonical BW lineage graph from a DTP root. Produces nodes, "
+        "edges, provenance, and warnings for data catalog ingestion.",
+        MakeSchema(
+            {{"dtp_name", StringProp("DTP name (lineage root)")},
+             {"trfn_name", StringProp("Optional explicit TRFN name")},
+             {"version", StringProp("Version: a (default), m, d")},
+             {"include_xref", {{"type", "boolean"}, {"description", "Include xref expansion (default true)"}}},
+             {"max_xref", IntProp("Maximum xref neighbors")}},
+            {"dtp_name"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto dtp_name = RequireString(params, "dtp_name", err);
+            if (!dtp_name) return err;
+
+            BwLineageGraphOptions opts;
+            opts.dtp_name = *dtp_name;
+            opts.version = OptString(params, "version", "a");
+            auto trfn_name = OptString(params, "trfn_name");
+            if (!trfn_name.empty()) {
+                opts.trfn_name = trfn_name;
+            }
+            if (params.contains("include_xref") && params["include_xref"].is_boolean()) {
+                opts.include_xref = params["include_xref"].get<bool>();
+            }
+            if (params.contains("max_xref") && params["max_xref"].is_number_integer()) {
+                opts.max_xref = params["max_xref"].get<int>();
+            }
+
+            auto result = BwBuildLineageGraph(session, opts);
+            if (result.IsErr()) return MakeErrorResult(result.Error());
+
+            const auto& graph = result.Value();
+            nlohmann::json j;
+            j["schema_version"] = graph.schema_version;
+            j["root"] = {{"type", graph.root_type}, {"name", graph.root_name}};
+
+            nlohmann::json nodes = nlohmann::json::array();
+            for (const auto& n : graph.nodes) {
+                nlohmann::json nj = {{"id", n.id},
+                                     {"type", n.type},
+                                     {"name", n.name},
+                                     {"role", n.role}};
+                if (!n.uri.empty()) nj["uri"] = n.uri;
+                if (!n.version.empty()) nj["version"] = n.version;
+                if (!n.attributes.empty()) nj["attributes"] = n.attributes;
+                nodes.push_back(std::move(nj));
+            }
+            j["nodes"] = std::move(nodes);
+
+            nlohmann::json edges = nlohmann::json::array();
+            for (const auto& e : graph.edges) {
+                nlohmann::json ej = {{"id", e.id},
+                                     {"from", e.from},
+                                     {"to", e.to},
+                                     {"type", e.type}};
+                if (!e.attributes.empty()) ej["attributes"] = e.attributes;
+                edges.push_back(std::move(ej));
+            }
+            j["edges"] = std::move(edges);
+
+            nlohmann::json prov = nlohmann::json::array();
+            for (const auto& p : graph.provenance) {
+                prov.push_back({{"operation", p.operation},
+                                {"endpoint", p.endpoint},
+                                {"status", p.status}});
+            }
+            j["provenance"] = std::move(prov);
+            j["warnings"] = graph.warnings;
             return MakeOkResult(j);
         });
 }

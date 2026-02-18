@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dmod:dataFlow xmlns:dmod="http://www.sap.com/bw/modeling/dmod"
+               name="ZDMOD_SALES"
+               description="Sales Data Flow">
+  <nodes>
+    <node id="N1" name="ZSRC_SALES" type="RSDS"/>
+    <node id="N2" name="ZTRFN_SALES" type="TRFN"/>
+    <node id="N3" name="ZADSO_SALES" type="ADSO"/>
+    <node id="N4" name="ZQ_SALES" type="QUERY"/>
+  </nodes>
+  <connections>
+    <connection from="N1" to="N2" type="SOURCE_TO_TRFN"/>
+    <connection from="N2" to="N3" type="TRFN_TO_TARGET"/>
+    <connection from="N3" to="N4" type="PROVIDER_TO_QUERY"/>
+  </connections>
+</dmod:dataFlow>

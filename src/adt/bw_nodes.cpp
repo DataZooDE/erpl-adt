@@ -14,7 +14,8 @@ namespace erpl_adt {
 namespace {
 
 const char* kInfoProviderPath = "/sap/bw/modeling/repo/infoproviderstructure";
-const char* kDataSourcePath   = "/sap/bw/modeling/repo/datasourcestructure";
+const char* kDataSourcePath   = "/sap/bw/modeling/repo/datasourcenodes";
+const char* kDataSourceLegacyPath = "/sap/bw/modeling/repo/datasourcestructure";
 
 std::string BuildNodesUrl(const BwNodesOptions& options) {
     if (options.endpoint_override.has_value() &&
@@ -123,24 +124,39 @@ Result<std::vector<BwNodeEntry>, Error> BwGetNodes(
     }
 
     auto url = BuildNodesUrl(options);
-
     HttpHeaders headers;
     headers["Accept"] = "application/atom+xml";
 
-    auto response = session.Get(url, headers);
-    if (response.IsErr()) {
-        return Result<std::vector<BwNodeEntry>, Error>::Err(
-            std::move(response).Error());
+    auto request_parse = [&](const std::string& request_url) -> Result<std::vector<BwNodeEntry>, Error> {
+        auto response = session.Get(request_url, headers);
+        if (response.IsErr()) {
+            return Result<std::vector<BwNodeEntry>, Error>::Err(
+                std::move(response).Error());
+        }
+        const auto& http = response.Value();
+        if (http.status_code != 200) {
+            auto error = Error::FromHttpStatus("BwGetNodes", request_url, http.status_code, http.body);
+            AddBwHint(error);
+            return Result<std::vector<BwNodeEntry>, Error>::Err(std::move(error));
+        }
+        return ParseNodesResponse(http.body, "BwGetNodes");
+    };
+
+    auto result = request_parse(url);
+    if (result.IsOk() || !options.datasource || options.endpoint_override.has_value()) {
+        return result;
+    }
+    if (!result.Error().http_status.has_value() || result.Error().http_status.value() != 404) {
+        return result;
     }
 
-    const auto& http = response.Value();
-    if (http.status_code != 200) {
-        auto error = Error::FromHttpStatus("BwGetNodes", url, http.status_code, http.body);
-        AddBwHint(error);
-        return Result<std::vector<BwNodeEntry>, Error>::Err(std::move(error));
+    // Compatibility fallback for older systems exposing datasourcestructure.
+    std::string legacy_url = BuildNodesUrl(options);
+    const auto pos = legacy_url.find(kDataSourcePath);
+    if (pos != std::string::npos) {
+        legacy_url.replace(pos, std::string(kDataSourcePath).size(), kDataSourceLegacyPath);
     }
-
-    return ParseNodesResponse(http.body, "BwGetNodes");
+    return request_parse(legacy_url);
 }
 
 } // namespace erpl_adt

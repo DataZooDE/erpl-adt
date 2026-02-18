@@ -60,7 +60,7 @@ nlohmann::json ParseContent(const ToolResult& result) {
 TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 60);
+    CHECK(registry.Tools().size() == 64);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -902,6 +902,129 @@ TEST_CASE("bw_move_requests: happy path", "[mcp][handlers][bw]") {
     CHECK(j[0]["request"] == "MOVE0001");
 }
 
+TEST_CASE("bw_lineage_graph: returns canonical graph payload", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_dtp.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_trfn.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_xref.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_lineage_graph",
+                           {{"dtp_name", "ZDTP_SALES"},
+                            {"trfn_name", "ZTRFN_SALES"}});
+    auto j = ParseContent(result);
+    CHECK(j["schema_version"] == "1.0");
+    CHECK(j["root"]["type"] == "DTPA");
+    CHECK(j["root"]["name"] == "ZDTP_SALES");
+    CHECK(j["nodes"].is_array());
+    CHECK(j["edges"].is_array());
+    CHECK(j["provenance"].is_array());
+    CHECK(j["warnings"].is_array());
+}
+
+TEST_CASE("bw_read_transformation: exposes grouped step details", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_discovery.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_trfn_complex.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_read_transformation",
+                           {{"name", "ZTRFN_COMPLEX"}});
+    auto j = ParseContent(result);
+    CHECK(j["name"] == "ZTRFN_COMPLEX");
+    CHECK(j["hana_runtime"] == true);
+    CHECK(j["rules"].is_array());
+    REQUIRE(j["rules"].size() == 6);
+    CHECK(j["rules"][0]["group_id"] == "10");
+    CHECK(j["rules"][2]["rule_type"] == "StepFormula");
+    CHECK(j["rules"][4]["step_attributes"]["classNameM"] == "ZCL_TRFN_ROUTINE");
+}
+
+TEST_CASE("bw_read_dtp: exposes filter and execution details", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_discovery.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_dtp_complex.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_read_dtp",
+                           {{"name", "ZDTP_COMPLEX"}});
+    auto j = ParseContent(result);
+    CHECK(j["name"] == "ZDTP_COMPLEX");
+    CHECK(j["type"] == "FLEXIBLE");
+    CHECK(j["request_selection_mode"] == "DELTA");
+    CHECK(j["extraction_settings"]["packageSize"] == "50000");
+    CHECK(j["filter_fields"].is_array());
+    REQUIRE(j["filter_fields"].size() == 2);
+    CHECK(j["program_flow"].is_array());
+    REQUIRE(j["program_flow"].size() == 3);
+    CHECK(j["dtp_execution"]["simulation"] == "true");
+}
+
+TEST_CASE("bw_read_query_component: returns query family references", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_discovery.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_read_query_component",
+                           {{"component_type", "query"},
+                            {"name", "ZQ_SALES"}});
+    auto j = ParseContent(result);
+    CHECK(j["name"] == "ZQ_SALES");
+    CHECK(j["component_type"] == "QUERY");
+    CHECK(j["schema_version"] == "1.0");
+    CHECK(j["root_node_id"] == "N_QUERY_ZQ_SALES");
+    CHECK(j["nodes"].is_array());
+    CHECK(j["edges"].is_array());
+    REQUIRE(j["nodes"].size() == 6);
+    REQUIRE(j["edges"].size() == 5);
+    CHECK(j["metadata"]["info_provider"] == "ZCP_SALES");
+    CHECK(j["references"].is_array());
+    REQUIRE(j["references"].size() == 5);
+}
+
+TEST_CASE("bw_read_dataflow: returns dmod topology", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_discovery.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_dmod.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_read_dataflow",
+                           {{"name", "ZDMOD_SALES"}});
+    auto j = ParseContent(result);
+    CHECK(j["name"] == "ZDMOD_SALES");
+    CHECK(j["nodes"].is_array());
+    CHECK(j["connections"].is_array());
+    REQUIRE(j["connections"].size() == 3);
+}
+
+TEST_CASE("bw_read_rsds: parses fields", "[mcp][handlers][bw]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_rsds.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "bw_read_rsds",
+                           {{"name", "ZSRC_SALES"},
+                            {"source_system", "ECLCLNT100"}});
+    auto j = ParseContent(result);
+    CHECK(j["name"] == "ZSRC_SALES");
+    CHECK(j["source_system"] == "ECLCLNT100");
+    CHECK(j["fields"].is_array());
+    REQUIRE(j["fields"].size() == 3);
+}
+
 // ===========================================================================
 // Integration: McpServer + tool handlers end-to-end
 // ===========================================================================
@@ -926,7 +1049,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 60);
+    CHECK(tools.size() == 64);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
@@ -946,6 +1069,10 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     CHECK(names.count("bw_create_object") == 1);
     CHECK(names.count("bw_valuehelp") == 1);
     CHECK(names.count("bw_reporting") == 1);
+    CHECK(names.count("bw_read_rsds") == 1);
+    CHECK(names.count("bw_read_query_component") == 1);
+    CHECK(names.count("bw_read_dataflow") == 1);
+    CHECK(names.count("bw_lineage_graph") == 1);
 }
 
 TEST_CASE("MCP end-to-end: tools/call adt_search", "[mcp][handlers][e2e]") {

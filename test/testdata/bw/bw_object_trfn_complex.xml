@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<trfn:transformation xmlns:trfn="http://www.sap.com/bw/modeling/trfn"
+    name="ZTRFN_COMPLEX"
+    description="Complex Transformation"
+    startRoutine="START_FORM"
+    endRoutine="END_FORM"
+    expertRoutine="EXPERT_FORM"
+    HANARuntime="true">
+  <source objectName="ZRSDS_ERP" objectType="RSDS" description="ERP Source"/>
+  <target objectName="ZADSO_STAGE" objectType="ADSO" description="Stage ADSO"/>
+  <sourceFields>
+    <field name="MATNR" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="WERKS" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="AMOUNT" intType="CURR" aggregation="SUM"/>
+    <field name="WAERS" intType="CUKY" aggregation=""/>
+  </sourceFields>
+  <targetFields>
+    <field name="MATERIAL" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="PLANT" intType="CHAR" aggregation="" keyFlag="X"/>
+    <field name="AMOUNT_LOC" intType="CURR" aggregation="SUM"/>
+    <field name="FIXED_FLAG" intType="CHAR" aggregation=""/>
+  </targetFields>
+  <rules>
+    <group id="10" description="Business" type="STANDARD">
+      <rule id="1">
+        <source field="MATNR"/>
+        <target field="MATERIAL"/>
+        <step type="StepDirect"/>
+      </rule>
+      <rule id="2">
+        <source field="WERKS"/>
+        <target field="PLANT"/>
+        <step type="StepConversion" conversionTlogo="UNIT" conversionType="CONVERSION_EXIT_ALPHA"/>
+      </rule>
+      <rule id="3">
+        <source field="AMOUNT"/>
+        <source field="WAERS"/>
+        <target field="AMOUNT_LOC"/>
+        <step type="StepFormula" formula="SOURCE_FIELDS-AMOUNT * 1.19"/>
+      </rule>
+    </group>
+    <group id="20" description="Technical" type="TECHNICAL">
+      <rule id="4">
+        <target field="FIXED_FLAG"/>
+        <step type="StepConstant" constant="X"/>
+      </rule>
+      <rule id="5">
+        <source field="MATERIAL"/>
+        <target field="MATERIAL"/>
+        <step type="StepRoutine" classNameM="ZCL_TRFN_ROUTINE" methodNameM="MAP_FIELD" hanaRuntime="true"/>
+      </rule>
+      <rule id="6">
+        <source field="MATERIAL"/>
+        <target field="MATERIAL"/>
+        <step type="StepRead" objectName="0MATERIAL" objectType="IOBJ" errorHandling="NO_ERROR" timeDependencyType="VALID_AT"/>
+      </rule>
+    </group>
+  </rules>
+</trfn:transformation>

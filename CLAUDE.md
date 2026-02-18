@@ -140,6 +140,11 @@ Protocol is undocumented. Ground truth comes from captured Eclipse ADT traffic i
 
 **Integration tests:** Python/pytest in `test/integration_py/`. Run against a live SAP ABAP Cloud Developer Trial (Docker). Test the actual ADT REST API endpoints. Every test logs the exact CLI command invoked, making the test suite executable CLI documentation.
 
+**Execution cadence (required for refactoring work):**
+- Run integration tests after each completed beads task, not only at the end of an epic.
+- Minimum cadence: run `make test-integration-py-smoke` after each task; run full `make test-integration-py` for task DoD and before closing related beads issues.
+- If the live SAP system is unavailable, record the connectivity blocker immediately and rerun as soon as connectivity is restored.
+
 ```bash
 make test                          # Unit tests only (offline, fast)
 make test-integration-py           # Python integration tests (requires SAP system)
@@ -200,6 +205,69 @@ Versioning: `v{YYYY}.{MM}.{DD}` date-based tags. Bugfix same-day releases append
    - Creates GitHub Release via `softprops/action-gh-release@v2` with `generate_release_notes: true`
 4. After the workflow completes, edit the release body with a hand-written changelog:
    `gh release edit v{tag} --notes-file release-notes.md`
+
+## BW Modeling API — Activating on the a4h Docker Container
+
+After a container restart, the BW Modeling REST API and BW Search are **not active**.
+They must be activated by writing directly to HANA tables, then restarting the SAP instance.
+
+The CLI shows actionable hints when services are missing:
+- HTTP 404 on any `/sap/bw/modeling/` path → SICF not activated
+- HTTP 500 "not activated" on `/bwsearch` → BW Search not activated
+
+### Step 1 — Activate /sap/bw/ and /sap/bw/modeling/ in ICFSERVLOC
+
+Use **SAPA4H** (the table owner) — not SYSTEM. Granting to SYSTEM does not work reliably
+(`insufficient privilege` at UPDATE time even after GRANT).
+
+```bash
+# Activate the /sap/bw/ node (parent GUID constant: DFFAEATGKMFLCDXQ04F0J7FXK)
+docker exec a4h /usr/sap/A4H/hdbclient/hdbsql -i 02 -d HDB -u SAPA4H -p 'ABAPtr2023#00' \
+  "UPDATE SAPA4H.ICFSERVLOC SET ICFACTIVE = 'X' WHERE ICF_NAME = 'BW' AND ICFPARGUID = 'DFFAEATGKMFLCDXQ04F0J7FXK'"
+
+# Activate the /sap/bw/modeling node (BW node GUID constant: 3FWVDBADCM6B4KLQKF4R70SS5)
+docker exec a4h /usr/sap/A4H/hdbclient/hdbsql -i 02 -d HDB -u SAPA4H -p 'ABAPtr2023#00' \
+  "UPDATE SAPA4H.ICFSERVLOC SET ICFACTIVE = 'X' WHERE ICF_NAME = 'MODELING' AND ICFPARGUID = '3FWVDBADCM6B4KLQKF4R70SS5'"
+
+# Verify both rows show ICFACTIVE = 'X'
+docker exec a4h /usr/sap/A4H/hdbclient/hdbsql -i 02 -d HDB -u SAPA4H -p 'ABAPtr2023#00' \
+  "SELECT ICF_NAME, ICFPARGUID, ICFACTIVE FROM SAPA4H.ICFSERVLOC WHERE ICF_NAME IN ('BW', 'MODELING')"
+```
+
+### Step 2 — Activate BW Search (RSOSSEARCH)
+
+```bash
+# Activate BW search for BIMO object type (use SAPA4H as owner)
+docker exec a4h /usr/sap/A4H/hdbclient/hdbsql -i 02 -d HDB -u SAPA4H -p 'ABAPtr2023#00' \
+  "UPDATE SAPA4H.RSOSSEARCH SET ACTIVEFL = 'X' WHERE TLOGO = 'BIMO'"
+```
+
+### Step 3 — Restart the SAP instance to flush the ICF service cache
+
+SIGHUP to icman is **not sufficient** — a full instance restart is required.
+`sapcontrol ICMRestart` does not exist; use `RestartInstance` instead.
+
+```bash
+docker exec a4h bash -c "su - a4hadm -c 'sapcontrol -nr 00 -function RestartInstance'"
+docker exec a4h bash -c "su - a4hadm -c 'sapcontrol -nr 00 -function WaitforStarted 300 10'"
+```
+
+### Verify
+
+```bash
+./build/erpl-adt --host localhost --port 50000 --user DEVELOPER --password 'ABAPtr2023#00' \
+    --client 001 bw discover
+./build/erpl-adt --host localhost --port 50000 --user DEVELOPER --password 'ABAPtr2023#00' \
+    --client 001 bw search '*' --max 5
+```
+
+### Notes
+
+- The GUID constants (`DFFAEATGKMFLCDXQ04F0J7FXK`, `3FWVDBADCM6B4KLQKF4R70SS5`) are stable across
+  restarts on the same a4h image — they are part of the delivered content, not generated at runtime.
+- `ICFSERVLOC` is client-dependent (SAP client 001). If you switch clients, re-check.
+- The standard `sapse/abap-cloud-developer-trial` image is ABAP Cloud only — no BW Modeling API.
+  These steps apply to a full SAP BW/4HANA system (on-prem or a4h with BW add-on).
 
 ## Issue Tracking
 

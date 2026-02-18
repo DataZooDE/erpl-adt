@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<aunit:runResult xmlns:aunit="http://www.sap.com/adt/aunit">
+  <program adtcore:uri="/sap/bc/adt/programs/programs/zactivate_bw" adtcore:type="PROG/P" adtcore:name="ZACTIVATE_BW" uriType="semantic" xmlns:adtcore="http://www.sap.com/adt/core">
+    <testClasses>
+      <testClass adtcore:uri="/sap/bc/adt/programs/programs/zactivate_bw#testclass=LCL_ICF_ACTIVATOR" adtcore:type="PROG/PP" adtcore:name="LCL_ICF_ACTIVATOR" uriType="semantic" navigationUri="/sap/bc/adt/programs/programs/zactivate_bw/source/main#type=PROG%2FPL;name=LCL_ICF_ACTIVATOR" durationCategory="short" riskLevel="dangerous">
+        <alerts>
+          <alert kind="warning" severity="tolerable">
+            <title>No execution, risk level of test class exceeds upper limit</title>
+            <details>
+              <detail text="You can find further information in document"/>
+            </details>
+          </alert>
+        </alerts>
+      </testClass>
+    </testClasses>
+  </program>
+</aunit:runResult>

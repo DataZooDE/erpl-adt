@@ -192,3 +192,277 @@ def test_contract_error_json_shape_is_stable():
     error = payload["error"]
     for key in ("category", "operation", "message", "exit_code"):
         assert key in error
+
+
+def test_contract_bw_read_query_not_found_maps_to_exit_2():
+    def get_dispatch(_):
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("bw", "read-query", "query", "ZQ_DOES_NOT_EXIST")
+
+    assert result.returncode == 2
+    err = json.loads(result.stderr)["error"]
+    assert err["category"] == "not_found"
+    assert err["exit_code"] == 2
+
+
+def test_contract_bw_read_query_parse_failure_maps_to_exit_99():
+    def get_dispatch(req):
+        if req.path.startswith("/sap/bw/modeling/query/"):
+            return 200, {"Content-Type": "application/xml"}, "<root>\n  <broken>\n</root>"
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("bw", "read-query", "query", "ZQ_PARSE_BROKEN")
+
+    assert result.returncode == 99
+    err = json.loads(result.stderr)["error"]
+    assert "parse" in err["message"].lower()
+    assert err["exit_code"] == 99
+
+
+def test_contract_bw_read_query_endpoint_templates_lowercase_name():
+    seen = []
+
+    def get_dispatch(req):
+        seen.append(req.path)
+        if req.path.startswith("/sap/bw/modeling/query/zq_sales/a"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<query:query xmlns:query=\"http://www.sap.com/bw/modeling/query\" "
+                "name=\"ZQ_SALES\" description=\"Sales\"/>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("bw", "read-query", "query", "ZQ_SALES")
+
+    assert result.returncode == 0
+    assert any("/sap/bw/modeling/query/zq_sales/a" in p for p in seen)
+
+
+def test_contract_bw_read_query_415_retries_accept_fallbacks():
+    seen_accepts = []
+
+    def get_dispatch(req):
+        if req.path.startswith("/sap/bw/modeling/query/zvar_fiscyear/a"):
+            seen_accepts.append(req.headers.get("Accept", ""))
+            if len(seen_accepts) < 3:
+                return 415, {}, "unsupported media type"
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<query:variable xmlns:query=\"http://www.sap.com/bw/modeling/query\" "
+                "name=\"ZVAR_FISCYEAR\" description=\"Fiscal Year\"/>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("bw", "read-query", "variable", "ZVAR_FISCYEAR")
+
+    assert result.returncode == 0
+    assert seen_accepts[0] == "application/vnd.sap.bw.modeling.variable-v1_10_0+xml"
+    assert seen_accepts[1] == "application/vnd.sap.bw.modeling.variable-v1_9_0+xml"
+    assert seen_accepts[2] == "application/xml"
+
+
+def test_contract_bw_read_query_auto_upstream_planning_contract():
+    def get_dispatch(req):
+        if req.path.startswith("/sap/bw/modeling/query/zq_sales/a"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<query:query xmlns:query=\"http://www.sap.com/bw/modeling/query\" "
+                "name=\"ZQ_SALES\" description=\"Sales\" infoProvider=\"ZCP_SALES\" "
+                "infoProviderType=\"HCPR\"/>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        if req.path.startswith("/sap/bw/modeling/repo/is/bwsearch?"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<feed xmlns=\"http://www.w3.org/2005/Atom\" "
+                "xmlns:bwModel=\"http://www.sap.com/bw/modeling\">"
+                "  <entry>"
+                "    <title>DTP</title>"
+                "    <id>/sap/bw/modeling/dtpa/DTP_ZSALES/a</id>"
+                "    <content type=\"application/xml\">"
+                "      <bwModel:searchResult objectName=\"DTP_ZSALES\" objectType=\"DTPA\" "
+                "          objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                "    </content>"
+                "  </entry>"
+                "</feed>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        if req.path.startswith("/sap/bw/modeling/dtpa/dtp_zsales/a"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<dtpa name=\"DTP_ZSALES\">"
+                "  <source objectName=\"ZSRC\" objectType=\"RSDS\" sourceSystem=\"LOCAL\"/>"
+                "  <target objectName=\"ZCP_SALES\" objectType=\"HCPR\"/>"
+                "</dtpa>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("bw", "read-query", "query", "ZQ_SALES", "--upstream=auto")
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    upstream = payload.get("upstream_resolution", {})
+    assert upstream.get("mode") == "auto"
+    assert upstream.get("selected_dtp") == "DTP_ZSALES"
+    assert isinstance(upstream.get("complete"), bool)
+    assert isinstance(upstream.get("steps"), int)
+    assert isinstance(upstream.get("candidates"), list)
+
+
+def test_contract_bw_read_query_auto_upstream_strict_ambiguous_fails():
+    def get_dispatch(req):
+        if req.path.startswith("/sap/bw/modeling/query/zq_sales/a"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<query:query xmlns:query=\"http://www.sap.com/bw/modeling/query\" "
+                "name=\"ZQ_SALES\" description=\"Sales\" infoProvider=\"ZCP_SALES\" "
+                "infoProviderType=\"HCPR\"/>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        if req.path.startswith("/sap/bw/modeling/repo/is/bwsearch?"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<feed xmlns=\"http://www.w3.org/2005/Atom\" "
+                "xmlns:bwModel=\"http://www.sap.com/bw/modeling\">"
+                "  <entry><title>DTP A</title><id>/sap/bw/modeling/dtpa/DTP_A/a</id>"
+                "    <content type=\"application/xml\">"
+                "      <bwModel:searchResult objectName=\"DTP_A\" objectType=\"DTPA\" objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                "    </content>"
+                "  </entry>"
+                "  <entry><title>DTP B</title><id>/sap/bw/modeling/dtpa/DTP_B/a</id>"
+                "    <content type=\"application/xml\">"
+                "      <bwModel:searchResult objectName=\"DTP_B\" objectType=\"DTPA\" objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                "    </content>"
+                "  </entry>"
+                "</feed>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        if req.path.startswith("/sap/bw/modeling/dtpa/dtp_a/a"):
+            return 200, {"Content-Type": "application/xml"}, (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<dtpa name=\"DTP_A\"><target objectName=\"ZCP_SALES\" objectType=\"HCPR\"/></dtpa>"
+            )
+        if req.path.startswith("/sap/bw/modeling/dtpa/dtp_b/a"):
+            return 200, {"Content-Type": "application/xml"}, (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<dtpa name=\"DTP_B\"><target objectName=\"ZCP_SALES\" objectType=\"HCPR\"/></dtpa>"
+            )
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run(
+            "bw", "read-query", "query", "ZQ_SALES", "--upstream=auto", "--lineage-strict"
+        )
+
+    assert result.returncode == 99
+    assert "strict upstream resolution failed" in result.stderr.lower()
+
+
+def test_contract_bw_read_query_auto_upstream_ambiguous_composes_all_candidates():
+    def get_dispatch(req):
+        if req.path.startswith("/sap/bw/modeling/query/zq_sales/a"):
+            body = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<query:query xmlns:query=\"http://www.sap.com/bw/modeling/query\" "
+                "name=\"ZQ_SALES\" description=\"Sales\" infoProvider=\"ZCP_SALES\" "
+                "infoProviderType=\"HCPR\"/>"
+            )
+            return 200, {"Content-Type": "application/xml"}, body
+        if req.path.startswith("/sap/bw/modeling/repo/is/bwsearch?"):
+            if "objectType=TRFN" in req.path:
+                return 200, {"Content-Type": "application/xml"}, (
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"/>"
+                )
+            return 200, {"Content-Type": "application/xml"}, (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<feed xmlns=\"http://www.w3.org/2005/Atom\" "
+                "xmlns:bwModel=\"http://www.sap.com/bw/modeling\">"
+                "  <entry><title>DTP A</title><id>/sap/bw/modeling/dtpa/DTP_A/a</id>"
+                "    <content type=\"application/xml\">"
+                "      <bwModel:searchResult objectName=\"DTP_A\" objectType=\"DTPA\" objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                "    </content>"
+                "  </entry>"
+                "  <entry><title>DTP B</title><id>/sap/bw/modeling/dtpa/DTP_B/a</id>"
+                "    <content type=\"application/xml\">"
+                "      <bwModel:searchResult objectName=\"DTP_B\" objectType=\"DTPA\" objectVersion=\"A\" objectStatus=\"ACT\"/>"
+                "    </content>"
+                "  </entry>"
+                "</feed>"
+            )
+        if req.path.startswith("/sap/bw/modeling/dtpa/dtp_a/a"):
+            return 200, {"Content-Type": "application/xml"}, (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<dtpa name=\"DTP_A\">"
+                "<source objectName=\"ZSRC\" objectType=\"RSDS\" sourceSystem=\"LOCAL\"/>"
+                "<target objectName=\"ZCP_SALES\" objectType=\"HCPR\"/>"
+                "</dtpa>"
+            )
+        if req.path.startswith("/sap/bw/modeling/dtpa/dtp_b/a"):
+            return 200, {"Content-Type": "application/xml"}, (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<dtpa name=\"DTP_B\">"
+                "<source objectName=\"ZSRC\" objectType=\"RSDS\" sourceSystem=\"LOCAL\"/>"
+                "<target objectName=\"ZCP_SALES\" objectType=\"HCPR\"/>"
+                "</dtpa>"
+            )
+        return 404, {}, "not found"
+
+    callbacks = {
+        ("GET", "*"): get_dispatch,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run(
+            "bw", "read-query", "query", "ZQ_SALES",
+            "--upstream=auto", "--upstream-no-xref", "--json-shape=truth"
+        )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    resolution = payload.get("resolution", {})
+    assert resolution.get("ambiguous") is True
+    assert sorted(resolution.get("composed_candidates", [])) == ["DTP_A", "DTP_B"]
+    assert isinstance(payload.get("provenance"), list)
+    assert any(p.startswith("bw.lineage.compose") for p in payload["provenance"])
+

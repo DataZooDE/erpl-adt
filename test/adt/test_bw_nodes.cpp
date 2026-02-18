@@ -84,7 +84,23 @@ TEST_CASE("BwGetNodes: sends correct URL for datasource", "[adt][bw][nodes]") {
     REQUIRE(result.IsOk());
 
     auto& path = mock.GetCalls()[0].path;
-    CHECK(path.find("/datasourcestructure/RSDS/ZSOURCE") != std::string::npos);
+    CHECK(path.find("/datasourcenodes/RSDS/ZSOURCE") != std::string::npos);
+}
+
+TEST_CASE("BwGetNodes: datasource endpoint falls back to legacy datasourcestructure", "[adt][bw][nodes]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "Not Found"}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<feed/>"}));
+
+    BwNodesOptions opts;
+    opts.object_type = "RSDS";
+    opts.object_name = "ZSOURCE";
+    opts.datasource = true;
+    auto result = BwGetNodes(mock, opts);
+    REQUIRE(result.IsOk());
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[0].path.find("/datasourcenodes/RSDS/ZSOURCE") != std::string::npos);
+    CHECK(mock.GetCalls()[1].path.find("/datasourcestructure/RSDS/ZSOURCE") != std::string::npos);
 }
 
 TEST_CASE("BwGetNodes: sends child filters", "[adt][bw][nodes]") {

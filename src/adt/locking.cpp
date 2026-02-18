@@ -97,6 +97,14 @@ Result<LockResult, Error> LockObject(
             "Object is locked by another user", std::nullopt,
             ErrorCategory::LockConflict});
     }
+    if (http.status_code == 400 &&
+        http.body.find("Session not found") != std::string::npos) {
+        auto err = Error::FromHttpStatus("LockObject", uri.Value(), http.status_code, http.body);
+        err.hint =
+            "Stateful ADT session is missing/expired. Retry the command. "
+            "For multi-step workflows, use --session-file to persist state.";
+        return Result<LockResult, Error>::Err(std::move(err));
+    }
     if (http.status_code != 200) {
         return Result<LockResult, Error>::Err(
             Error::FromHttpStatus("LockObject", uri.Value(), http.status_code, http.body));

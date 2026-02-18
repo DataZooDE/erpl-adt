@@ -3,9 +3,30 @@
 #include <erpl_adt/cli/command_executor.hpp>
 #include <erpl_adt/cli/command_router.hpp>
 
+#include <iostream>
+#include <sstream>
 #include <set>
 
 using namespace erpl_adt;
+
+namespace {
+
+struct DispatchResult {
+    int exit_code{0};
+    std::string stderr_text;
+};
+
+DispatchResult DispatchWithStderrCapture(CommandRouter& router,
+                                         int argc,
+                                         const char* const argv[]) {
+    std::ostringstream err;
+    auto* old = std::cerr.rdbuf(err.rdbuf());
+    const int code = router.Dispatch(argc, argv);
+    std::cerr.rdbuf(old);
+    return DispatchResult{code, err.str()};
+}
+
+}  // namespace
 
 // ===========================================================================
 // IsNewStyleCommand
@@ -165,4 +186,144 @@ TEST_CASE("object create: missing --type returns 99",
     const char* argv[] = {"erpl-adt", "object", "create",
                           "--name", "ZCL_FOO", "--package", "ZTEST"};
     CHECK(router.Dispatch(7, argv) == 99);
+}
+
+TEST_CASE("bw read-query: invalid component type fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "foo", "ZQ_TEST"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Unsupported query component type") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --format fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--format=dot"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --format") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --version fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--version=x"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --version") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --layout fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--layout=wide"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --layout") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --direction fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--direction=BT"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --direction") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --focus-role fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--focus-role=everything"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --focus-role") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --max-nodes-per-role fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--max-nodes-per-role=0"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --max-nodes-per-role") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --json-shape fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--json-shape=flat"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --json-shape") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: --upstream-dtp requires query component type",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "variable", "ZVAR_FY", "--upstream-dtp=DTP_ZSALES"};
+    const auto result = DispatchWithStderrCapture(router, 6, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("--upstream-dtp is only supported") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --upstream mode fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--upstream=smart"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --upstream") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: --upstream=auto requires query component type",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "variable", "ZVAR_FY", "--upstream=auto"};
+    const auto result = DispatchWithStderrCapture(router, 6, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("--upstream=auto is only supported") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --upstream-max-xref fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--upstream-max-xref=0"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --upstream-max-xref") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: invalid --lineage-max-steps fails before session setup",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "ZQ_TEST", "--lineage-max-steps=0"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --lineage-max-steps") != std::string::npos);
+}
+
+TEST_CASE("bw read-query: too many positional args fails with usage hint",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "read-query", "query", "ZQ_TEST", "EXTRA"};
+    const auto result = DispatchWithStderrCapture(router, 6, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Too many arguments") != std::string::npos);
 }

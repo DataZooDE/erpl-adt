@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<query:query xmlns:query="http://www.sap.com/bw/modeling/query"
+             name="ZQ_SALES"
+             description="Sales Query"
+             infoProvider="ZCP_SALES"
+             infoProviderType="HCPR"
+             changedBy="DEVELOPER">
+  <components>
+    <member name="ZVAR_FISCYEAR" type="VARIABLE" role="SELECTION"/>
+    <member name="ZRKF_MARGIN" type="RKF" role="COLUMN"/>
+    <member name="ZCKF_MARGIN_PCT" type="CKF" role="COLUMN"/>
+    <member name="ZFILTER_REGION" type="FILTER" role="ROW"/>
+    <member name="ZSTRUCT_MAIN" type="STRUCTURE" role="ROW"/>
+  </components>
+</query:query>

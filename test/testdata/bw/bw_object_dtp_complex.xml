@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dtpa:dataTransferProcess xmlns:dtpa="http://www.sap.com/bw/modeling/dtpa"
+    name="ZDTP_COMPLEX"
+    description="Complex DTP"
+    type="FLEXIBLE">
+  <source objectName="ZRSDS_ERP" objectType="RSDS" sourceSystem="ERPCLNT100"/>
+  <target objectName="ZADSO_STAGE" objectType="ADSO"/>
+
+  <requestSelection mode="DELTA" onlyLastRequest="false"/>
+  <extractionSettings packageSize="50000" parallelExtraction="true"/>
+  <execution processingMode="SERIAL" sapHanaExecution="true"/>
+  <runtimeProperties maxRuntimeSec="3600" tempStorage="HANA"/>
+
+  <filter>
+    <fields name="CALDAY" field="0CALDAY" selected="true" filterSelection="BT" selectionType="RANGE">
+      <selection low="20240101" high="20241231" operator="BT" excluding="false"/>
+    </fields>
+    <fields name="COMP_CODE" field="0COMP_CODE" selected="true" filterSelection="EQ" selectionType="SINGLE">
+      <selection low="1000" operator="EQ" excluding="false"/>
+      <selection low="2000" operator="EQ" excluding="true"/>
+    </fields>
+  </filter>
+
+  <errorHandling errorDtp="ZDTP_ERROR" trackRecords="true"/>
+
+  <semanticGroup>
+    <field name="0CALDAY"/>
+    <field name="0COMP_CODE"/>
+  </semanticGroup>
+
+  <programFlow>
+    <node id="SRC" type="SOURCE" name="DataSource"/>
+    <node id="FLT" type="FILTER" name="Filter Node" next="SRC"/>
+    <node id="TRG" type="TARGET" name="Target Node" next="FLT"/>
+  </programFlow>
+
+  <dtpExecution background="true" synchronous="false" simulation="true"/>
+</dtpa:dataTransferProcess>

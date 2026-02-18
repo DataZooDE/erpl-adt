@@ -6,6 +6,7 @@
 #include <tinyxml2.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -87,6 +88,136 @@ std::vector<BwTransformationField> ParseTransformationFields(
     return fields;
 }
 
+bool IsTruthy(const std::string& value) {
+    if (value.empty()) return false;
+    std::string lower = ToLower(value);
+    return lower == "x" || lower == "true" || lower == "1";
+}
+
+std::string AttrAny(const tinyxml2::XMLElement* element,
+                    const char* a,
+                    const char* b,
+                    const char* c = nullptr,
+                    const char* d = nullptr) {
+    auto value = xml_utils::Attr(element, a);
+    if (!value.empty()) return value;
+    value = xml_utils::Attr(element, b);
+    if (!value.empty()) return value;
+    if (c != nullptr) {
+        value = xml_utils::Attr(element, c);
+        if (!value.empty()) return value;
+    }
+    if (d != nullptr) {
+        value = xml_utils::Attr(element, d);
+        if (!value.empty()) return value;
+    }
+    return "";
+}
+
+std::string ExtractFieldRef(const tinyxml2::XMLElement* element) {
+    if (!element) return "";
+    auto field = AttrAny(element, "field", "name", "sourceField", "targetField");
+    if (!field.empty()) return field;
+    if (element->GetText() != nullptr) {
+        return element->GetText();
+    }
+    return "";
+}
+
+void ParseTrfnRule(const tinyxml2::XMLElement* rule_el,
+                   const std::string& group_id,
+                   const std::string& group_description,
+                   const std::string& group_type,
+                   std::vector<BwTransformationRule>& out) {
+    BwTransformationRule rule;
+    rule.id = xml_utils::Attr(rule_el, "id");
+    rule.group_id = group_id;
+    rule.group_description = group_description;
+    rule.group_type = group_type;
+
+    // Legacy flat-rule shape.
+    auto source_attr = xml_utils::Attr(rule_el, "sourceField");
+    auto target_attr = xml_utils::Attr(rule_el, "targetField");
+    if (!source_attr.empty()) rule.source_fields.push_back(source_attr);
+    if (!target_attr.empty()) rule.target_fields.push_back(target_attr);
+
+    // Polymorphic rule shape: nested source/target references.
+    for (auto* source_el = rule_el->FirstChildElement("source"); source_el;
+         source_el = source_el->NextSiblingElement("source")) {
+        const auto value = ExtractFieldRef(source_el);
+        if (!value.empty()) {
+            rule.source_fields.push_back(value);
+        }
+    }
+    for (auto* target_el = rule_el->FirstChildElement("target"); target_el;
+         target_el = target_el->NextSiblingElement("target")) {
+        const auto value = ExtractFieldRef(target_el);
+        if (!value.empty()) {
+            rule.target_fields.push_back(value);
+        }
+    }
+
+    auto* step_el = rule_el->FirstChildElement("step");
+    if (step_el != nullptr) {
+        rule.rule_type = xml_utils::Attr(step_el, "type");
+        rule.formula = xml_utils::Attr(step_el, "formula");
+        rule.constant = xml_utils::Attr(step_el, "constant");
+        for (auto* attr = step_el->FirstAttribute(); attr != nullptr; attr = attr->Next()) {
+            if (attr->Name() == nullptr || attr->Value() == nullptr) continue;
+            rule.step_attributes[attr->Name()] = attr->Value();
+        }
+    } else {
+        rule.rule_type = xml_utils::Attr(rule_el, "ruleType");
+        rule.formula = xml_utils::Attr(rule_el, "formula");
+        rule.constant = xml_utils::Attr(rule_el, "constant");
+    }
+
+    if (!rule.source_fields.empty()) {
+        rule.source_field = rule.source_fields.front();
+    }
+    if (!rule.target_fields.empty()) {
+        rule.target_field = rule.target_fields.front();
+    }
+
+    out.push_back(std::move(rule));
+}
+
+void ParseTrfnRuleContainer(const tinyxml2::XMLElement* container,
+                            std::vector<BwTransformationRule>& out,
+                            const std::string& group_id = "",
+                            const std::string& group_description = "",
+                            const std::string& group_type = "") {
+    if (!container) return;
+
+    for (auto* node = container->FirstChildElement(); node != nullptr;
+         node = node->NextSiblingElement()) {
+        const char* name = node->Name();
+        if (!name) continue;
+        std::string node_name(name);
+        if (node_name == "rule") {
+            ParseTrfnRule(node, group_id, group_description, group_type, out);
+        } else if (node_name == "group") {
+            ParseTrfnRuleContainer(
+                node,
+                out,
+                xml_utils::Attr(node, "id"),
+                xml_utils::Attr(node, "description"),
+                xml_utils::Attr(node, "type"));
+        }
+    }
+}
+
+std::map<std::string, std::string> ParseElementAttributes(
+    const tinyxml2::XMLElement* element) {
+    std::map<std::string, std::string> attributes;
+    if (!element) return attributes;
+    for (auto* attr = element->FirstAttribute(); attr != nullptr; attr = attr->Next()) {
+        if (attr->Name() == nullptr || attr->Value() == nullptr) continue;
+        attributes[attr->Name()] = attr->Value();
+    }
+    return attributes;
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -123,6 +254,10 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
     BwTransformationDetail detail;
     detail.name = name;
     detail.description = xml_utils::Attr(root, "description");
+    detail.start_routine = xml_utils::Attr(root, "startRoutine");
+    detail.end_routine = xml_utils::Attr(root, "endRoutine");
+    detail.expert_routine = xml_utils::Attr(root, "expertRoutine");
+    detail.hana_runtime = IsTruthy(AttrAny(root, "HANARuntime", "hanaRuntime"));
 
     // Source and target
     auto* source_el = root->FirstChildElement("source");
@@ -144,42 +279,11 @@ Result<BwTransformationDetail, Error> BwReadTransformation(
     detail.target_fields = ParseTransformationFields(
         root->FirstChildElement("targetFields"));
 
-    // Rules
-    auto* rules_el = root->FirstChildElement("rules");
-    if (rules_el) {
-        // Rules may be in <group> elements or directly under <rules>
-        auto parse_rules = [&](const tinyxml2::XMLElement* parent) {
-            for (auto* r = parent->FirstChildElement(); r;
-                 r = r->NextSiblingElement()) {
-                const char* rname = r->Name();
-                if (!rname) continue;
-                std::string rn(rname);
-
-                if (rn == "rule") {
-                    BwTransformationRule rule;
-                    rule.source_field = xml_utils::Attr(r, "sourceField");
-                    rule.target_field = xml_utils::Attr(r, "targetField");
-                    rule.rule_type = xml_utils::Attr(r, "ruleType");
-                    rule.formula = xml_utils::Attr(r, "formula");
-                    rule.constant = xml_utils::Attr(r, "constant");
-                    detail.rules.push_back(std::move(rule));
-                } else if (rn == "group") {
-                    // Recurse into group
-                    for (auto* gr = r->FirstChildElement("rule"); gr;
-                         gr = gr->NextSiblingElement("rule")) {
-                        BwTransformationRule rule;
-                        rule.source_field = xml_utils::Attr(gr, "sourceField");
-                        rule.target_field = xml_utils::Attr(gr, "targetField");
-                        rule.rule_type = xml_utils::Attr(gr, "ruleType");
-                        rule.formula = xml_utils::Attr(gr, "formula");
-                        rule.constant = xml_utils::Attr(gr, "constant");
-                        detail.rules.push_back(std::move(rule));
-                    }
-                }
-            }
-        };
-        parse_rules(rules_el);
-    }
+    // Rules may be:
+    // - under <rules><group>/<rule> (legacy fixture shape)
+    // - direct <group> children of <transformation> (spec shape)
+    ParseTrfnRuleContainer(root->FirstChildElement("rules"), detail.rules);
+    ParseTrfnRuleContainer(root, detail.rules);
 
     return Result<BwTransformationDetail, Error>::Ok(std::move(detail));
 }
@@ -274,6 +378,7 @@ Result<BwDtpDetail, Error> BwReadDtpDetail(
     BwDtpDetail detail;
     detail.name = name;
     detail.description = xml_utils::Attr(root, "description");
+    detail.type = xml_utils::Attr(root, "type");
 
     auto* source_el = root->FirstChildElement("source");
     if (source_el) {
@@ -286,6 +391,67 @@ Result<BwDtpDetail, Error> BwReadDtpDetail(
     if (target_el) {
         detail.target_name = xml_utils::Attr(target_el, "objectName");
         detail.target_type = xml_utils::Attr(target_el, "objectType");
+    }
+
+    auto* request_selection_el = root->FirstChildElement("requestSelection");
+    if (request_selection_el) {
+        detail.request_selection_mode = xml_utils::Attr(request_selection_el, "mode");
+    }
+
+    detail.extraction_settings =
+        ParseElementAttributes(root->FirstChildElement("extractionSettings"));
+    detail.execution_settings = ParseElementAttributes(root->FirstChildElement("execution"));
+    detail.runtime_properties =
+        ParseElementAttributes(root->FirstChildElement("runtimeProperties"));
+    detail.error_handling = ParseElementAttributes(root->FirstChildElement("errorHandling"));
+    detail.dtp_execution = ParseElementAttributes(root->FirstChildElement("dtpExecution"));
+
+    auto* semantic_group_el = root->FirstChildElement("semanticGroup");
+    if (semantic_group_el) {
+        for (auto* field_el = semantic_group_el->FirstChildElement("field");
+             field_el != nullptr; field_el = field_el->NextSiblingElement("field")) {
+            auto field_name = xml_utils::Attr(field_el, "name");
+            if (!field_name.empty()) {
+                detail.semantic_group_fields.push_back(std::move(field_name));
+            }
+        }
+    }
+
+    auto* filter_el = root->FirstChildElement("filter");
+    if (filter_el) {
+        for (auto* field_el = filter_el->FirstChildElement("fields");
+             field_el != nullptr; field_el = field_el->NextSiblingElement("fields")) {
+            BwDtpDetail::FilterField field;
+            field.name = xml_utils::Attr(field_el, "name");
+            field.field = xml_utils::Attr(field_el, "field");
+            field.selected = IsTruthy(xml_utils::Attr(field_el, "selected"));
+            field.filter_selection = xml_utils::Attr(field_el, "filterSelection");
+            field.selection_type = xml_utils::Attr(field_el, "selectionType");
+
+            for (auto* sel_el = field_el->FirstChildElement("selection");
+                 sel_el != nullptr; sel_el = sel_el->NextSiblingElement("selection")) {
+                BwDtpDetail::FilterSelection selection;
+                selection.low = xml_utils::Attr(sel_el, "low");
+                selection.high = xml_utils::Attr(sel_el, "high");
+                selection.op = AttrAny(sel_el, "operator", "op");
+                selection.excluding = IsTruthy(xml_utils::Attr(sel_el, "excluding"));
+                field.selections.push_back(std::move(selection));
+            }
+            detail.filter_fields.push_back(std::move(field));
+        }
+    }
+
+    auto* program_flow_el = root->FirstChildElement("programFlow");
+    if (program_flow_el) {
+        for (auto* node_el = program_flow_el->FirstChildElement("node");
+             node_el != nullptr; node_el = node_el->NextSiblingElement("node")) {
+            BwDtpDetail::ProgramFlowNode node;
+            node.id = xml_utils::Attr(node_el, "id");
+            node.type = xml_utils::Attr(node_el, "type");
+            node.name = xml_utils::Attr(node_el, "name");
+            node.next = xml_utils::Attr(node_el, "next");
+            detail.program_flow.push_back(std::move(node));
+        }
     }
 
     return Result<BwDtpDetail, Error>::Ok(std::move(detail));

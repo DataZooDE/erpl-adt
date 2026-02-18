@@ -12,6 +12,7 @@
 #include <erpl_adt/adt/bw_jobs.hpp>
 #include <erpl_adt/adt/bw_lineage.hpp>
 #include <erpl_adt/adt/bw_lineage_graph.hpp>
+#include <erpl_adt/adt/bw_lineage_planner.hpp>
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_locks.hpp>
 #include <erpl_adt/adt/bw_repo_utils.hpp>
@@ -3320,9 +3321,13 @@ int HandleBwReadQuery(const CommandArgs& args) {
     const auto focus_role = GetFlag(args, "focus-role", "");
     const auto max_nodes_per_role = GetFlag(args, "max-nodes-per-role", "");
     const auto json_shape = GetFlag(args, "json-shape", "legacy");
+    const auto upstream_mode = GetFlag(args, "upstream", "explicit");
     const auto upstream_dtp = GetFlag(args, "upstream-dtp", "");
     const auto upstream_max_xref = GetFlag(args, "upstream-max-xref", "100");
+    const auto lineage_max_steps = GetFlag(args, "lineage-max-steps", "4");
     const bool upstream_no_xref = HasFlag(args, "upstream-no-xref");
+    const bool lineage_strict = HasFlag(args, "lineage-strict");
+    const bool lineage_explain = HasFlag(args, "lineage-explain");
     const auto component_type_lc = ToLowerCopy(component_type);
     static const std::set<std::string> kAllowedComponentTypes = {
         "query", "variable", "rkf", "ckf", "filter", "structure"};
@@ -3356,15 +3361,26 @@ int HandleBwReadQuery(const CommandArgs& args) {
             "Invalid --direction: " + direction + ". Allowed: TD, LR"));
         return 99;
     }
-    static const std::set<std::string> kAllowedJsonShapes = {"legacy", "catalog"};
+    static const std::set<std::string> kAllowedJsonShapes = {"legacy", "catalog", "truth"};
     if (kAllowedJsonShapes.count(ToLowerCopy(json_shape)) == 0) {
         fmt.PrintError(MakeValidationError(
-            "Invalid --json-shape: " + json_shape + ". Allowed: legacy, catalog"));
+            "Invalid --json-shape: " + json_shape + ". Allowed: legacy, catalog, truth"));
+        return 99;
+    }
+    static const std::set<std::string> kAllowedUpstreamModes = {"explicit", "auto"};
+    if (kAllowedUpstreamModes.count(ToLowerCopy(upstream_mode)) == 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --upstream: " + upstream_mode + ". Allowed: explicit, auto"));
         return 99;
     }
     if (!upstream_dtp.empty() && component_type_lc != "query") {
         fmt.PrintError(MakeValidationError(
             "--upstream-dtp is only supported for query components."));
+        return 99;
+    }
+    if (ToLowerCopy(upstream_mode) == "auto" && component_type_lc != "query") {
+        fmt.PrintError(MakeValidationError(
+            "--upstream=auto is only supported for query components."));
         return 99;
     }
     int upstream_max_xref_value = 100;
@@ -3379,6 +3395,21 @@ int HandleBwReadQuery(const CommandArgs& args) {
     if (upstream_max_xref_value <= 0) {
         fmt.PrintError(MakeValidationError(
             "Invalid --upstream-max-xref: " + upstream_max_xref +
+            ". Must be a positive integer."));
+        return 99;
+    }
+    int lineage_max_steps_value = 4;
+    try {
+        lineage_max_steps_value = std::stoi(lineage_max_steps);
+    } catch (const std::exception&) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --lineage-max-steps: " + lineage_max_steps +
+            ". Must be a positive integer."));
+        return 99;
+    }
+    if (lineage_max_steps_value <= 0) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --lineage-max-steps: " + lineage_max_steps +
             ". Must be a positive integer."));
         return 99;
     }
@@ -3434,20 +3465,110 @@ int HandleBwReadQuery(const CommandArgs& args) {
         }
         graph = assembled.Value();
     }
-    if (!upstream_dtp.empty()) {
+    nlohmann::json upstream_resolution = {
+        {"mode", ToLowerCopy(upstream_mode)},
+        {"selected_dtp", upstream_dtp},
+        {"ambiguous", false},
+        {"complete", true},
+        {"steps", 0},
+        {"strategy_version", "2"},
+        {"candidates", nlohmann::json::array()},
+        {"composed_candidates", nlohmann::json::array()},
+        {"warnings", nlohmann::json::array()},
+    };
+    std::string resolved_upstream_dtp = upstream_dtp;
+    std::vector<std::string> auto_upstream_candidates;
+    if (component_type_lc == "query" && ToLowerCopy(upstream_mode) == "auto" &&
+        resolved_upstream_dtp.empty()) {
+        BwUpstreamLineagePlannerOptions plan_options;
+        plan_options.max_steps = lineage_max_steps_value;
+        auto plan_result = BwPlanQueryUpstreamLineage(*session, detail, plan_options);
+        if (plan_result.IsErr()) {
+            if (lineage_strict) {
+                fmt.PrintError(plan_result.Error());
+                return plan_result.Error().ExitCode();
+            }
+            graph.warnings.push_back("Auto upstream planning failed: " +
+                                     plan_result.Error().message);
+            upstream_resolution["warnings"].push_back("planner error: " +
+                                                      plan_result.Error().message);
+        } else {
+            const auto& plan = plan_result.Value();
+            upstream_resolution["mode"] = plan.mode;
+            upstream_resolution["ambiguous"] = plan.ambiguous;
+            upstream_resolution["complete"] = plan.complete;
+            upstream_resolution["steps"] = plan.steps;
+            if (plan.selected_dtp.has_value()) {
+                resolved_upstream_dtp = *plan.selected_dtp;
+                upstream_resolution["selected_dtp"] = *plan.selected_dtp;
+            }
+            for (const auto& candidate : plan.candidates) {
+                auto_upstream_candidates.push_back(candidate.object_name);
+                upstream_resolution["candidates"].push_back({
+                    {"object_name", candidate.object_name},
+                    {"object_type", candidate.object_type},
+                    {"object_version", candidate.object_version},
+                    {"object_status", candidate.object_status},
+                    {"uri", candidate.uri},
+                    {"evidence", candidate.evidence},
+                });
+            }
+            for (const auto& warning : plan.warnings) {
+                graph.warnings.push_back(warning);
+                upstream_resolution["warnings"].push_back(warning);
+            }
+            if (lineage_strict &&
+                (!plan.selected_dtp.has_value() || plan.ambiguous || !plan.complete)) {
+                fmt.PrintError(MakeValidationError(
+                    "Strict upstream resolution failed: ambiguous, incomplete, or missing DTP candidate"));
+                return 99;
+            }
+        }
+    }
+
+    if (!resolved_upstream_dtp.empty()) {
         BwLineageGraphOptions options;
-        options.dtp_name = upstream_dtp;
+        options.dtp_name = resolved_upstream_dtp;
         options.version = version;
         options.include_xref = !upstream_no_xref;
         options.max_xref = upstream_max_xref_value;
         auto lineage_result = BwBuildLineageGraph(*session, options);
         if (lineage_result.IsErr()) {
             graph.warnings.push_back(
-                "Failed to compose upstream lineage for DTP " + upstream_dtp + ": " +
+                "Failed to compose upstream lineage for DTP " + resolved_upstream_dtp + ": " +
                 lineage_result.Error().message);
+            upstream_resolution["warnings"].push_back(
+                "compose error: " + lineage_result.Error().message);
+            if (lineage_strict) {
+                fmt.PrintError(lineage_result.Error());
+                return lineage_result.Error().ExitCode();
+            }
         } else {
             graph = BwMergeQueryAndLineageGraphs(graph, detail, lineage_result.Value());
         }
+    } else if (component_type_lc == "query" && ToLowerCopy(upstream_mode) == "auto" &&
+               !auto_upstream_candidates.empty() && !lineage_strict) {
+        nlohmann::json composed = nlohmann::json::array();
+        for (const auto& candidate_dtp : auto_upstream_candidates) {
+            BwLineageGraphOptions options;
+            options.dtp_name = candidate_dtp;
+            options.version = version;
+            options.include_xref = !upstream_no_xref;
+            options.max_xref = upstream_max_xref_value;
+            auto lineage_result = BwBuildLineageGraph(*session, options);
+            if (lineage_result.IsErr()) {
+                graph.warnings.push_back(
+                    "Failed to compose ambiguous upstream candidate " + candidate_dtp + ": " +
+                    lineage_result.Error().message);
+                upstream_resolution["warnings"].push_back(
+                    "compose candidate error (" + candidate_dtp + "): " +
+                    lineage_result.Error().message);
+                continue;
+            }
+            graph = BwMergeQueryAndLineageGraphs(graph, detail, lineage_result.Value());
+            composed.push_back(candidate_dtp);
+        }
+        upstream_resolution["composed_candidates"] = composed;
     }
     BwQueryGraphReduceOptions reduction_options;
     if (!focus_role.empty()) {
@@ -3460,6 +3581,53 @@ int HandleBwReadQuery(const CommandArgs& args) {
     const auto metrics = BwAnalyzeQueryGraph(graph);
 
     if (fmt.IsJsonMode()) {
+        if (ToLowerCopy(json_shape) == "truth") {
+            nlohmann::json j;
+            j["schema_version"] = "3.0";
+            j["contract"] = "bw.query.lineage.truth";
+            j["root"] = {
+                {"component_type", detail.component_type},
+                {"component_name", detail.name},
+                {"node_id", graph.root_node_id},
+            };
+            j["resolution"] = upstream_resolution;
+            j["candidate_roots"] = upstream_resolution["candidates"];
+            j["ambiguities"] = nlohmann::json::array();
+            if (upstream_resolution.value("ambiguous", false)) {
+                j["ambiguities"].push_back({
+                    {"kind", "multiple_upstream_candidates"},
+                    {"candidate_count", upstream_resolution["candidates"].size()},
+                });
+            }
+            j["warnings"] = graph.warnings;
+            j["provenance"] = graph.provenance;
+            nlohmann::json nodes = nlohmann::json::array();
+            for (const auto& n : graph.nodes) {
+                nodes.push_back({
+                    {"node_id", n.id},
+                    {"type", n.type},
+                    {"name", n.name},
+                    {"role", n.role},
+                    {"label", n.label},
+                    {"attributes", n.attributes},
+                });
+            }
+            j["nodes"] = std::move(nodes);
+            nlohmann::json edges = nlohmann::json::array();
+            for (const auto& e : graph.edges) {
+                edges.push_back({
+                    {"edge_id", e.id},
+                    {"from_node_id", e.from},
+                    {"to_node_id", e.to},
+                    {"edge_type", e.type},
+                    {"role", e.role},
+                    {"evidence", e.attributes},
+                });
+            }
+            j["edges"] = std::move(edges);
+            fmt.PrintJson(j.dump());
+            return 0;
+        }
         if (ToLowerCopy(json_shape) == "catalog") {
             nlohmann::json j;
             j["schema_version"] = "2.0";
@@ -3534,6 +3702,7 @@ int HandleBwReadQuery(const CommandArgs& args) {
                 {"high_fanout_node_ids", metrics.high_fanout_node_ids},
                 {"ergonomics_flags", metrics.ergonomics_flags},
             };
+            j["upstream_resolution"] = upstream_resolution;
             fmt.PrintJson(j.dump());
             return 0;
         }
@@ -3594,6 +3763,7 @@ int HandleBwReadQuery(const CommandArgs& args) {
             {"high_fanout_node_ids", metrics.high_fanout_node_ids},
             {"ergonomics_flags", metrics.ergonomics_flags},
         };
+        j["upstream_resolution"] = upstream_resolution;
 
         // Backward-compatible fields retained during contract transition.
         j["name"] = detail.name;
@@ -3627,6 +3797,23 @@ int HandleBwReadQuery(const CommandArgs& args) {
             BwQueryMermaidOptions mermaid_options;
             mermaid_options.layout = layout;
             mermaid_options.direction = direction;
+            if (lineage_explain && !upstream_resolution["warnings"].empty()) {
+                std::cerr << "[lineage] upstream warnings:\n";
+                for (const auto& warning : upstream_resolution["warnings"]) {
+                    std::cerr << "  - " << warning.get<std::string>() << "\n";
+                }
+            }
+            if (lineage_explain) {
+                std::cerr << "[lineage] mode=" << upstream_resolution["mode"] << " complete="
+                          << (upstream_resolution["complete"].get<bool>() ? "true" : "false")
+                          << " ambiguous="
+                          << (upstream_resolution["ambiguous"].get<bool>() ? "true" : "false")
+                          << " steps=" << upstream_resolution["steps"] << "\n";
+                if (!upstream_resolution["selected_dtp"].get<std::string>().empty()) {
+                    std::cerr << "[lineage] selected_dtp="
+                              << upstream_resolution["selected_dtp"].get<std::string>() << "\n";
+                }
+            }
             std::cout << BwRenderQueryGraphMermaid(graph, mermaid_options);
         }
     }
@@ -5781,8 +5968,8 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw read-query <name> [--version=a|m|d] [--format=mermaid|table] [--layout=compact|detailed] [--direction=TD|LR]\n"
                      "       erpl-adt bw read-query <query|variable|rkf|ckf|filter|structure> <name> [--version=a|m|d] [--format=mermaid|table] [--layout=compact|detailed] [--direction=TD|LR]\n"
-                     "       erpl-adt bw read-query <name> [--max-nodes-per-role=<n>] [--focus-role=<role>] [--json-shape=legacy|catalog]\n"
-                     "       erpl-adt bw read-query query <name> --upstream-dtp=<dtp> [--upstream-no-xref] [--upstream-max-xref=<n>]";
+                     "       erpl-adt bw read-query <name> [--max-nodes-per-role=<n>] [--focus-role=<role>] [--json-shape=legacy|catalog|truth]\n"
+                     "       erpl-adt bw read-query query <name> [--upstream=explicit|auto] [--upstream-dtp=<dtp>] [--upstream-no-xref] [--upstream-max-xref=<n>] [--lineage-max-steps=<n>] [--lineage-strict] [--lineage-explain]";
         help.args_description = "<name>               Query component technical name\n"
                                 "  <component-type>     Optional explicit type (default: query)";
         help.long_description = "Read BW query-family component definitions with structured references "
@@ -5794,16 +5981,22 @@ void RegisterAllCommands(CommandRouter& router) {
             {"direction", "<d>", "Mermaid direction: TD (default) or LR", false},
             {"max-nodes-per-role", "<n>", "Reduce graph fan-out: keep at most n nodes per role; add summary nodes", false},
             {"focus-role", "<r>", "Limit reduction to a specific role (rows|columns|free|filter|member|subcomponent|component)", false},
-            {"json-shape", "<s>", "JSON output shape: legacy (default) or catalog (flat ingestion contract)", false},
+            {"json-shape", "<s>", "JSON output shape: legacy (default), catalog (flat), or truth (lineage v3)", false},
+            {"upstream", "<m>", "Upstream resolution mode: explicit (default) or auto", false},
             {"upstream-dtp", "<name>", "Compose query graph with upstream BW lineage rooted at DTP", false},
             {"upstream-no-xref", "", "Disable xref expansion for upstream lineage composition", false},
             {"upstream-max-xref", "<n>", "Maximum xref neighbors in upstream lineage composition (default: 100)", false},
+            {"lineage-max-steps", "<n>", "Maximum auto-upstream planner expansion steps (default: 4)", false},
+            {"lineage-strict", "", "Fail when auto-upstream resolution is ambiguous or incomplete", false},
+            {"lineage-explain", "", "Emit upstream resolution warnings/decisions for troubleshooting", false},
         };
         help.examples = {
             "erpl-adt bw read-query 0D_FC_NW_C01_Q0007",
             "erpl-adt bw read-query 0D_FC_NW_C01_Q0007 --layout=detailed --direction=LR",
             "erpl-adt --json bw read-query 0D_FC_NW_C01_Q0007 --max-nodes-per-role=5 --focus-role=filter",
             "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --json-shape=catalog",
+            "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --json-shape=truth --upstream=auto",
+            "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --upstream=auto --lineage-explain",
             "erpl-adt --json bw read-query query 0D_FC_NW_C01_Q0007 --upstream-dtp=DTP_ZSALES --upstream-no-xref",
             "erpl-adt bw read-query query ZQ_SALES --format=table",
             "erpl-adt --json bw read-query variable ZVAR_FISCYEAR",

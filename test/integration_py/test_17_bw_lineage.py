@@ -375,6 +375,29 @@ class TestBwLineage:
         assert isinstance(metrics.get("edge_count"), int)
         assert isinstance(metrics.get("ergonomics_flags"), list)
 
+    def test_read_query_truth_json_shape_auto_resolution(self, cli):
+        """read-query truth shape exposes resolution + candidate roots for lineage tooling."""
+        query_name = "0D_FC_NW_C01_Q0007"
+        result = cli.run(
+            "bw", "read-query", "query", query_name,
+            "--upstream=auto",
+            "--lineage-max-steps=4",
+            "--json-shape=truth"
+        )
+        if result.returncode != 0:
+            pytest.skip("Known demo query or auto lineage resolution not available")
+        data = json.loads(result.stdout.strip())
+        assert data.get("contract") == "bw.query.lineage.truth"
+        assert data.get("schema_version") == "3.0"
+        assert isinstance(data.get("candidate_roots"), list)
+        resolution = data.get("resolution", {})
+        assert resolution.get("mode") == "auto"
+        assert isinstance(resolution.get("complete"), bool)
+        assert isinstance(resolution.get("steps"), int)
+        assert isinstance(data.get("nodes"), list)
+        assert isinstance(data.get("edges"), list)
+
+
     def test_read_query_with_upstream_lineage_composition(self, cli, known_dtp):
         """read-query can compose upstream DTP lineage into one graph payload."""
         query_name = "0D_FC_NW_C01_Q0007"
@@ -416,6 +439,14 @@ class TestBwLineage:
         )
         assert result.returncode == 99
         assert "invalid --json-shape" in result.stderr.lower()
+
+    def test_read_query_invalid_lineage_max_steps_fails(self, cli):
+        """read-query with non-positive lineage max steps fails with validation error."""
+        result = cli.run_no_json(
+            "bw", "read-query", "0D_FC_NW_C01_Q0007", "--lineage-max-steps=0"
+        )
+        assert result.returncode == 99
+        assert "invalid --lineage-max-steps" in result.stderr.lower()
 
     def test_read_query_upstream_dtp_for_non_query_fails(self, cli):
         """upstream composition is only supported for query component reads."""

@@ -42,6 +42,37 @@ const char* GetAttr(const tinyxml2::XMLElement* el,
     return val ? val : "";
 }
 
+// Parse <alerts> element into a vector of TestAlert.
+std::vector<TestAlert> ParseAlerts(const tinyxml2::XMLElement* parent) {
+    std::vector<TestAlert> alerts;
+    auto* alerts_el = parent->FirstChildElement("alerts");
+    if (!alerts_el) return alerts;
+
+    for (auto* alert = alerts_el->FirstChildElement("alert"); alert;
+         alert = alert->NextSiblingElement("alert")) {
+        TestAlert ta;
+        ta.kind = GetAttr(alert, "kind");
+        ta.severity = GetAttr(alert, "severity");
+
+        auto* title = alert->FirstChildElement("title");
+        if (title && title->GetText()) {
+            ta.title = title->GetText();
+        }
+
+        auto* details = alert->FirstChildElement("details");
+        if (details) {
+            auto* detail = details->FirstChildElement("detail");
+            if (detail) {
+                const char* text = detail->Attribute("text");
+                if (text) ta.detail = text;
+            }
+        }
+
+        alerts.push_back(std::move(ta));
+    }
+    return alerts;
+}
+
 Result<TestRunResult, Error> ParseTestRunResult(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
@@ -72,46 +103,24 @@ Result<TestRunResult, Error> ParseTestRunResult(
             cls.risk_level = GetAttr(tc, "riskLevel");
             cls.duration_category = GetAttr(tc, "durationCategory");
 
+            // Parse class-level alerts (e.g. risk level exceeded).
+            cls.alerts = ParseAlerts(tc);
+
             auto* methods = tc->FirstChildElement("testMethods");
-            if (!methods) continue;
+            if (methods) {
+                for (auto* tm = methods->FirstChildElement("testMethod"); tm;
+                     tm = tm->NextSiblingElement("testMethod")) {
+                    TestMethodResult method;
+                    method.name = GetAttr(tm, "adtcore:name", "name");
 
-            for (auto* tm = methods->FirstChildElement("testMethod"); tm;
-                 tm = tm->NextSiblingElement("testMethod")) {
-                TestMethodResult method;
-                method.name = GetAttr(tm, "adtcore:name", "name");
-
-                const char* exec_time = tm->Attribute("executionTime");
-                if (exec_time) {
-                    method.execution_time_ms = std::atoi(exec_time);
-                }
-
-                auto* alerts_el = tm->FirstChildElement("alerts");
-                if (alerts_el) {
-                    for (auto* alert = alerts_el->FirstChildElement("alert"); alert;
-                         alert = alert->NextSiblingElement("alert")) {
-                        TestAlert ta;
-                        ta.kind = GetAttr(alert, "kind");
-                        ta.severity = GetAttr(alert, "severity");
-
-                        auto* title = alert->FirstChildElement("title");
-                        if (title && title->GetText()) {
-                            ta.title = title->GetText();
-                        }
-
-                        auto* details = alert->FirstChildElement("details");
-                        if (details) {
-                            auto* detail = details->FirstChildElement("detail");
-                            if (detail) {
-                                const char* text = detail->Attribute("text");
-                                if (text) ta.detail = text;
-                            }
-                        }
-
-                        method.alerts.push_back(std::move(ta));
+                    const char* exec_time = tm->Attribute("executionTime");
+                    if (exec_time) {
+                        method.execution_time_ms = std::atoi(exec_time);
                     }
-                }
 
-                cls.methods.push_back(std::move(method));
+                    method.alerts = ParseAlerts(tm);
+                    cls.methods.push_back(std::move(method));
+                }
             }
 
             result.classes.push_back(std::move(cls));

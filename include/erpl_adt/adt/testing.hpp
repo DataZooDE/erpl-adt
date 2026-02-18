@@ -38,6 +38,7 @@ struct TestClassResult {
     std::string risk_level;
     std::string duration_category;
     std::vector<TestMethodResult> methods;
+    std::vector<TestAlert> alerts;  // class-level alerts (e.g. risk level exceeded)
 
     [[nodiscard]] int FailedCount() const {
         int count = 0;
@@ -45,6 +46,10 @@ struct TestClassResult {
             if (!m.Passed()) ++count;
         }
         return count;
+    }
+
+    [[nodiscard]] bool Skipped() const {
+        return methods.empty() && !alerts.empty();
     }
 };
 
@@ -71,6 +76,14 @@ struct TestRunResult {
     }
 
     [[nodiscard]] bool AllPassed() const { return TotalFailed() == 0; }
+
+    [[nodiscard]] int TotalSkipped() const {
+        int count = 0;
+        for (const auto& c : classes) {
+            if (c.Skipped()) ++count;
+        }
+        return count;
+    }
 };
 
 // ---------------------------------------------------------------------------

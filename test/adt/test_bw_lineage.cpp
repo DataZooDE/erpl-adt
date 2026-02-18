@@ -101,6 +101,44 @@ TEST_CASE("BwReadTransformation: parses rules", "[adt][bw][lineage][trfn]") {
     CHECK(rules[3].formula.find("AMOUNT") != std::string::npos);
 }
 
+TEST_CASE("BwReadTransformation: parses grouped step semantics", "[adt][bw][lineage][trfn]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_object_trfn_complex.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwReadTransformation(mock, "ZTRFN_COMPLEX");
+    REQUIRE(result.IsOk());
+
+    const auto& detail = result.Value();
+    CHECK(detail.start_routine == "START_FORM");
+    CHECK(detail.end_routine == "END_FORM");
+    CHECK(detail.expert_routine == "EXPERT_FORM");
+    CHECK(detail.hana_runtime == true);
+
+    REQUIRE(detail.rules.size() == 6);
+    CHECK(detail.rules[0].group_id == "10");
+    CHECK(detail.rules[0].group_type == "STANDARD");
+    CHECK(detail.rules[0].source_fields.size() == 1);
+    CHECK(detail.rules[0].target_fields.size() == 1);
+    CHECK(detail.rules[0].rule_type == "StepDirect");
+
+    CHECK(detail.rules[2].rule_type == "StepFormula");
+    CHECK(detail.rules[2].formula.find("SOURCE_FIELDS-AMOUNT") != std::string::npos);
+    CHECK(detail.rules[2].source_fields.size() == 2);
+
+    CHECK(detail.rules[3].rule_type == "StepConstant");
+    CHECK(detail.rules[3].constant == "X");
+    CHECK(detail.rules[3].target_field == "FIXED_FLAG");
+
+    CHECK(detail.rules[4].rule_type == "StepRoutine");
+    CHECK(detail.rules[4].step_attributes.at("classNameM") == "ZCL_TRFN_ROUTINE");
+    CHECK(detail.rules[4].step_attributes.at("methodNameM") == "MAP_FIELD");
+
+    CHECK(detail.rules[5].rule_type == "StepRead");
+    CHECK(detail.rules[5].step_attributes.at("objectName") == "0MATERIAL");
+    CHECK(detail.rules[5].step_attributes.at("objectType") == "IOBJ");
+}
+
 TEST_CASE("BwReadTransformation: sends correct URL", "[adt][bw][lineage][trfn]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<trfn:transformation xmlns:trfn=\"x\"/>"}));
@@ -214,6 +252,39 @@ TEST_CASE("BwReadDtpDetail: parses source and target", "[adt][bw][lineage][dtp]"
     CHECK(detail.target_name == "ZSALES_DATA");
     CHECK(detail.target_type == "ADSO");
     CHECK(detail.source_system == "ECLCLNT100");
+}
+
+TEST_CASE("BwReadDtpDetail: parses filter and execution sections", "[adt][bw][lineage][dtp]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_object_dtp_complex.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwReadDtpDetail(mock, "ZDTP_COMPLEX");
+    REQUIRE(result.IsOk());
+
+    const auto& detail = result.Value();
+    CHECK(detail.type == "FLEXIBLE");
+    CHECK(detail.request_selection_mode == "DELTA");
+    CHECK(detail.extraction_settings.at("packageSize") == "50000");
+    CHECK(detail.execution_settings.at("processingMode") == "SERIAL");
+    CHECK(detail.runtime_properties.at("tempStorage") == "HANA");
+    CHECK(detail.error_handling.at("errorDtp") == "ZDTP_ERROR");
+    CHECK(detail.dtp_execution.at("background") == "true");
+    CHECK(detail.dtp_execution.at("simulation") == "true");
+
+    REQUIRE(detail.semantic_group_fields.size() == 2);
+    CHECK(detail.semantic_group_fields[0] == "0CALDAY");
+
+    REQUIRE(detail.filter_fields.size() == 2);
+    CHECK(detail.filter_fields[0].name == "CALDAY");
+    REQUIRE(detail.filter_fields[0].selections.size() == 1);
+    CHECK(detail.filter_fields[0].selections[0].op == "BT");
+    CHECK(detail.filter_fields[0].selections[0].low == "20240101");
+
+    REQUIRE(detail.program_flow.size() == 3);
+    CHECK(detail.program_flow[1].id == "FLT");
+    CHECK(detail.program_flow[1].type == "FILTER");
+    CHECK(detail.program_flow[1].next == "SRC");
 }
 
 TEST_CASE("BwReadDtpDetail: sends correct URL", "[adt][bw][lineage][dtp]") {

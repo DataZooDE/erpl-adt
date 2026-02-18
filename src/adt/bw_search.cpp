@@ -55,23 +55,24 @@ std::string BuildSearchUrl(const BwSearchOptions& options) {
     return url;
 }
 
-Result<std::vector<BwSearchResult>, Error> ParseSearchResponse(
+Result<BwSearchResponse, Error> ParseSearchResponse(
     std::string_view xml) {
     tinyxml2::XMLDocument doc;
     if (auto parse_error = adt_utils::ParseXmlOrError(
             doc, xml, "BwSearchObjects", kBwSearchPath,
             "Failed to parse BW search response XML")) {
-        return Result<std::vector<BwSearchResult>, Error>::Err(
+        return Result<BwSearchResponse, Error>::Err(
             std::move(*parse_error));
     }
 
     auto* root = doc.RootElement();
     if (!root) {
-        return Result<std::vector<BwSearchResult>, Error>::Ok(
-            std::vector<BwSearchResult>{});
+        return Result<BwSearchResponse, Error>::Ok(BwSearchResponse{});
     }
 
-    std::vector<BwSearchResult> results;
+    BwSearchResponse response;
+    response.feed_incomplete =
+        xml_utils::AttrAny(root, "bwModel:feedIncomplete", "feedIncomplete") == "true";
 
     // Atom feed: <feed> -> <entry> elements
     for (auto* entry = root->FirstChildElement(); entry;
@@ -111,20 +112,20 @@ Result<std::vector<BwSearchResult>, Error> ParseSearchResponse(
         }
 
         if (!r.name.empty()) {
-            results.push_back(std::move(r));
+            response.results.push_back(std::move(r));
         }
     }
 
-    return Result<std::vector<BwSearchResult>, Error>::Ok(std::move(results));
+    return Result<BwSearchResponse, Error>::Ok(std::move(response));
 }
 
 } // anonymous namespace
 
-Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
+Result<BwSearchResponse, Error> BwSearchObjectsDetailed(
     IAdtSession& session,
     const BwSearchOptions& options) {
     if (options.query.empty()) {
-        return Result<std::vector<BwSearchResult>, Error>::Err(Error{
+        return Result<BwSearchResponse, Error>::Err(Error{
             "BwSearchObjects", kBwSearchPath, std::nullopt,
             "Search query must not be empty", std::nullopt});
     }
@@ -136,7 +137,7 @@ Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
 
     auto response = session.Get(url, headers);
     if (response.IsErr()) {
-        return Result<std::vector<BwSearchResult>, Error>::Err(
+        return Result<BwSearchResponse, Error>::Err(
             std::move(response).Error());
     }
 
@@ -144,10 +145,21 @@ Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
     if (http.status_code != 200) {
         auto error = Error::FromHttpStatus("BwSearchObjects", url, http.status_code, http.body);
         AddBwHint(error);
-        return Result<std::vector<BwSearchResult>, Error>::Err(std::move(error));
+        return Result<BwSearchResponse, Error>::Err(std::move(error));
     }
 
     return ParseSearchResponse(http.body);
+}
+
+Result<std::vector<BwSearchResult>, Error> BwSearchObjects(
+    IAdtSession& session,
+    const BwSearchOptions& options) {
+    auto response = BwSearchObjectsDetailed(session, options);
+    if (response.IsErr()) {
+        return Result<std::vector<BwSearchResult>, Error>::Err(response.Error());
+    }
+    return Result<std::vector<BwSearchResult>, Error>::Ok(
+        std::move(response.Value().results));
 }
 
 } // namespace erpl_adt
