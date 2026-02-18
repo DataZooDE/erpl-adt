@@ -139,3 +139,61 @@ def e2e_context(cli, tmp_path_factory):
     if uri:
         # Auto-lock mode handles lock→delete→unlock atomically.
         cli.run("object", "delete", uri)
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped BW availability fixtures (shared across bw test files)
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402 — local alias to avoid polluting namespace
+
+
+@pytest.fixture(scope="session")
+def bw_available(cli):
+    """Probe BW discovery endpoint once. Skip all BW tests if unavailable."""
+    result = cli.run("bw", "discover")
+    if result.returncode != 0:
+        pytest.skip("BW Modeling API not available on this system")
+    data = _json.loads(result.stdout.strip()) if result.stdout.strip() else []
+    if not data:
+        pytest.skip("BW discovery returned no services")
+    return data
+
+
+@pytest.fixture(scope="session")
+def bw_has_search(cli, bw_available):
+    """Check if BW search service is available and activated."""
+    terms = {s.get("term", "") for s in bw_available}
+    if "bwSearch" not in terms and "search" not in terms:
+        pytest.skip("BW search service not available")
+    # Probe the search endpoint — discovery may list it even if not activated
+    result = cli.run("bw", "search", "*", "--max", "1")
+    if result.returncode != 0:
+        stderr = result.stderr.strip().lower()
+        if "not activated" in stderr or "not implemented" in stderr:
+            pytest.skip("BW search service listed but not activated")
+        pytest.fail(f"BW search probe failed unexpectedly: {result.stderr.strip()}")
+    return True
+
+
+@pytest.fixture(scope="session")
+def bw_has_adso(bw_available):
+    """Check if ADSO service is available."""
+    terms = {s.get("term", "") for s in bw_available}
+    if "adso" not in terms:
+        pytest.skip("BW ADSO service not available")
+    return True
+
+
+@pytest.fixture(scope="session")
+def bw_has_cto(bw_available):
+    """Check if BW transport organizer (CTO) service is available."""
+    terms = {s.get("term", "") for s in bw_available}
+    if "cto" not in terms:
+        pytest.skip("BW CTO (transport) service not available")
+    return True
+
+
+@pytest.fixture(scope="session")
+def bw_terms(bw_available):
+    return {s.get("term", "") for s in bw_available}
