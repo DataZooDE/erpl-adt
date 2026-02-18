@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -920,7 +921,8 @@ TEST_CASE("AdtSession: ResetStatefulSession clears cookies and CSRF token", "[ad
     session->ResetStatefulSession();
 
     // SaveSession into a temp file and verify no csrf_token or cookies are written.
-    const std::string tmp_path = "/tmp/test_reset_session.json";
+    const std::string tmp_path =
+        (std::filesystem::temp_directory_path() / "erpl_adt_reset_session.json").string();
     auto save_result = session->SaveSession(tmp_path);
     REQUIRE(save_result.IsOk());
 
