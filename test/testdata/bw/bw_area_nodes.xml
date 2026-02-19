@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:bwModel="http://www.sap.com/bw/modeling">
+  <title>BW Node Structure for 0D_NW_DEMO</title>
+  <entry>
+    <title>ADSO ZADSO_SALES</title>
+    <id>/sap/bw/modeling/adso/ZADSO_SALES/a</id>
+    <content type="application/xml">
+      <bwModel:nodeResult objectName="ZADSO_SALES" objectType="ADSO"
+          objectSubtype="STANDARD" objectVersion="A" objectStatus="ACT"
+          objectDesc="Sales DataStore Object"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/adso/ZADSO_SALES/a"/>
+  </entry>
+  <entry>
+    <title>DTP ZDTP_SALES</title>
+    <id>/sap/bw/modeling/dtpa/ZDTP_SALES/a</id>
+    <content type="application/xml">
+      <bwModel:nodeResult objectName="ZDTP_SALES" objectType="DTPA"
+          objectSubtype="STANDARD" objectVersion="A" objectStatus="ACT"
+          objectDesc="DTP ZDTP_SALES"/>
+    </content>
+    <link rel="self" href="/sap/bw/modeling/dtpa/ZDTP_SALES/a"/>
+  </entry>
+</feed>

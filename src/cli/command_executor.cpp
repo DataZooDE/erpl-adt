@@ -25,6 +25,7 @@
 #include <erpl_adt/adt/bw_nodes.hpp>
 #include <erpl_adt/adt/bw_transport.hpp>
 #include <erpl_adt/adt/bw_transport_collect.hpp>
+#include <erpl_adt/adt/bw_export.hpp>
 #include <erpl_adt/adt/bw_validation.hpp>
 #include <erpl_adt/adt/bw_valuehelp.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
@@ -3982,6 +3983,128 @@ int HandleBwLineage(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
+// bw export — enumerate and export an entire infoarea
+// ---------------------------------------------------------------------------
+int HandleBwExport(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
+            "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] "
+            "[--version a|m] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    BwExportOptions opts;
+    opts.infoarea_name = args.positional[0];
+    opts.version = GetFlag(args, "version", "a");
+    opts.include_lineage = !HasFlag(args, "no-lineage");
+    opts.include_queries = !HasFlag(args, "no-queries");
+
+    if (HasFlag(args, "max-depth")) {
+        auto parsed = ParseIntInRange(GetFlag(args, "max-depth"), 0, 100, "--max-depth");
+        if (parsed.IsErr()) {
+            fmt.PrintError(parsed.Error());
+            return 99;
+        }
+        opts.max_depth = parsed.Value();
+    }
+
+    if (HasFlag(args, "types")) {
+        auto types_str = GetFlag(args, "types");
+        std::istringstream ss(types_str);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            if (!tok.empty()) opts.types_filter.push_back(tok);
+        }
+    }
+
+    auto result = BwExportInfoarea(*session, opts);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& exp = result.Value();
+    bool mermaid_mode = HasFlag(args, "mermaid");
+    std::string shape = GetFlag(args, "shape", "catalog");
+    std::string service_name = GetFlag(args, "service-name", "erpl_adt");
+    std::string system_id = GetFlag(args, "system-id", "");
+
+    // Generate outputs
+    std::string catalog_json = BwRenderExportCatalogJson(exp);
+    std::string mermaid_str = mermaid_mode ? BwRenderExportMermaid(exp) : "";
+    std::string om_json;
+    if (shape == "openmetadata") {
+        om_json = BwRenderExportOpenMetadataJson(exp, service_name, system_id);
+    }
+
+    // Write to out-dir if requested
+    if (HasFlag(args, "out-dir")) {
+        auto out_dir = GetFlag(args, "out-dir");
+        std::string catalog_path =
+            out_dir + "/" + opts.infoarea_name + "_catalog.json";
+        std::string mmd_path =
+            out_dir + "/" + opts.infoarea_name + "_dataflow.mmd";
+        std::ofstream cf(catalog_path);
+        if (!cf) {
+            fmt.PrintError(MakeValidationError("Cannot write to: " + catalog_path));
+            return 99;
+        }
+        cf << catalog_json;
+        cf.close();
+        std::ofstream mf(mmd_path);
+        if (!mf) {
+            fmt.PrintError(MakeValidationError("Cannot write to: " + mmd_path));
+            return 99;
+        }
+        mf << BwRenderExportMermaid(exp);
+        mf.close();
+        if (!fmt.IsJsonMode()) {
+            std::cout << "Exported " << exp.objects.size() << " objects from "
+                      << exp.infoarea << "\n";
+            std::cout << "  Catalog JSON:  " << catalog_path << "\n";
+            std::cout << "  Mermaid:       " << mmd_path << "\n";
+            if (!exp.warnings.empty()) {
+                std::cout << "  Warnings: " << exp.warnings.size() << "\n";
+            }
+        }
+        if (fmt.IsJsonMode()) {
+            fmt.PrintJson(catalog_json);
+        }
+        return 0;
+    }
+
+    // Print to stdout
+    if (mermaid_mode) {
+        std::cout << BwRenderExportMermaid(exp);
+    } else if (shape == "openmetadata") {
+        fmt.PrintJson(om_json);
+    } else {
+        if (fmt.IsJsonMode()) {
+            fmt.PrintJson(catalog_json);
+        } else {
+            std::cout << "Infoarea: " << exp.infoarea << "\n";
+            std::cout << "Objects:  " << exp.objects.size() << "\n";
+            std::cout << "Dataflow nodes: " << exp.dataflow_nodes.size() << "\n";
+            std::cout << "Dataflow edges: " << exp.dataflow_edges.size() << "\n";
+            if (!exp.warnings.empty()) {
+                std::cout << "Warnings: " << exp.warnings.size() << "\n";
+                for (const auto& w : exp.warnings) {
+                    std::cout << "  - " << w << "\n";
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // bw transport (sub-actions: check, write, list, collect)
 // ---------------------------------------------------------------------------
 int HandleBwTransport(const CommandArgs& args) {
@@ -5220,7 +5343,7 @@ void PrintBwGroupHelp(const CommandRouter& router, std::ostream& out, bool color
         std::vector<std::string> actions;
     };
     const std::vector<Category> categories = {
-        {"SEARCH & READ",    {"search", "read", "read-adso", "read-trfn", "read-dtp", "read-rsds", "read-query", "read-dmod", "lineage", "discover"}},
+        {"SEARCH & READ",    {"search", "read", "read-adso", "read-trfn", "read-dtp", "read-rsds", "read-query", "read-dmod", "lineage", "export", "discover"}},
         {"CROSS-REFERENCES", {"xref", "nodes", "nodepath"}},
         {"REPOSITORY",       {"search-md", "favorites", "applog", "message"}},
         {"LIFECYCLE",        {"create", "lock", "unlock", "save", "delete", "activate"}},
@@ -6046,6 +6169,47 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("bw", "lineage", "Build canonical BW lineage graph",
                          HandleBwLineage, std::move(help));
+    }
+
+    // bw export
+    {
+        CommandHelp help;
+        help.usage =
+            "erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata]\n"
+            "                   [--max-depth N] [--types T1,T2,...]\n"
+            "                   [--no-lineage] [--no-queries] [--version a|m]\n"
+            "                   [--out-dir <dir>] [--service-name <name>] [--system-id <id>]";
+        help.args_description = "<infoarea>    InfoArea name to export (e.g. 0D_NW_DEMO)";
+        help.long_description =
+            "Enumerate all objects in a BW InfoArea (ADSOs, RSDs, TRFNs, DTPs, Queries) "
+            "and export them as structured JSON or a Mermaid dataflow diagram. "
+            "Optionally writes catalog JSON + Mermaid to --out-dir. "
+            "DTP lineage is collected per-object and merged into a unified dataflow graph.";
+        help.flags = {
+            {"mermaid", "", "Output Mermaid dataflow diagram instead of JSON", false},
+            {"shape", "<catalog|openmetadata>",
+             "JSON output shape: catalog (default) or openmetadata", false},
+            {"max-depth", "<N>", "Max recursion depth for nested infoareas (default: 10)", false},
+            {"types", "<T1,T2,...>",
+             "Comma-separated TLOGO type filter (e.g. ADSO,DTPA). Default: all", false},
+            {"no-lineage", "", "Skip DTP lineage graph collection (faster)", false},
+            {"no-queries", "", "Skip query graph collection", false},
+            {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
+            {"out-dir", "<dir>",
+             "Save {infoarea}_catalog.json and {infoarea}_dataflow.mmd to directory", false},
+            {"service-name", "<name>",
+             "Service name for openmetadata FQN (default: erpl_adt)", false},
+            {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+        };
+        help.examples = {
+            "erpl-adt --json bw export 0D_NW_DEMO",
+            "erpl-adt bw export 0D_NW_DEMO --mermaid",
+            "erpl-adt --json bw export 0D_NW_DEMO --shape openmetadata --system-id A4H",
+            "erpl-adt --json bw export 0D_NW_DEMO --types ADSO,DTPA --no-lineage",
+            "erpl-adt bw export 0D_NW_DEMO --out-dir /tmp/bw_export",
+        };
+        router.Register("bw", "export", "Export all objects in a BW InfoArea to JSON/Mermaid",
+                         HandleBwExport, std::move(help));
     }
 
     // bw lock
