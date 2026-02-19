@@ -68,6 +68,8 @@ struct BwExportOptions {
     bool include_lineage = true;
     bool include_queries = true;
     bool include_search_supplement = true;  // Supplement BFS with BwSearch(infoArea=...) to find IOBJ/ELEM
+    bool include_xref_edges = true;         // Derive INFOPROVIDER→QUERY edges via xref API
+    bool include_elem_provider_edges = false; // Parse orphan ELEM XMLs to recover missing provider edges
     std::vector<std::string> types_filter;  // empty = all
 };
 

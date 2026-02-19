@@ -7,6 +7,7 @@
 #include <erpl_adt/adt/bw_query.hpp>
 #include <erpl_adt/adt/bw_rsds.hpp>
 #include <erpl_adt/adt/bw_search.hpp>
+#include <erpl_adt/adt/bw_xref.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -252,6 +253,181 @@ void BuildDataflowGraph(BwInfoareaExport& exp) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CollectInfoproviderXrefEdges — for each CUBE/MPRO/ADSO/HCPR in exp.objects,
+// call the xref API to get consuming queries and add them as dataflow edges.
+// ---------------------------------------------------------------------------
+void CollectInfoproviderXrefEdges(IAdtSession& session, BwInfoareaExport& exp) {
+    static const std::set<std::string> kInfoproviderTypes = {
+        "CUBE", "MPRO", "HCPR", "ADSO", "DSO",
+    };
+
+    // Build index of objects already known (type:name → ptr)
+    std::map<std::string, bool> known_keys;
+    for (const auto& obj : exp.objects) {
+        known_keys[obj.type + ":" + obj.name] = true;
+    }
+
+    // Track edges already added
+    std::set<std::string> seen_edges;
+    for (const auto& e : exp.dataflow_edges) {
+        seen_edges.insert(e.from + "->" + e.to);
+    }
+    int edge_idx = static_cast<int>(exp.dataflow_edges.size());
+
+    // Snapshot the infoproviders we want to iterate (don't iterate while appending)
+    std::vector<BwExportedObject> providers;
+    for (const auto& obj : exp.objects) {
+        if (kInfoproviderTypes.count(obj.type)) {
+            providers.push_back(obj);
+        }
+    }
+
+    for (const auto& prov : providers) {
+        BwXrefOptions xref;
+        xref.object_type = prov.type;
+        xref.object_name = prov.name;
+        xref.object_version = "A";
+
+        const std::string prov_ep = "/sap/bw/modeling/repo/is/xref?objectType=" +
+                                    prov.type + "&objectName=" + prov.name;
+        auto xres = BwGetXrefs(session, xref);
+        if (xres.IsErr()) {
+            exp.warnings.push_back("xref " + prov.type + " " + prov.name + ": " +
+                                   xres.Error().message);
+            exp.provenance.push_back({"BwGetXrefs", prov_ep, "error"});
+            continue;
+        }
+        exp.provenance.push_back({"BwGetXrefs", prov_ep, "ok"});
+
+        for (const auto& entry : xres.Value()) {
+            if (entry.name.empty() || entry.type.empty()) continue;
+
+            // Add the xref target as an object if not yet in the export.
+            std::string key = entry.type + ":" + entry.name;
+            if (!known_keys.count(key)) {
+                BwExportedObject new_obj;
+                new_obj.name = entry.name;
+                new_obj.type = entry.type;
+                new_obj.status = entry.status;
+                new_obj.description = entry.description;
+                new_obj.uri = entry.uri;
+                exp.objects.push_back(std::move(new_obj));
+                known_keys[key] = true;
+            }
+
+            // Add edge infoprovider → consumer
+            std::string edge_key = prov.name + "->" + entry.name;
+            if (seen_edges.insert(edge_key).second) {
+                BwLineageEdge edge;
+                edge.id = "edge:xref:" + std::to_string(++edge_idx);
+                edge.from = prov.name;
+                edge.to = entry.name;
+                edge.type = "xref";
+                exp.dataflow_edges.push_back(std::move(edge));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CollectOrphanElemEdges — for each ELEM that has no incoming dataflow edge,
+// fetch its query XML and parse providerName to derive the missing edge.
+//
+// This covers two cases xref alone cannot handle:
+//   1. ELEM→infoprovider edges where the provider was not in kInfoproviderTypes
+//      (e.g., an ELEM whose provider is itself another reusable ELEM/QUERY).
+//   2. CKF/RKF that reference a CUBE/MPRO directly (the xref is CUBE→consumers,
+//      which may not enumerate all CKF/RKF subtypes on every SAP version).
+// ---------------------------------------------------------------------------
+void CollectOrphanElemEdges(IAdtSession& session,
+                             const std::string& version,
+                             BwInfoareaExport& exp) {
+    // Subtype → BwReadQueryComponent component_type mapping
+    auto SubtypeToComponentType = [](const std::string& subtype) -> std::string {
+        if (subtype == "REP")  return "QUERY";
+        if (subtype == "CKF")  return "CKF";
+        if (subtype == "RKF")  return "RKF";
+        if (subtype == "VAR")  return "VARIABLE";
+        if (subtype == "FILT") return "FILTER";
+        if (subtype == "STR")  return "STRUCTURE";
+        // Unknown subtypes: attempt QUERY (most common for ELEM)
+        return "QUERY";
+    };
+
+    // Build set of names that already have incoming edges.
+    std::set<std::string> has_incoming;
+    for (const auto& e : exp.dataflow_edges) {
+        has_incoming.insert(e.to);
+    }
+
+    // Build object index and edge dedup set.
+    std::map<std::string, bool> known_keys;
+    for (const auto& obj : exp.objects) {
+        known_keys[obj.type + ":" + obj.name] = true;
+    }
+    std::set<std::string> seen_edges;
+    for (const auto& e : exp.dataflow_edges) {
+        seen_edges.insert(e.from + "->" + e.to);
+    }
+    int edge_idx = static_cast<int>(exp.dataflow_edges.size());
+
+    // Snapshot ELEM objects to iterate (exp.objects may grow while we append).
+    std::vector<BwExportedObject> elems;
+    for (const auto& obj : exp.objects) {
+        if (obj.type == "ELEM" && !obj.name.empty() &&
+            has_incoming.find(obj.name) == has_incoming.end()) {
+            elems.push_back(obj);
+        }
+    }
+
+    for (const auto& elem : elems) {
+        const auto comp_type = SubtypeToComponentType(elem.subtype);
+        const std::string ep = "/sap/bw/modeling/query/" + elem.name + "/" + version;
+
+        auto res = BwReadQueryComponent(session, comp_type, elem.name, version, "");
+        if (res.IsErr()) {
+            // Not a hard error — just record and move on.
+            exp.warnings.push_back("elem-provider " + elem.name + ": " + res.Error().message);
+            exp.provenance.push_back({"BwReadQueryComponent", ep, "error"});
+            continue;
+        }
+        exp.provenance.push_back({"BwReadQueryComponent", ep, "ok"});
+
+        const auto& detail = res.Value();
+        if (detail.info_provider.empty()) continue;
+
+        const std::string provider = detail.info_provider;
+
+        // Add the provider object if it's not already in the export.
+        // We don't know its type, so mark it generically and let the caller
+        // infer from context (it will appear in the Mermaid diagram if it
+        // matches a known type bucket).
+        if (!known_keys.count(":" + provider) &&
+            !known_keys.count("CUBE:" + provider) &&
+            !known_keys.count("MPRO:" + provider) &&
+            !known_keys.count("ADSO:" + provider) &&
+            !known_keys.count("ELEM:" + provider)) {
+            BwExportedObject prov_obj;
+            prov_obj.name = provider;
+            prov_obj.type = "CUBE";  // conservative default; will be correct for most cases
+            exp.objects.push_back(std::move(prov_obj));
+            known_keys["CUBE:" + provider] = true;
+        }
+
+        // Add edge: provider → elem
+        std::string edge_key = provider + "->" + elem.name;
+        if (seen_edges.insert(edge_key).second) {
+            BwLineageEdge edge;
+            edge.id = "edge:elem:" + std::to_string(++edge_idx);
+            edge.from = provider;
+            edge.to = elem.name;
+            edge.type = "elem-provider";
+            exp.dataflow_edges.push_back(std::move(edge));
+        }
+    }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -394,6 +570,12 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
         }
     }
 
+    if (options.include_xref_edges) {
+        CollectInfoproviderXrefEdges(session, exp);
+    }
+    if (options.include_elem_provider_edges) {
+        CollectOrphanElemEdges(session, options.version, exp);
+    }
     BuildDataflowGraph(exp);
     return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
 }
@@ -587,18 +769,44 @@ std::string BwRenderExportMermaid(const BwInfoareaExport& exp) {
     out << "graph LR\n";
     out << "\n";
 
-    // Collect objects by category
-    std::vector<const BwExportedObject*> sources, staging, queries, others;
+    // Build set of nodes that participate in edges — these must be rendered.
+    std::set<std::string> edge_nodes;
+    for (const auto& e : exp.dataflow_edges) {
+        if (!e.from.empty()) edge_nodes.insert(e.from);
+        if (!e.to.empty()) edge_nodes.insert(e.to);
+    }
+
+    // Types that are internal plumbing or raw attribute objects.
+    // ELEM is only skipped if it has no edges; with edges it becomes a Query node.
+    auto is_infrastructure = [&](const BwExportedObject& obj) {
+        if (obj.type == "DTPA" || obj.type == "TRFN" || obj.type == "IOBJ") {
+            return true;
+        }
+        if (obj.type == "ELEM") {
+            // Show as a query only when it participates in the dataflow graph.
+            return edge_nodes.find(obj.name) == edge_nodes.end();
+        }
+        return false;
+    };
+
+    // Collect dataflow-relevant objects by category.
+    // CUBE/HCPR → InfoCubes, MPRO/VRRC → MultiProviders,
+    // RSDS → Sources, ADSO/DSO → Staging, QUERY/ELEM(with edges) → Queries.
+    std::vector<const BwExportedObject*> sources, staging, cubes, mpros, queries;
     for (const auto& obj : exp.objects) {
+        if (is_infrastructure(obj)) continue;
         if (obj.type == "RSDS") {
             sources.push_back(&obj);
-        } else if (obj.type == "ADSO") {
+        } else if (obj.type == "ADSO" || obj.type == "DSO") {
             staging.push_back(&obj);
-        } else if (obj.type == "QUERY") {
+        } else if (obj.type == "CUBE" || obj.type == "HCPR") {
+            cubes.push_back(&obj);
+        } else if (obj.type == "MPRO" || obj.type == "VRRC") {
+            mpros.push_back(&obj);
+        } else if (obj.type == "QUERY" || obj.type == "ELEM") {
             queries.push_back(&obj);
-        } else {
-            others.push_back(&obj);
         }
+        // All other types are silently omitted from the diagram.
     }
 
     // Helper: sanitize name for Mermaid node id
@@ -613,53 +821,61 @@ std::string BwRenderExportMermaid(const BwInfoareaExport& exp) {
     // Helper: truncate description for labels
     auto label = [](const std::string& name,
                     const std::string& desc) -> std::string {
-        if (desc.empty() || desc == name) return name;
-        // Use name<br/>desc (Mermaid HTML labels require quotes)
-        std::string d = desc.substr(0, 40);
-        return name + "\\n" + d;
+        std::string text = name;
+        if (!desc.empty() && desc != name) {
+            text += "<br/>" + desc.substr(0, 40);
+        }
+        // Escape internal double-quotes; wrap in quotes for Mermaid
+        std::string escaped;
+        escaped.reserve(text.size() + 2);
+        for (char c : text) {
+            if (c == '"') escaped += "#quot;";
+            else escaped += c;
+        }
+        return "\"" + escaped + "\"";
     };
 
-    if (!sources.empty()) {
-        out << "  subgraph Sources\n";
-        for (const auto* obj : sources) {
+    auto emit_subgraph = [&](const std::string& title,
+                              const std::vector<const BwExportedObject*>& objs) {
+        if (objs.empty()) return;
+        out << "  subgraph " << title << "\n";
+        for (const auto* obj : objs) {
             out << "    " << node_id(obj->name) << "["
                 << label(obj->name, obj->description) << "]\n";
         }
         out << "  end\n\n";
-    }
+    };
 
+    emit_subgraph("Sources", sources);
+    // Use the infoarea name as the Staging subgraph title so it's visible in the diagram.
+    std::string staging_title = staging.empty() ? "" : ("Staging[" + exp.infoarea + "]");
     if (!staging.empty()) {
-        out << "  subgraph Staging[" << exp.infoarea << "]\n";
+        out << "  subgraph " << staging_title << "\n";
         for (const auto* obj : staging) {
             out << "    " << node_id(obj->name) << "["
                 << label(obj->name, obj->description) << "]\n";
         }
         out << "  end\n\n";
     }
+    emit_subgraph("InfoCubes", cubes);
+    emit_subgraph("MultiProviders", mpros);
+    emit_subgraph("Queries", queries);
 
-    if (!queries.empty()) {
-        out << "  subgraph Queries\n";
-        for (const auto* obj : queries) {
-            out << "    " << node_id(obj->name) << "["
-                << label(obj->name, obj->description) << "]\n";
+    // Edges: prefer the merged dataflow graph built from lineage.
+    if (!exp.dataflow_edges.empty()) {
+        for (const auto& edge : exp.dataflow_edges) {
+            out << "  " << node_id(edge.from)
+                << " --> " << node_id(edge.to) << "\n";
         }
-        out << "  end\n\n";
-    }
-
-    // DTP edges
-    for (const auto& obj : exp.objects) {
-        if (obj.type != "DTPA") continue;
-        if (obj.dtp_source_name.empty() || obj.dtp_target_name.empty()) continue;
-        out << "  " << node_id(obj.dtp_source_name)
-            << " -->|DTP: " << obj.name << "| "
-            << node_id(obj.dtp_target_name) << "\n";
-    }
-
-    // Other objects not in subgraphs
-    for (const auto* obj : others) {
-        if (obj->type == "DTPA" || obj->type == "TRFN") continue;
-        out << "  " << node_id(obj->name) << "["
-            << label(obj->name, obj->description) << "]\n";
+    } else {
+        // Fallback: DTP objects with source/target resolved.
+        for (const auto& obj : exp.objects) {
+            if (obj.type != "DTPA") continue;
+            if (obj.dtp_source_name.empty() || obj.dtp_target_name.empty()) continue;
+            out << "  " << node_id(obj.dtp_source_name)
+                << " -->|" << obj.name << "| "
+                << node_id(obj.dtp_target_name) << "\n";
+        }
     }
 
     return out.str();
