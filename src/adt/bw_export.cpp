@@ -399,21 +399,17 @@ void CollectOrphanElemEdges(IAdtSession& session,
 
         const std::string provider = detail.info_provider;
 
-        // Add the provider object if it's not already in the export.
-        // We don't know its type, so mark it generically and let the caller
-        // infer from context (it will appear in the Mermaid diagram if it
-        // matches a known type bucket).
-        if (!known_keys.count(":" + provider) &&
-            !known_keys.count("CUBE:" + provider) &&
-            !known_keys.count("MPRO:" + provider) &&
-            !known_keys.count("ADSO:" + provider) &&
-            !known_keys.count("ELEM:" + provider)) {
-            BwExportedObject prov_obj;
-            prov_obj.name = provider;
-            prov_obj.type = "CUBE";  // conservative default; will be correct for most cases
-            exp.objects.push_back(std::move(prov_obj));
-            known_keys["CUBE:" + provider] = true;
-        }
+        // Only add the edge if the provider is already in the export.
+        // This keeps the diagram scoped to the infoarea: queries from the
+        // search supplement that belong to foreign infoproviders are silently
+        // skipped rather than pulling unknown CUBE/MPRO objects into the export.
+        bool provider_known = known_keys.count("CUBE:" + provider) ||
+                              known_keys.count("MPRO:" + provider) ||
+                              known_keys.count("ADSO:" + provider) ||
+                              known_keys.count("HCPR:" + provider) ||
+                              known_keys.count("ELEM:" + provider) ||
+                              known_keys.count("RSDS:" + provider);
+        if (!provider_known) continue;
 
         // Add edge: provider → elem
         std::string edge_key = provider + "->" + elem.name;
@@ -541,8 +537,17 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
             exp.provenance.push_back({"BwSearchObjects", search_ep, "error"});
         } else {
             exp.provenance.push_back({"BwSearchObjects", search_ep, "ok"});
+            // The search supplement is intended to recover ELEM/IOBJ objects
+            // that the BFS tree misses (queries, info objects).  Infoprovider
+            // types (CUBE, MPRO, ADSO, …) returned by the search belong to
+            // other infoareas — admitting them would cascade into hundreds of
+            // extra xref calls and pollute the diagram.
+            static const std::set<std::string> kSearchAllowedTypes = {
+                "ELEM", "IOBJ",
+            };
             for (const auto& sr : search_res.Value()) {
                 if (sr.type == "AREA" || sr.type == "semanticalFolder") continue;
+                if (!kSearchAllowedTypes.count(sr.type)) continue;
                 if (!TypeMatches(sr.type, options.types_filter)) continue;
                 std::string key = sr.type + ":" + sr.name;
                 if (found_keys.count(key)) continue;
