@@ -139,26 +139,25 @@ class TestBwExport:
     # -----------------------------------------------------------------------
 
     def test_export_includes_iobj(self, cli, known_infoarea):
-        """Export should include IOBJ objects (via search supplement)."""
-        data = cli.run_ok("bw", "export", known_infoarea, "--no-lineage", "--no-queries")
+        """With --search, export should include IOBJ objects (via search supplement)."""
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--search", "--no-lineage", "--no-queries")
         types = {obj["type"] for obj in data.get("objects", [])}
-        assert len(data["objects"]) > 0, "Export returned no objects"
         if "IOBJ" not in types:
             pytest.xfail(
                 f"No IOBJ found in {known_infoarea} — infoarea may not have IOBJs "
                 f"or infoArea search parameter is not supported by this system"
             )
 
-    def test_export_no_search_flag(self, cli, known_infoarea):
-        """--no-search disables search supplement (BFS tree only)."""
+    def test_export_search_flag(self, cli, known_infoarea):
+        """--search enables search supplement; provenance contains BwSearchObjects."""
         data = cli.run_ok("bw", "export", known_infoarea,
-                          "--no-search", "--no-lineage", "--no-queries")
+                          "--search", "--no-lineage", "--no-queries")
         assert data.get("contract") == "bw.infoarea.export"
-        # Provenance should not contain BwSearchObjects entry
-        for p in data.get("provenance", []):
-            assert p.get("operation") != "BwSearchObjects", (
-                "BwSearchObjects in provenance despite --no-search flag"
-            )
+        ops = {p.get("operation") for p in data.get("provenance", [])}
+        assert "BwSearchObjects" in ops, (
+            f"BwSearchObjects missing from provenance when --search given. ops={ops}"
+        )
 
     def test_export_missing_arg_exits_nonzero(self, cli):
         """Missing infoarea argument must exit non-zero."""

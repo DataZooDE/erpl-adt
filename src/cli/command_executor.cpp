@@ -3995,7 +3995,7 @@ int HandleBwExport(const CommandArgs& args) {
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
             "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
-            "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--no-search] "
+            "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--search] "
             "[--version a|m] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
         return 99;
     }
@@ -4008,7 +4008,7 @@ int HandleBwExport(const CommandArgs& args) {
     opts.version = GetFlag(args, "version", "a");
     opts.include_lineage = !HasFlag(args, "no-lineage");
     opts.include_queries = !HasFlag(args, "no-queries");
-    opts.include_search_supplement = !HasFlag(args, "no-search");
+    opts.include_search_supplement = HasFlag(args, "search");
 
     if (HasFlag(args, "max-depth")) {
         auto parsed = ParseIntInRange(GetFlag(args, "max-depth"), 0, 100, "--max-depth");
@@ -5254,7 +5254,7 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--dbgmode" || arg == "--metadata-only" ||
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
            arg == "--incl-except-def" || arg == "--compact-mode" ||
-           arg == "--no-xref";
+           arg == "--no-xref" || arg == "--search";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -6184,7 +6184,7 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage =
             "erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata]\n"
             "                   [--max-depth N] [--types T1,T2,...]\n"
-            "                   [--no-lineage] [--no-queries] [--no-search] [--version a|m]\n"
+            "                   [--no-lineage] [--no-queries] [--search] [--version a|m]\n"
             "                   [--out-dir <dir>] [--service-name <name>] [--system-id <id>]";
         help.args_description = "<infoarea>    InfoArea name to export (e.g. 0D_NW_DEMO)";
         help.long_description =
@@ -6201,7 +6201,7 @@ void RegisterAllCommands(CommandRouter& router) {
              "Comma-separated TLOGO type filter (e.g. ADSO,DTPA). Default: all", false},
             {"no-lineage", "", "Skip DTP lineage graph collection (faster)", false},
             {"no-queries", "", "Skip query graph collection", false},
-            {"no-search", "", "Skip search-based supplement (BFS tree only, faster)", false},
+            {"search", "", "Add BW search pass to find IOBJ/ELEM beyond the BFS tree", false},
             {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
             {"out-dir", "<dir>",
              "Save {infoarea}_catalog.json and {infoarea}_dataflow.mmd to directory", false},

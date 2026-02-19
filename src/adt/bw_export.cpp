@@ -199,6 +199,15 @@ void CollectObjectDetail(IAdtSession& session,
              opts.include_queries ? "ok" : "skipped"});
 
     } else {
+        // Types with no known standalone ADT detail endpoint: metadata from
+        // BFS nodes or search results is already sufficient — skip BwReadObject.
+        static const std::set<std::string> kNoDetailTypes = {
+            "CUBE", "MPRO", "HCPR", "ELEM", "IOBJ",
+        };
+        if (kNoDetailTypes.count(type)) {
+            return;
+        }
+
         // Fallback: read generic metadata only
         BwReadOptions ro;
         ro.object_type = type;

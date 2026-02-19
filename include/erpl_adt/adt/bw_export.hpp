@@ -67,7 +67,7 @@ struct BwExportOptions {
     int max_depth = 10;
     bool include_lineage = true;
     bool include_queries = true;
-    bool include_search_supplement = true;  // Supplement BFS with BwSearch(infoArea=...) to find IOBJ/ELEM
+    bool include_search_supplement = false; // Supplement BFS with BwSearch(infoArea=...) to find IOBJ/ELEM
     std::vector<std::string> types_filter;  // empty = all
 };
 
