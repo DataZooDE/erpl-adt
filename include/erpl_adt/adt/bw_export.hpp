@@ -12,6 +12,15 @@
 namespace erpl_adt {
 
 // ---------------------------------------------------------------------------
+// BwQueryIobjRef — one InfoObject reference from a query (dimension, filter,
+// variable, or key figure).
+// ---------------------------------------------------------------------------
+struct BwQueryIobjRef {
+    std::string name;
+    std::string role;  // "dimension" | "filter" | "variable" | "key_figure"
+};
+
+// ---------------------------------------------------------------------------
 // BwExportedField — a single field from an exported object.
 // ---------------------------------------------------------------------------
 struct BwExportedField {
@@ -56,6 +65,7 @@ struct BwExportedObject {
     // QUERY-specific
     std::string query_info_provider;
     std::optional<BwQueryGraph> query_graph;
+    std::vector<BwQueryIobjRef> iobj_refs;  // dimensions, filters, variables used by this query
 };
 
 // ---------------------------------------------------------------------------
@@ -105,6 +115,11 @@ struct BwInfoareaExport {
     const std::string& service_name = "erpl_adt",
     const std::string& system_id = "");
 
-[[nodiscard]] std::string BwRenderExportMermaid(const BwInfoareaExport&);
+struct BwMermaidOptions {
+    bool iobj_edges = false;  // Show InfoObject nodes (dimensions, filters, variables)
+};
+
+[[nodiscard]] std::string BwRenderExportMermaid(const BwInfoareaExport&,
+                                                const BwMermaidOptions& = {});
 
 } // namespace erpl_adt

@@ -372,22 +372,38 @@ void CollectOrphanElemEdges(IAdtSession& session,
     }
     int edge_idx = static_cast<int>(exp.dataflow_edges.size());
 
-    // Snapshot ELEM objects to iterate (exp.objects may grow while we append).
-    std::vector<BwExportedObject> elems;
-    for (const auto& obj : exp.objects) {
-        if (obj.type == "ELEM" && !obj.name.empty() &&
-            has_incoming.find(obj.name) == has_incoming.end()) {
-            elems.push_back(obj);
+    // Map a BwQueryComponentRef to a BwQueryIobjRef role string.
+    // Returns empty string for refs that should be skipped.
+    auto RefToIobjRole = [](const BwQueryComponentRef& ref) -> std::string {
+        if (ref.name.empty()) return "";
+        const auto& t = ref.type;
+        if (t == "DIMENSION")   return "dimension";
+        if (t == "FILTER_FIELD") return "filter";
+        // subComponents: Qry:Variable, variable, VARIABLE, etc.
+        if (t.find("ariable") != std::string::npos) return "variable";
+        // Skip MEMBER (key figure axis internals) and unknown refs.
+        return "";
+    };
+
+    // Snapshot ALL ELEM objects to iterate.
+    // - iobj_refs are collected for every ELEM (including those already covered by xref).
+    // - Provider edges are only added for ELEMs that have no incoming edge yet.
+    // exp.objects may grow during the loop (provider-less elems are appended to the snapshot,
+    // not to exp.objects), so snapshot once up front.
+    std::vector<std::pair<size_t, BwExportedObject>> elems;  // index into exp.objects + copy
+    for (size_t i = 0; i < exp.objects.size(); ++i) {
+        const auto& obj = exp.objects[i];
+        if (obj.type == "ELEM" && !obj.name.empty()) {
+            elems.emplace_back(i, obj);
         }
     }
 
-    for (const auto& elem : elems) {
+    for (auto& [obj_idx, elem] : elems) {
         const auto comp_type = SubtypeToComponentType(elem.subtype);
         const std::string ep = "/sap/bw/modeling/query/" + elem.name + "/" + version;
 
         auto res = BwReadQueryComponent(session, comp_type, elem.name, version, "");
         if (res.IsErr()) {
-            // Not a hard error — just record and move on.
             exp.warnings.push_back("elem-provider " + elem.name + ": " + res.Error().message);
             exp.provenance.push_back({"BwReadQueryComponent", ep, "error"});
             continue;
@@ -395,14 +411,28 @@ void CollectOrphanElemEdges(IAdtSession& session,
         exp.provenance.push_back({"BwReadQueryComponent", ep, "ok"});
 
         const auto& detail = res.Value();
+
+        // --- Harvest iobj_refs from detail.references ---
+        std::set<std::string> seen_iobj;
+        std::vector<BwQueryIobjRef> iobj_refs;
+        for (const auto& ref : detail.references) {
+            const auto role = RefToIobjRole(ref);
+            if (role.empty()) continue;
+            std::string key = role + ":" + ref.name;
+            if (seen_iobj.insert(key).second) {
+                iobj_refs.push_back({ref.name, role});
+            }
+        }
+        // Write back into the live exp.objects entry.
+        if (!iobj_refs.empty()) {
+            exp.objects[obj_idx].iobj_refs = std::move(iobj_refs);
+        }
+
+        // --- Provider edge (orphan ELEMs only) ---
         if (detail.info_provider.empty()) continue;
+        if (has_incoming.count(elem.name)) continue;
 
         const std::string provider = detail.info_provider;
-
-        // Only add the edge if the provider is already in the export.
-        // This keeps the diagram scoped to the infoarea: queries from the
-        // search supplement that belong to foreign infoproviders are silently
-        // skipped rather than pulling unknown CUBE/MPRO objects into the export.
         bool provider_known = known_keys.count("CUBE:" + provider) ||
                               known_keys.count("MPRO:" + provider) ||
                               known_keys.count("ADSO:" + provider) ||
@@ -411,7 +441,6 @@ void CollectOrphanElemEdges(IAdtSession& session,
                               known_keys.count("RSDS:" + provider);
         if (!provider_known) continue;
 
-        // Add edge: provider → elem
         std::string edge_key = provider + "->" + elem.name;
         if (seen_edges.insert(edge_key).second) {
             BwLineageEdge edge;
@@ -665,6 +694,15 @@ std::string BwRenderExportCatalogJson(const BwInfoareaExport& exp) {
                 static_cast<int>(obj.query_graph->nodes.size());
         }
 
+        // IOBJ refs (dimensions, filters, variables used by this query)
+        if (!obj.iobj_refs.empty()) {
+            nlohmann::json refs = nlohmann::json::array();
+            for (const auto& r : obj.iobj_refs) {
+                refs.push_back({{"name", r.name}, {"role", r.role}});
+            }
+            oj["iobj_refs"] = std::move(refs);
+        }
+
         objects.push_back(std::move(oj));
     }
     j["objects"] = std::move(objects);
@@ -769,7 +807,8 @@ std::string BwRenderExportOpenMetadataJson(
 // ---------------------------------------------------------------------------
 // BwRenderExportMermaid
 // ---------------------------------------------------------------------------
-std::string BwRenderExportMermaid(const BwInfoareaExport& exp) {
+std::string BwRenderExportMermaid(const BwInfoareaExport& exp,
+                                   const BwMermaidOptions& mopts) {
     std::ostringstream out;
     out << "graph LR\n";
     out << "\n";
@@ -866,7 +905,53 @@ std::string BwRenderExportMermaid(const BwInfoareaExport& exp) {
     emit_subgraph("MultiProviders", mpros);
     emit_subgraph("Queries", queries);
 
-    // Edges: prefer the merged dataflow graph built from lineage.
+    // Optional InfoObjects subgraph: collect unique IOBJs referenced by visible queries.
+    if (mopts.iobj_edges) {
+        // Gather IOBJs used by query nodes that are in the diagram.
+        std::set<std::string> visible_queries;
+        for (const auto* q : queries) visible_queries.insert(q->name);
+
+        // iobj_name → description (empty for now — IOBJ metadata not fetched)
+        std::map<std::string, std::string> iobj_map;
+        // role abbreviations for edge labels
+        auto role_label = [](const std::string& role) -> std::string {
+            if (role == "dimension") return "dim";
+            if (role == "filter")    return "filter";
+            if (role == "variable")  return "var";
+            if (role == "key_figure") return "kf";
+            return role;
+        };
+
+        // Collect all referenced IOBJs from visible queries.
+        for (const auto& obj : exp.objects) {
+            if (!visible_queries.count(obj.name)) continue;
+            for (const auto& r : obj.iobj_refs) {
+                iobj_map.emplace(r.name, "");
+            }
+        }
+
+        if (!iobj_map.empty()) {
+            out << "  subgraph InfoObjects\n";
+            for (const auto& [iobj_name, desc] : iobj_map) {
+                out << "    " << node_id(iobj_name) << "["
+                    << label(iobj_name, desc) << "]\n";
+            }
+            out << "  end\n\n";
+
+            // Emit query → iobj edges with role label.
+            for (const auto& obj : exp.objects) {
+                if (!visible_queries.count(obj.name)) continue;
+                for (const auto& r : obj.iobj_refs) {
+                    out << "  " << node_id(obj.name)
+                        << " -->|" << role_label(r.role) << "| "
+                        << node_id(r.name) << "\n";
+                }
+            }
+        }
+    }
+
+    // Dataflow edges (provider → query).
+    out << "\n";
     if (!exp.dataflow_edges.empty()) {
         for (const auto& edge : exp.dataflow_edges) {
             out << "  " << node_id(edge.from)

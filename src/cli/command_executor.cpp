@@ -3996,7 +3996,7 @@ int HandleBwExport(const CommandArgs& args) {
         fmt.PrintError(MakeValidationError(
             "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
             "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--no-search] "
-            "[--version a|m] [--no-elem-edges] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
+            "[--version a|m] [--no-elem-edges] [--iobj-edges] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
         return 99;
     }
 
@@ -4042,9 +4042,12 @@ int HandleBwExport(const CommandArgs& args) {
     std::string service_name = GetFlag(args, "service-name", "erpl_adt");
     std::string system_id = GetFlag(args, "system-id", "");
 
+    BwMermaidOptions mopts;
+    mopts.iobj_edges = HasFlag(args, "iobj-edges");
+
     // Generate outputs
     std::string catalog_json = BwRenderExportCatalogJson(exp);
-    std::string mermaid_str = mermaid_mode ? BwRenderExportMermaid(exp) : "";
+    std::string mermaid_str = mermaid_mode ? BwRenderExportMermaid(exp, mopts) : "";
     std::string om_json;
     if (shape == "openmetadata") {
         om_json = BwRenderExportOpenMetadataJson(exp, service_name, system_id);
@@ -4069,7 +4072,7 @@ int HandleBwExport(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Cannot write to: " + mmd_path));
             return 99;
         }
-        mf << BwRenderExportMermaid(exp);
+        mf << BwRenderExportMermaid(exp, mopts);
         mf.close();
         if (!fmt.IsJsonMode()) {
             std::cout << "Exported " << exp.objects.size() << " objects from "
@@ -4088,7 +4091,7 @@ int HandleBwExport(const CommandArgs& args) {
 
     // Print to stdout
     if (mermaid_mode) {
-        std::cout << BwRenderExportMermaid(exp);
+        std::cout << BwRenderExportMermaid(exp, mopts);
     } else if (shape == "openmetadata") {
         fmt.PrintJson(om_json);
     } else {
@@ -5256,7 +5259,8 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--dbgmode" || arg == "--metadata-only" ||
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
            arg == "--incl-except-def" || arg == "--compact-mode" ||
-           arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges";
+           arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges" ||
+           arg == "--iobj-edges";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -6209,6 +6213,9 @@ void RegisterAllCommands(CommandRouter& router) {
              false},
             {"no-elem-edges", "",
              "Skip orphan ELEM XML parsing for provider edge recovery (faster, fewer API calls)",
+             false},
+            {"iobj-edges", "",
+             "Show InfoObject nodes (dimensions, filters, variables) in Mermaid diagram",
              false},
             {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
             {"out-dir", "<dir>",
