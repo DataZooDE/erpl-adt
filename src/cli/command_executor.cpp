@@ -3996,7 +3996,7 @@ int HandleBwExport(const CommandArgs& args) {
         fmt.PrintError(MakeValidationError(
             "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
             "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--no-search] "
-            "[--version a|m] [--elem-edges] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
+            "[--version a|m] [--no-elem-edges] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
         return 99;
     }
 
@@ -4010,7 +4010,7 @@ int HandleBwExport(const CommandArgs& args) {
     opts.include_queries = !HasFlag(args, "no-queries");
     opts.include_search_supplement = !HasFlag(args, "no-search");
     opts.include_xref_edges = !HasFlag(args, "no-xref-edges");
-    opts.include_elem_provider_edges = HasFlag(args, "elem-edges");
+    opts.include_elem_provider_edges = !HasFlag(args, "no-elem-edges");
 
     if (HasFlag(args, "max-depth")) {
         auto parsed = ParseIntInRange(GetFlag(args, "max-depth"), 0, 100, "--max-depth");
@@ -5256,7 +5256,7 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--dbgmode" || arg == "--metadata-only" ||
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
            arg == "--incl-except-def" || arg == "--compact-mode" ||
-           arg == "--no-xref" || arg == "--no-search" || arg == "--elem-edges";
+           arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -6207,8 +6207,8 @@ void RegisterAllCommands(CommandRouter& router) {
             {"no-xref-edges", "",
              "Skip xref-based INFOPROVIDER→QUERY edge collection (faster, fewer API calls)",
              false},
-            {"elem-edges", "",
-             "Parse orphan ELEM XMLs to recover provider edges (catches QUERY-as-provider links)",
+            {"no-elem-edges", "",
+             "Skip orphan ELEM XML parsing for provider edge recovery (faster, fewer API calls)",
              false},
             {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
             {"out-dir", "<dir>",
