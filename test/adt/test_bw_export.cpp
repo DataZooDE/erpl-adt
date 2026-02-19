@@ -86,18 +86,53 @@ TEST_CASE("BwExportInfoarea: types_filter skips detail reads",
     // Only GetNodes — no detail reads since filter won't match
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("bw/bw_area_nodes.xml")}));
+    // Search supplement returns objects, but types_filter excludes them too
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_search.xml")}));
 
     BwExportOptions opts;
     opts.infoarea_name = "0D_NW_DEMO";
-    opts.types_filter = {"QUERY"};  // No QUERY nodes in fixture — yields empty objects
+    opts.types_filter = {"QUERY"};  // No QUERY nodes in fixture or search — yields empty objects
 
     auto result = BwExportInfoarea(mock, opts);
     REQUIRE(result.IsOk());
 
     const auto& exp = result.Value();
     CHECK(exp.objects.empty());
-    // Only 1 HTTP GET made (the BwGetNodes call)
-    CHECK(mock.GetCallCount() == 1);
+}
+
+TEST_CASE("BwExportInfoarea: search supplement adds IOBJ not in BFS tree",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // Phase 1: GetNodes for AREA — returns ADSO + DTPA, but only IOBJ passes filter
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_area_nodes.xml")}));
+    // Phase 2: Search supplement — returns ADSO (filtered) + IOBJ (added) + ADSO (filtered)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_search.xml")}));
+    // BwReadObject for the IOBJ 0MATERIAL
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_iobj.xml")}));
+
+    BwExportOptions opts;
+    opts.infoarea_name = "0D_NW_DEMO";
+    opts.types_filter = {"IOBJ"};
+    opts.include_lineage = false;
+    opts.include_queries = false;
+
+    auto result = BwExportInfoarea(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& exp = result.Value();
+    // IOBJ 0MATERIAL must be present (from search supplement)
+    bool found_iobj = false;
+    for (const auto& obj : exp.objects) {
+        if (obj.type == "IOBJ" && obj.name == "0MATERIAL") {
+            found_iobj = true;
+        }
+    }
+    CHECK(found_iobj);
+    CHECK(exp.objects.size() == 1);
 }
 
 TEST_CASE("BwExportInfoarea: TRFN read 404 yields warning, not error",

@@ -54,6 +54,7 @@ struct BwSearchOptions {
     std::optional<std::string> created_on_to;        // Created on or before date
     std::optional<std::string> depends_on_name;      // Objects depending on name
     std::optional<std::string> depends_on_type;      // Objects depending on type
+    std::optional<std::string> info_area;            // Filter by infoarea assignment (e.g. "0D_NW_DEMO")
     bool search_in_description = false;              // Also search descriptions
     bool search_in_name = true;                      // Search in names (default)
 };

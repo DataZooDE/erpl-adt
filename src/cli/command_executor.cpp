@@ -1736,6 +1736,9 @@ int HandleBwSearch(const CommandArgs& args) {
     if (HasFlag(args, "depends-on-type")) {
         opts.depends_on_type = GetFlag(args, "depends-on-type");
     }
+    if (HasFlag(args, "infoarea")) {
+        opts.info_area = GetFlag(args, "infoarea");
+    }
     if (HasFlag(args, "search-desc")) {
         opts.search_in_description = true;
     }
@@ -1760,6 +1763,7 @@ int HandleBwSearch(const CommandArgs& args) {
     if (opts.created_on_to.has_value()) query_params["createdOnTo"] = *opts.created_on_to;
     if (opts.depends_on_name.has_value()) query_params["dependsOnObjectName"] = *opts.depends_on_name;
     if (opts.depends_on_type.has_value()) query_params["dependsOnObjectType"] = *opts.depends_on_type;
+    if (opts.info_area.has_value()) query_params["infoArea"] = *opts.info_area;
     if (opts.search_in_description) query_params["searchInDescription"] = "true";
     if (!opts.search_in_name) query_params["searchInName"] = "false";
 
@@ -3991,7 +3995,7 @@ int HandleBwExport(const CommandArgs& args) {
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
             "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
-            "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] "
+            "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--no-search] "
             "[--version a|m] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
         return 99;
     }
@@ -4004,6 +4008,7 @@ int HandleBwExport(const CommandArgs& args) {
     opts.version = GetFlag(args, "version", "a");
     opts.include_lineage = !HasFlag(args, "no-lineage");
     opts.include_queries = !HasFlag(args, "no-queries");
+    opts.include_search_supplement = !HasFlag(args, "no-search");
 
     if (HasFlag(args, "max-depth")) {
         auto parsed = ParseIntInRange(GetFlag(args, "max-depth"), 0, 100, "--max-depth");
@@ -5974,6 +5979,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"created-to", "<date>", "Created on or before date", false},
             {"depends-on-name", "<name>", "Filter by dependency object name", false},
             {"depends-on-type", "<type>", "Filter by dependency object type", false},
+            {"infoarea", "<name>", "Filter by infoarea assignment (e.g. 0D_NW_DEMO)", false},
             {"search-desc", "", "Also search in descriptions", false},
             {"search-name", "", "Search in names (default: true)", false},
         };
@@ -5981,6 +5987,7 @@ void RegisterAllCommands(CommandRouter& router) {
             "erpl-adt bw search \"Z*\"",
             "erpl-adt bw search \"SALES*\" --type=ADSO --max=50",
             "erpl-adt bw search \"*\" --changed-by=DEVELOPER --changed-from=2026-01-01",
+            "erpl-adt bw search \"*\" --infoarea=0D_NW_DEMO",
             "erpl-adt bw ZADSO*",
         };
         router.Register("bw", "search", "Search BW objects",
@@ -6177,7 +6184,7 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage =
             "erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata]\n"
             "                   [--max-depth N] [--types T1,T2,...]\n"
-            "                   [--no-lineage] [--no-queries] [--version a|m]\n"
+            "                   [--no-lineage] [--no-queries] [--no-search] [--version a|m]\n"
             "                   [--out-dir <dir>] [--service-name <name>] [--system-id <id>]";
         help.args_description = "<infoarea>    InfoArea name to export (e.g. 0D_NW_DEMO)";
         help.long_description =
@@ -6194,6 +6201,7 @@ void RegisterAllCommands(CommandRouter& router) {
              "Comma-separated TLOGO type filter (e.g. ADSO,DTPA). Default: all", false},
             {"no-lineage", "", "Skip DTP lineage graph collection (faster)", false},
             {"no-queries", "", "Skip query graph collection", false},
+            {"no-search", "", "Skip search-based supplement (BFS tree only, faster)", false},
             {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
             {"out-dir", "<dir>",
              "Save {infoarea}_catalog.json and {infoarea}_dataflow.mmd to directory", false},

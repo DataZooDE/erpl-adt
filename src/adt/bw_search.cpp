@@ -46,6 +46,7 @@ std::string BuildSearchUrl(const BwSearchOptions& options) {
     AppendParam(url, "createdOnTo", options.created_on_to);
     AppendParam(url, "dependsOnObjectName", options.depends_on_name);
     AppendParam(url, "dependsOnObjectType", options.depends_on_type);
+    AppendParam(url, "infoArea", options.info_area);
     if (options.search_in_description) {
         url += "&searchInDescription=true";
     }

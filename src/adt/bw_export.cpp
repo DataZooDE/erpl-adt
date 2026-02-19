@@ -6,6 +6,7 @@
 #include <erpl_adt/adt/bw_object.hpp>
 #include <erpl_adt/adt/bw_query.hpp>
 #include <erpl_adt/adt/bw_rsds.hpp>
+#include <erpl_adt/adt/bw_search.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -330,6 +331,57 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
 
             CollectObjectDetail(session, node, options, obj, exp);
             exp.objects.push_back(std::move(obj));
+        }
+    }
+
+    // Search supplement: use BW search filtered by infoArea to find IOBJ/ELEM
+    // and any other objects not part of the InfoProvider tree.
+    if (options.include_search_supplement) {
+        std::set<std::string> found_keys;
+        for (const auto& obj : exp.objects) {
+            found_keys.insert(obj.type + ":" + obj.name);
+        }
+
+        BwSearchOptions sopts;
+        sopts.query = "*";
+        sopts.info_area = options.infoarea_name;
+        sopts.max_results = 500;
+
+        std::string search_ep = "/sap/bw/modeling/repo/is/bwsearch?infoArea=" +
+                                options.infoarea_name;
+        auto search_res = BwSearchObjects(session, sopts);
+        if (search_res.IsErr()) {
+            exp.warnings.push_back("search supplement: " +
+                                   search_res.Error().message);
+            exp.provenance.push_back({"BwSearchObjects", search_ep, "error"});
+        } else {
+            exp.provenance.push_back({"BwSearchObjects", search_ep, "ok"});
+            for (const auto& sr : search_res.Value()) {
+                if (sr.type == "AREA" || sr.type == "semanticalFolder") continue;
+                if (!TypeMatches(sr.type, options.types_filter)) continue;
+                std::string key = sr.type + ":" + sr.name;
+                if (found_keys.count(key)) continue;
+                found_keys.insert(key);
+
+                BwNodeEntry node;
+                node.name = sr.name;
+                node.type = sr.type;
+                node.subtype = sr.subtype;
+                node.description = sr.description;
+                node.status = sr.status;
+                node.uri = sr.uri;
+
+                BwExportedObject obj;
+                obj.name = node.name;
+                obj.type = node.type;
+                obj.subtype = node.subtype;
+                obj.status = node.status;
+                obj.description = node.description;
+                obj.uri = node.uri;
+
+                CollectObjectDetail(session, node, options, obj, exp);
+                exp.objects.push_back(std::move(obj));
+            }
         }
     }
 
