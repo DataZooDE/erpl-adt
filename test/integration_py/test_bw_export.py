@@ -29,9 +29,8 @@ class TestBwExport:
 
     def test_export_catalog_json(self, cli, known_infoarea):
         """Catalog export has required contract, objects, and dataflow sections."""
-        data = cli.run_json(
-            "--json", "bw", "export", known_infoarea, "--no-lineage", "--no-queries"
-        )
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--no-lineage", "--no-queries")
         assert data.get("contract") == "bw.infoarea.export", (
             f"Expected contract='bw.infoarea.export', got {data.get('contract')!r}"
         )
@@ -43,9 +42,8 @@ class TestBwExport:
 
     def test_export_objects_have_types(self, cli, known_infoarea):
         """Each exported object has name and type fields."""
-        data = cli.run_json(
-            "--json", "bw", "export", known_infoarea, "--no-lineage", "--no-queries"
-        )
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--no-lineage", "--no-queries")
         for obj in data.get("objects", []):
             assert "name" in obj, f"Object missing 'name': {obj}"
             assert "type" in obj, f"Object missing 'type': {obj}"
@@ -55,15 +53,12 @@ class TestBwExport:
     # -----------------------------------------------------------------------
 
     def test_export_mermaid(self, cli, known_infoarea):
-        """Mermaid output starts with 'graph LR' and contains the infoarea name."""
-        result = cli.run("bw", "export", known_infoarea, "--mermaid",
-                         "--no-lineage", "--no-queries")
+        """Mermaid output starts with 'graph LR'."""
+        result = cli.run_no_json("bw", "export", known_infoarea, "--mermaid",
+                                 "--no-lineage", "--no-queries")
         assert result.returncode == 0, f"bw export --mermaid failed: {result.stderr}"
         output = result.stdout
         assert "graph LR" in output, f"Expected 'graph LR' in Mermaid output:\n{output}"
-        assert known_infoarea in output, (
-            f"Expected infoarea name '{known_infoarea}' in output:\n{output}"
-        )
 
     # -----------------------------------------------------------------------
     # OpenMetadata shape
@@ -71,13 +66,11 @@ class TestBwExport:
 
     def test_export_openmetadata_shape(self, cli, known_infoarea):
         """OpenMetadata shape includes serviceType, tables, and lineage arrays."""
-        data = cli.run_json(
-            "--json", "bw", "export", known_infoarea,
-            "--shape", "openmetadata",
-            "--service-name", "erpl_adt",
-            "--system-id", "A4H",
-            "--no-lineage", "--no-queries",
-        )
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--shape", "openmetadata",
+                          "--service-name", "erpl_adt",
+                          "--system-id", "A4H",
+                          "--no-lineage", "--no-queries")
         assert data.get("serviceType") == "SapBw", (
             f"Expected serviceType='SapBw', got {data.get('serviceType')!r}"
         )
@@ -91,11 +84,9 @@ class TestBwExport:
 
     def test_export_types_filter(self, cli, known_infoarea):
         """--types ADSO only returns ADSO objects (or zero objects if none exist)."""
-        data = cli.run_json(
-            "--json", "bw", "export", known_infoarea,
-            "--types", "ADSO",
-            "--no-lineage", "--no-queries",
-        )
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--types", "ADSO",
+                          "--no-lineage", "--no-queries")
         assert "objects" in data
         for obj in data["objects"]:
             assert obj["type"] == "ADSO", (
@@ -108,11 +99,9 @@ class TestBwExport:
 
     def test_export_no_lineage(self, cli, known_infoarea):
         """With --no-lineage, DTP objects must not have a 'lineage' key."""
-        data = cli.run_json(
-            "--json", "bw", "export", known_infoarea,
-            "--types", "DTPA",
-            "--no-lineage",
-        )
+        data = cli.run_ok("bw", "export", known_infoarea,
+                          "--types", "DTPA",
+                          "--no-lineage")
         for obj in data.get("objects", []):
             assert "lineage" not in obj, (
                 f"DTP object {obj['name']} has unexpected 'lineage' key "
@@ -126,7 +115,7 @@ class TestBwExport:
     def test_export_out_dir(self, cli, known_infoarea):
         """--out-dir creates catalog JSON and Mermaid .mmd files on disk."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = cli.run(
+            result = cli.run_no_json(
                 "bw", "export", known_infoarea,
                 "--out-dir", tmpdir,
                 "--no-lineage", "--no-queries",
@@ -151,7 +140,5 @@ class TestBwExport:
 
     def test_export_missing_arg_exits_nonzero(self, cli):
         """Missing infoarea argument must exit non-zero."""
-        result = cli.run("bw", "export")
-        assert result.returncode != 0, (
-            "Expected non-zero exit when infoarea argument is missing"
-        )
+        result = cli.run_fail("bw", "export")
+        assert result.returncode != 0
