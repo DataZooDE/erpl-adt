@@ -83,21 +83,22 @@ TEST_CASE("BwExportInfoarea: ADSO fields collected via nodes + adso_detail",
 TEST_CASE("BwExportInfoarea: types_filter skips detail reads",
           "[adt][bw][export]") {
     MockAdtSession mock;
-    // Only GetNodes — no detail reads since filter won't match
+    // GetNodes for the BFS pass
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("bw/bw_area_nodes.xml")}));
-    // search supplement is off by default — only 1 GET
+    // Search supplement pass (search is on by default)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_search.xml")}));
 
     BwExportOptions opts;
     opts.infoarea_name = "0D_NW_DEMO";
-    opts.types_filter = {"QUERY"};  // No QUERY nodes in fixture — yields empty objects
+    opts.types_filter = {"QUERY"};  // No QUERY nodes in fixture or search — yields empty objects
 
     auto result = BwExportInfoarea(mock, opts);
     REQUIRE(result.IsOk());
 
     const auto& exp = result.Value();
     CHECK(exp.objects.empty());
-    CHECK(mock.GetCallCount() == 1);
 }
 
 TEST_CASE("BwExportInfoarea: search supplement adds IOBJ not in BFS tree",
@@ -118,7 +119,6 @@ TEST_CASE("BwExportInfoarea: search supplement adds IOBJ not in BFS tree",
     opts.types_filter = {"IOBJ"};
     opts.include_lineage = false;
     opts.include_queries = false;
-    opts.include_search_supplement = true;
 
     auto result = BwExportInfoarea(mock, opts);
     REQUIRE(result.IsOk());

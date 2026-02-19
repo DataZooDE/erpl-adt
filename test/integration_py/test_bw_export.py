@@ -139,9 +139,8 @@ class TestBwExport:
     # -----------------------------------------------------------------------
 
     def test_export_includes_iobj(self, cli, known_infoarea):
-        """With --search, export should include IOBJ objects (via search supplement)."""
-        data = cli.run_ok("bw", "export", known_infoarea,
-                          "--search", "--no-lineage", "--no-queries")
+        """Export (with default search supplement) should include IOBJ objects."""
+        data = cli.run_ok("bw", "export", known_infoarea, "--no-lineage", "--no-queries")
         types = {obj["type"] for obj in data.get("objects", [])}
         if "IOBJ" not in types:
             pytest.xfail(
@@ -149,15 +148,15 @@ class TestBwExport:
                 f"or infoArea search parameter is not supported by this system"
             )
 
-    def test_export_search_flag(self, cli, known_infoarea):
-        """--search enables search supplement; provenance contains BwSearchObjects."""
+    def test_export_no_search_flag(self, cli, known_infoarea):
+        """--no-search disables search supplement; provenance has no BwSearchObjects."""
         data = cli.run_ok("bw", "export", known_infoarea,
-                          "--search", "--no-lineage", "--no-queries")
+                          "--no-search", "--no-lineage", "--no-queries")
         assert data.get("contract") == "bw.infoarea.export"
-        ops = {p.get("operation") for p in data.get("provenance", [])}
-        assert "BwSearchObjects" in ops, (
-            f"BwSearchObjects missing from provenance when --search given. ops={ops}"
-        )
+        for p in data.get("provenance", []):
+            assert p.get("operation") != "BwSearchObjects", (
+                "BwSearchObjects in provenance despite --no-search flag"
+            )
 
     def test_export_missing_arg_exits_nonzero(self, cli):
         """Missing infoarea argument must exit non-zero."""
