@@ -262,28 +262,36 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
     exp.infoarea = options.infoarea_name;
     exp.exported_at = UtcTimestampNow();
 
-    // BFS over infoarea tree
+    // BFS over infoarea tree.
+    // Containers: AREA and semanticalFolder — both may have child objects.
+    // semanticalFolder nodes use endpoint_override since they have no standalone
+    // infoproviderstructure/{type}/{name} URL; their URI IS the structure endpoint.
     struct QueueEntry {
         std::string area_name;
+        std::optional<std::string> endpoint_override;
         int depth;
     };
     std::queue<QueueEntry> q;
-    q.push({options.infoarea_name, 0});
-    std::set<std::string> visited_areas;
-    visited_areas.insert(options.infoarea_name);
+    q.push({options.infoarea_name, std::nullopt, 0});
+    std::set<std::string> visited_endpoints;
+    visited_endpoints.insert(options.infoarea_name);
 
     while (!q.empty()) {
-        auto [area_name, depth] = q.front();
+        auto entry = q.front();
         q.pop();
+        const auto& area_name = entry.area_name;
+        const int depth = entry.depth;
 
         BwNodesOptions no;
         no.object_type = "AREA";
         no.object_name = area_name;
+        if (entry.endpoint_override.has_value()) {
+            no.endpoint_override = entry.endpoint_override;
+        }
 
-        exp.provenance.push_back(
-            {"BwGetNodes",
-             "/sap/bw/modeling/repo/infoproviderstructure/AREA/" + area_name,
-             "ok"});
+        std::string prov_endpoint = entry.endpoint_override.value_or(
+            "/sap/bw/modeling/repo/infoproviderstructure/AREA/" + area_name);
+        exp.provenance.push_back({"BwGetNodes", prov_endpoint, "ok"});
 
         auto nodes_res = BwGetNodes(session, no);
         if (nodes_res.IsErr()) {
@@ -293,11 +301,18 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
         }
 
         for (const auto& node : nodes_res.Value()) {
-            if (node.type == "AREA") {
+            // Recurse into container types: AREA and semanticalFolder
+            if (node.type == "AREA" || node.type == "semanticalFolder") {
+                // Use URI as dedup key for semanticalFolder (name may collide)
+                std::string key = node.uri.empty() ? node.name : node.uri;
                 if (depth + 1 <= options.max_depth &&
-                    visited_areas.find(node.name) == visited_areas.end()) {
-                    visited_areas.insert(node.name);
-                    q.push({node.name, depth + 1});
+                    visited_endpoints.find(key) == visited_endpoints.end()) {
+                    visited_endpoints.insert(key);
+                    std::optional<std::string> ep_override;
+                    if (!node.uri.empty() && node.type == "semanticalFolder") {
+                        ep_override = node.uri;
+                    }
+                    q.push({node.name, ep_override, depth + 1});
                 }
                 continue;
             }
