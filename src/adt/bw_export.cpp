@@ -381,7 +381,9 @@ void CollectOrphanElemEdges(IAdtSession& session,
         if (t == "FILTER_FIELD") return "filter";
         // subComponents: Qry:Variable, variable, VARIABLE, etc.
         if (t.find("ariable") != std::string::npos) return "variable";
-        // Skip MEMBER (key figure axis internals) and unknown refs.
+        // Key figures: token-based (KEY_FIGURE), restricted/calculated (RKF, CKF), or normalized xsi:type variants.
+        if (t == "KEY_FIGURE" || t == "RKF" || t == "CKF" || t.find("KEYFIG") != std::string::npos) return "key_figure";
+        // Skip MEMBER (characteristic value hints) and unrecognised refs.
         return "";
     };
 
@@ -810,6 +812,7 @@ std::string BwRenderExportOpenMetadataJson(
 std::string BwRenderExportMermaid(const BwInfoareaExport& exp,
                                    const BwMermaidOptions& mopts) {
     std::ostringstream out;
+    out << "%%{init: {'flowchart': {'curve': 'basis'}}}%%\n";
     out << "graph LR\n";
     out << "\n";
 

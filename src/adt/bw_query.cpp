@@ -272,6 +272,20 @@ void CollectQueryResourceReferences(const tinyxml2::XMLElement* root,
                 ref.role = "filter";
                 CollectAttributes(element, ref.attributes);
                 AddReferenceDedup(detail.references, seen, std::move(ref));
+            } else if (lname == "tokens") {
+                // Key figure selections: <tokens selectionType="keyFigure">
+                //   <fromValue><value>0D_NW_NETV</value></fromValue>
+                const auto* sel_type_attr = element->Attribute("selectionType");
+                const std::string sel_type = sel_type_attr ? sel_type_attr : "";
+                if (sel_type == "keyFigure") {
+                    auto* fv = FirstChildByLocalName(element, "fromValue");
+                    BwQueryComponentRef ref;
+                    ref.name = ChildTextByLocalName(fv, "value");
+                    ref.type = "KEY_FIGURE";
+                    ref.role = "key_figure";
+                    CollectAttributes(element, ref.attributes);
+                    AddReferenceDedup(detail.references, seen, std::move(ref));
+                }
             } else if (lname == "members") {
                 BwQueryComponentRef ref;
                 auto* default_hint = FirstChildByLocalName(element, "defaultHint");
