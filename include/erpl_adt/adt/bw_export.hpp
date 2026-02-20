@@ -106,6 +106,24 @@ struct BwInfoareaExport {
     const BwExportOptions& options);
 
 // ---------------------------------------------------------------------------
+// BwExportQuery — export a single BW query (ELEM) and its connected graph.
+// options.infoarea_name is ignored; name is the query technical name.
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwInfoareaExport, Error> BwExportQuery(
+    IAdtSession& session,
+    const std::string& name,
+    const BwExportOptions& options);
+
+// ---------------------------------------------------------------------------
+// BwExportCube — export a single BW infoprovider (ADSO/CUBE/MPRO) and its
+// connected graph. options.infoarea_name is ignored; name is the object name.
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<BwInfoareaExport, Error> BwExportCube(
+    IAdtSession& session,
+    const std::string& name,
+    const BwExportOptions& options);
+
+// ---------------------------------------------------------------------------
 // Serializers
 // ---------------------------------------------------------------------------
 [[nodiscard]] std::string BwRenderExportCatalogJson(const BwInfoareaExport&);

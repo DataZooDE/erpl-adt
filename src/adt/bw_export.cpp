@@ -331,6 +331,25 @@ void CollectInfoproviderXrefEdges(IAdtSession& session, BwInfoareaExport& exp) {
 }
 
 // ---------------------------------------------------------------------------
+// IobjRole — map a BwQueryComponentRef type to a BwQueryIobjRef role string.
+// Returns empty string for refs that should be skipped.
+// ---------------------------------------------------------------------------
+std::string IobjRole(const BwQueryComponentRef& ref) {
+    if (ref.name.empty()) return "";
+    const auto& t = ref.type;
+    if (t == "DIMENSION")    return "dimension";
+    if (t == "FILTER_FIELD") return "filter";
+    // subComponents: Qry:Variable, variable, VARIABLE, etc.
+    if (t.find("ariable") != std::string::npos) return "variable";
+    // Key figures: token-based (KEY_FIGURE), restricted/calculated (RKF, CKF),
+    // or normalized xsi:type variants (RESTRKEYFIG, CALCKEYFIG, …).
+    if (t == "KEY_FIGURE" || t == "RKF" || t == "CKF" ||
+        t.find("KEYFIG") != std::string::npos) return "key_figure";
+    // Skip MEMBER (characteristic value hints) and unrecognised refs.
+    return "";
+}
+
+// ---------------------------------------------------------------------------
 // CollectOrphanElemEdges — for each ELEM that has no incoming dataflow edge,
 // fetch its query XML and parse providerName to derive the missing edge.
 //
@@ -372,21 +391,6 @@ void CollectOrphanElemEdges(IAdtSession& session,
     }
     int edge_idx = static_cast<int>(exp.dataflow_edges.size());
 
-    // Map a BwQueryComponentRef to a BwQueryIobjRef role string.
-    // Returns empty string for refs that should be skipped.
-    auto RefToIobjRole = [](const BwQueryComponentRef& ref) -> std::string {
-        if (ref.name.empty()) return "";
-        const auto& t = ref.type;
-        if (t == "DIMENSION")   return "dimension";
-        if (t == "FILTER_FIELD") return "filter";
-        // subComponents: Qry:Variable, variable, VARIABLE, etc.
-        if (t.find("ariable") != std::string::npos) return "variable";
-        // Key figures: token-based (KEY_FIGURE), restricted/calculated (RKF, CKF), or normalized xsi:type variants.
-        if (t == "KEY_FIGURE" || t == "RKF" || t == "CKF" || t.find("KEYFIG") != std::string::npos) return "key_figure";
-        // Skip MEMBER (characteristic value hints) and unrecognised refs.
-        return "";
-    };
-
     // Snapshot ALL ELEM objects to iterate.
     // - iobj_refs are collected for every ELEM (including those already covered by xref).
     // - Provider edges are only added for ELEMs that have no incoming edge yet.
@@ -418,7 +422,7 @@ void CollectOrphanElemEdges(IAdtSession& session,
         std::set<std::string> seen_iobj;
         std::vector<BwQueryIobjRef> iobj_refs;
         for (const auto& ref : detail.references) {
-            const auto role = RefToIobjRole(ref);
+            const auto role = IobjRole(ref);
             if (role.empty()) continue;
             std::string key = role + ":" + ref.name;
             if (seen_iobj.insert(key).second) {
@@ -612,6 +616,183 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
     if (options.include_elem_provider_edges) {
         CollectOrphanElemEdges(session, options.version, exp);
     }
+    BuildDataflowGraph(exp);
+    return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
+}
+
+// ---------------------------------------------------------------------------
+// BwExportQuery — export a single query (ELEM) and its connected graph.
+// ---------------------------------------------------------------------------
+Result<BwInfoareaExport, Error> BwExportQuery(
+    IAdtSession& session,
+    const std::string& name,
+    const BwExportOptions& options) {
+
+    BwInfoareaExport exp;
+    exp.infoarea = name;
+    exp.contract = "bw.query.export";
+    exp.exported_at = UtcTimestampNow();
+
+    // Fetch query XML to get info_provider and references.
+    auto res = BwReadQueryComponent(session, "QUERY", name, options.version, "");
+    if (res.IsErr()) {
+        return Result<BwInfoareaExport, Error>::Err(res.Error());
+    }
+    const auto& detail = res.Value();
+    exp.provenance.push_back(
+        {"BwReadQueryComponent",
+         "/sap/bw/modeling/query/" + name + "/" + options.version,
+         "ok"});
+
+    // Build the query object.
+    BwExportedObject query_obj;
+    query_obj.name = name;
+    query_obj.type = "ELEM";
+    query_obj.subtype = "REP";
+    query_obj.uri = "/sap/bw/modeling/query/" + name + "/" + options.version;
+    query_obj.description = detail.description;
+    query_obj.query_info_provider = detail.info_provider;
+
+    // Harvest iobj_refs.
+    std::set<std::string> seen_iobj;
+    for (const auto& ref : detail.references) {
+        const auto role = IobjRole(ref);
+        if (role.empty()) continue;
+        std::string key = role + ":" + ref.name;
+        if (seen_iobj.insert(key).second) {
+            query_obj.iobj_refs.push_back({ref.name, role});
+        }
+    }
+    exp.objects.push_back(std::move(query_obj));
+
+    // Add the infoprovider as an object and connect it with an edge.
+    const std::string& provider = detail.info_provider;
+    if (!provider.empty()) {
+        BwExportedObject prov_obj;
+        prov_obj.name = provider;
+
+        auto ares = BwReadAdsoDetail(session, provider, options.version);
+        if (ares.IsOk()) {
+            prov_obj.type = "ADSO";
+            const auto& d = ares.Value();
+            prov_obj.description = d.description;
+            prov_obj.package_name = d.package_name;
+            for (const auto& f : d.fields) {
+                BwExportedField ef;
+                ef.name = f.name;
+                ef.description = f.description;
+                ef.info_object = f.info_object;
+                ef.data_type = f.data_type;
+                ef.length = f.length;
+                ef.decimals = f.decimals;
+                ef.key = f.key;
+                prov_obj.fields.push_back(std::move(ef));
+            }
+            exp.provenance.push_back(
+                {"BwReadAdsoDetail",
+                 "/sap/bw/modeling/adso/" + provider + "/" + options.version,
+                 "ok"});
+        } else {
+            prov_obj.type = "CUBE";  // classic InfoCube, MPRO, HCPR …
+            exp.provenance.push_back(
+                {"BwReadAdsoDetail",
+                 "/sap/bw/modeling/adso/" + provider + "/" + options.version,
+                 "skipped"});
+        }
+        exp.objects.push_back(std::move(prov_obj));
+
+        // Edge: provider → query
+        BwLineageEdge edge;
+        edge.id = "edge:elem:1";
+        edge.from = provider;
+        edge.to = name;
+        edge.type = "elem-provider";
+        exp.dataflow_edges.push_back(std::move(edge));
+    }
+
+    if (options.include_xref_edges) {
+        CollectInfoproviderXrefEdges(session, exp);
+    }
+    if (options.include_elem_provider_edges) {
+        CollectOrphanElemEdges(session, options.version, exp);
+    }
+    BuildDataflowGraph(exp);
+    return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
+}
+
+// ---------------------------------------------------------------------------
+// BwExportCube — export a single infoprovider (ADSO/CUBE/MPRO) and its graph.
+// ---------------------------------------------------------------------------
+Result<BwInfoareaExport, Error> BwExportCube(
+    IAdtSession& session,
+    const std::string& name,
+    const BwExportOptions& options) {
+
+    BwInfoareaExport exp;
+    exp.infoarea = name;
+    exp.contract = "bw.cube.export";
+    exp.exported_at = UtcTimestampNow();
+
+    // Fetch infoprovider detail: try ADSO first; silently fall back to stub.
+    BwExportedObject cube_obj;
+    cube_obj.name = name;
+
+    auto ares = BwReadAdsoDetail(session, name, options.version);
+    if (ares.IsOk()) {
+        cube_obj.type = "ADSO";
+        const auto& d = ares.Value();
+        cube_obj.description = d.description;
+        cube_obj.package_name = d.package_name;
+        for (const auto& f : d.fields) {
+            BwExportedField ef;
+            ef.name = f.name;
+            ef.description = f.description;
+            ef.info_object = f.info_object;
+            ef.data_type = f.data_type;
+            ef.length = f.length;
+            ef.decimals = f.decimals;
+            ef.key = f.key;
+            cube_obj.fields.push_back(std::move(ef));
+        }
+        exp.provenance.push_back(
+            {"BwReadAdsoDetail",
+             "/sap/bw/modeling/adso/" + name + "/" + options.version,
+             "ok"});
+    } else {
+        // Not an ADSO (classic CUBE, MPRO, HCPR …) — create a stub.
+        cube_obj.type = "CUBE";
+        exp.provenance.push_back(
+            {"BwReadAdsoDetail",
+             "/sap/bw/modeling/adso/" + name + "/" + options.version,
+             "skipped"});
+    }
+    exp.objects.push_back(std::move(cube_obj));
+
+    // Discover consuming queries and feeding DTPs via xref.
+    if (options.include_xref_edges) {
+        CollectInfoproviderXrefEdges(session, exp);
+    }
+
+    // Fill in lineage for any DTPA objects discovered via xref.
+    if (options.include_lineage) {
+        // Snapshot size before iterating — CollectObjectDetail doesn't add objects.
+        const size_t n = exp.objects.size();
+        for (size_t i = 1; i < n; ++i) {  // i=0 is the cube itself
+            auto& obj = exp.objects[i];
+            if (obj.type != "DTPA") continue;
+            BwNodeEntry node;
+            node.name = obj.name;
+            node.type = obj.type;
+            node.uri = obj.uri;
+            CollectObjectDetail(session, node, options, obj, exp);
+        }
+    }
+
+    // Fill iobj_refs for ELEM objects discovered via xref.
+    if (options.include_elem_provider_edges) {
+        CollectOrphanElemEdges(session, options.version, exp);
+    }
+
     BuildDataflowGraph(exp);
     return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
 }
