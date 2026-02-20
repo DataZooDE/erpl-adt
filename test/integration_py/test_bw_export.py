@@ -1,4 +1,4 @@
-"""BW export command integration tests — bw export <infoarea>."""
+"""BW export command integration tests — bw export-area <infoarea>."""
 
 import json
 import os
@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.bw
 class TestBwExport:
-    """Integration tests for 'erpl-adt bw export <infoarea>'."""
+    """Integration tests for 'erpl-adt bw export-area <infoarea>'."""
 
     @pytest.fixture(scope="class")
     def known_infoarea(self, cli, bw_has_search):
@@ -29,7 +29,7 @@ class TestBwExport:
 
     def test_export_catalog_json(self, cli, known_infoarea):
         """Catalog export has required contract, objects, and dataflow sections."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--no-lineage", "--no-queries")
         assert data.get("contract") == "bw.infoarea.export", (
             f"Expected contract='bw.infoarea.export', got {data.get('contract')!r}"
@@ -42,7 +42,7 @@ class TestBwExport:
 
     def test_export_objects_have_types(self, cli, known_infoarea):
         """Each exported object has name and type fields."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--no-lineage", "--no-queries")
         for obj in data.get("objects", []):
             assert "name" in obj, f"Object missing 'name': {obj}"
@@ -54,7 +54,7 @@ class TestBwExport:
 
     def test_export_mermaid(self, cli, known_infoarea):
         """Mermaid output starts with 'graph LR'."""
-        result = cli.run_no_json("bw", "export", known_infoarea, "--mermaid",
+        result = cli.run_no_json("bw", "export-area", known_infoarea, "--mermaid",
                                  "--no-lineage", "--no-queries")
         assert result.returncode == 0, f"bw export --mermaid failed: {result.stderr}"
         output = result.stdout
@@ -66,7 +66,7 @@ class TestBwExport:
 
     def test_export_openmetadata_shape(self, cli, known_infoarea):
         """OpenMetadata shape includes serviceType, tables, and lineage arrays."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--shape", "openmetadata",
                           "--service-name", "erpl_adt",
                           "--system-id", "A4H",
@@ -84,7 +84,7 @@ class TestBwExport:
 
     def test_export_types_filter(self, cli, known_infoarea):
         """--types ADSO only returns ADSO objects (or zero objects if none exist)."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--types", "ADSO",
                           "--no-lineage", "--no-queries")
         assert "objects" in data
@@ -99,7 +99,7 @@ class TestBwExport:
 
     def test_export_no_lineage(self, cli, known_infoarea):
         """With --no-lineage, DTP objects must not have a 'lineage' key."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--types", "DTPA",
                           "--no-lineage")
         for obj in data.get("objects", []):
@@ -116,7 +116,7 @@ class TestBwExport:
         """--out-dir creates catalog JSON and Mermaid .mmd files on disk."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = cli.run_no_json(
-                "bw", "export", known_infoarea,
+                "bw", "export-area", known_infoarea,
                 "--out-dir", tmpdir,
                 "--no-lineage", "--no-queries",
             )
@@ -140,7 +140,7 @@ class TestBwExport:
 
     def test_export_includes_iobj(self, cli, known_infoarea):
         """Export (with default search supplement) should include IOBJ objects."""
-        data = cli.run_ok("bw", "export", known_infoarea, "--no-lineage", "--no-queries")
+        data = cli.run_ok("bw", "export-area", known_infoarea, "--no-lineage", "--no-queries")
         types = {obj["type"] for obj in data.get("objects", [])}
         if "IOBJ" not in types:
             pytest.xfail(
@@ -150,7 +150,7 @@ class TestBwExport:
 
     def test_export_no_search_flag(self, cli, known_infoarea):
         """--no-search disables search supplement; provenance has no BwSearchObjects."""
-        data = cli.run_ok("bw", "export", known_infoarea,
+        data = cli.run_ok("bw", "export-area", known_infoarea,
                           "--no-search", "--no-lineage", "--no-queries")
         assert data.get("contract") == "bw.infoarea.export"
         for p in data.get("provenance", []):
@@ -160,5 +160,5 @@ class TestBwExport:
 
     def test_export_missing_arg_exits_nonzero(self, cli):
         """Missing infoarea argument must exit non-zero."""
-        result = cli.run_fail("bw", "export")
+        result = cli.run_fail("bw", "export-area")
         assert result.returncode != 0
