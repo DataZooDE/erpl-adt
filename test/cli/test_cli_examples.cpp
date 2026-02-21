@@ -189,6 +189,43 @@ TEST_CASE("CLI example: source read by name without --type", "[cli][examples]") 
     CHECK(result.Value().flags.count("type") == 0);
 }
 
+TEST_CASE("CLI example: source read with --editor flag", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "ZCL_MY_CLASS", "--editor"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "read");
+    CHECK(result.Value().flags.count("editor") == 1);
+    CHECK(result.Value().flags.at("editor") == "true");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+}
+
+TEST_CASE("CLI example: source read with --color flag", "[cli][examples]") {
+    // --color is a boolean flag — the next positional should NOT be consumed as its value.
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "ZCL_MY_CLASS", "--color"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().flags.count("color") == 1);
+    CHECK(result.Value().flags.at("color") == "true");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+}
+
+TEST_CASE("CLI example: source read --editor does not consume next arg",
+          "[cli][examples]") {
+    // --editor must be treated as boolean. If it consumed the next arg the
+    // positional list would be empty and the parse would be wrong.
+    const char* argv[] = {"erpl-adt", "source", "read", "--editor", "ZCL_MY_CLASS"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().flags.at("editor") == "true");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+}
+
 TEST_CASE("CLI example: source write", "[cli][examples]") {
     const char* argv[] = {"erpl-adt", "source", "write",
                           "/sap/bc/adt/oo/classes/zcl_test/source/main",

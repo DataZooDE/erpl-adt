@@ -47,8 +47,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <set>
@@ -418,6 +420,254 @@ std::string ToLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+// ---------------------------------------------------------------------------
+// Syntax highlighting helpers
+// ---------------------------------------------------------------------------
+
+enum class SourceLanguage { Abap, Xml, Mermaid, Plain };
+
+static std::string HighlightAbap(const std::string& src) {
+    // Known ABAP keywords (uppercase for comparison).
+    static const std::set<std::string> kKeywords = {
+        "ABAP", "ABSTRACT", "ADD", "ALIAS", "AND", "APPEND", "AS", "ASSIGN",
+        "AT", "AUTHORITY-CHECK", "BEGIN", "BREAK-POINT", "BY", "CALL",
+        "CASE", "CATCH", "CHECK", "CLASS", "CLASS-DATA", "CLASS-EVENTS",
+        "CLASS-METHODS", "CLEAR", "CLOSE", "COMMIT", "CONDENSE", "CONSTANTS",
+        "CONTINUE", "CREATE", "DATA", "DEFAULT", "DELETE", "DESCRIBE",
+        "DO", "ELSEIF", "ELSE", "ENDCASE", "ENDCLASS", "ENDDO",
+        "ENDFORM", "ENDIF", "ENDINTERFACE", "ENDLOOP", "ENDMETHOD",
+        "ENDMODULE", "ENDSELECT", "ENDTRY", "ENDWHILE", "ENUM",
+        "EVENTS", "EXCEPTION", "EXCEPTIONS", "EXIT", "EXPORTING",
+        "FIELD-SYMBOLS", "FINAL", "FIND", "FORM", "FORMAT", "FREE",
+        "FROM", "FUNCTION", "GET", "GROUP", "IF", "IMPLEMENTATION",
+        "IMPORTING", "IN", "INCLUDE", "INNER", "INSERT", "INTERFACE",
+        "INTERFACES", "INTO", "IS", "JOIN", "LIKE", "LOCAL", "LOOP",
+        "MESSAGE", "METHOD", "METHODS", "MODIFY", "MODULE", "MOVE",
+        "NEW", "NOT", "OBJECT", "OF", "OFFSET", "ON", "OPTIONAL", "OR",
+        "ORDER", "OTHERS", "OUTER", "PERFORM", "PRIVATE", "PROTECTED",
+        "PUBLIC", "RAISE", "RAISING", "READ", "RECEIVING", "REF",
+        "REFRESH", "RETURNING", "ROLLBACK", "SECTION", "SELECT",
+        "SORT", "SPLIT", "STATIC", "SUPPLY", "TABLE", "TABLES", "TO",
+        "TRY", "TYPE", "TYPES", "UP", "VALUE", "WHERE", "WHILE",
+        "WITH", "WRITE",
+    };
+
+    using namespace erpl_adt::ansi;
+    std::ostringstream out;
+    std::istringstream in(src);
+    std::string line;
+
+    while (std::getline(in, line)) {
+        // Full-line comment: first non-space character is '*'
+        {
+            size_t pos = 0;
+            while (pos < line.size() && line[pos] == ' ') ++pos;
+            if (pos < line.size() && line[pos] == '*') {
+                out << kDim << line << kReset << '\n';
+                continue;
+            }
+        }
+
+        // Scan character by character.
+        enum class State { Normal, InString, InComment };
+        State state = State::Normal;
+        std::string word;
+        size_t i = 0;
+
+        auto flush_word = [&]() {
+            if (word.empty()) return;
+            std::string upper = word;
+            std::transform(upper.begin(), upper.end(), upper.begin(),
+                           [](unsigned char c) { return std::toupper(c); });
+            if (kKeywords.count(upper)) {
+                out << kCyan << word << kReset;
+            } else {
+                out << word;
+            }
+            word.clear();
+        };
+
+        while (i < line.size()) {
+            char c = line[i];
+            if (state == State::InString) {
+                out << c;
+                if (c == '\'') {
+                    // Check for escaped quote ('').
+                    if (i + 1 < line.size() && line[i + 1] == '\'') {
+                        out << '\'';
+                        ++i;
+                    } else {
+                        out << kReset;
+                        state = State::Normal;
+                    }
+                }
+            } else if (state == State::InComment) {
+                out << c;
+            } else {
+                // Normal state.
+                if (c == '\'') {
+                    flush_word();
+                    out << kGreen << c;
+                    state = State::InString;
+                } else if (c == '"') {
+                    flush_word();
+                    out << kDim << c;
+                    state = State::InComment;
+                } else if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+                    word += c;
+                } else {
+                    flush_word();
+                    out << c;
+                }
+            }
+            ++i;
+        }
+
+        if (state == State::InString) {
+            flush_word();
+            out << kReset;
+        } else if (state == State::InComment) {
+            out << kReset;
+        } else {
+            flush_word();
+        }
+        out << '\n';
+    }
+    return out.str();
+}
+
+static std::string HighlightXml(const std::string& src) {
+    using namespace erpl_adt::ansi;
+    std::ostringstream out;
+
+    enum class State {
+        Text, InComment, InTagName, InAttrName, AfterAttrName,
+        InAttrValueDq, InAttrValueSq
+    };
+    State state = State::Text;
+    size_t i = 0;
+
+    while (i < src.size()) {
+        char c = src[i];
+        switch (state) {
+        case State::Text:
+            if (c == '<') {
+                if (src.compare(i, 4, "<!--") == 0) {
+                    out << kDim << "<!--";
+                    i += 4;
+                    state = State::InComment;
+                    continue;
+                }
+                out << kCyan << c;
+                state = State::InTagName;
+            } else {
+                out << c;
+            }
+            break;
+        case State::InComment:
+            out << c;
+            if (c == '-' && src.compare(i, 3, "-->") == 0) {
+                out << "->";
+                i += 3;
+                out << kReset;
+                state = State::Text;
+                continue;
+            }
+            break;
+        case State::InTagName:
+            if (c == '>') {
+                out << c << kReset;
+                state = State::Text;
+            } else if (std::isspace(static_cast<unsigned char>(c))) {
+                out << kReset << c;
+                state = State::InAttrName;
+            } else {
+                out << c;
+            }
+            break;
+        case State::InAttrName:
+            if (c == '>') {
+                out << kCyan << c << kReset;
+                state = State::Text;
+            } else if (c == '=') {
+                out << kYellow << c << kReset;
+                state = State::AfterAttrName;
+            } else {
+                out << kYellow << c;
+            }
+            break;
+        case State::AfterAttrName:
+            if (c == '"') {
+                out << kGreen << c;
+                state = State::InAttrValueDq;
+            } else if (c == '\'') {
+                out << kGreen << c;
+                state = State::InAttrValueSq;
+            } else if (c == '>') {
+                out << kCyan << c << kReset;
+                state = State::Text;
+            } else {
+                out << c;
+            }
+            break;
+        case State::InAttrValueDq:
+            out << c;
+            if (c == '"') {
+                out << kReset;
+                state = State::InAttrName;
+            }
+            break;
+        case State::InAttrValueSq:
+            out << c;
+            if (c == '\'') {
+                out << kReset;
+                state = State::InAttrName;
+            }
+            break;
+        }
+        ++i;
+    }
+    // Close any open escape sequence.
+    if (state != State::Text) out << kReset;
+    return out.str();
+}
+
+std::string HighlightSource(const std::string& src, SourceLanguage lang,
+                             bool color_mode) {
+    if (!color_mode) return src;
+    switch (lang) {
+    case SourceLanguage::Abap:    return HighlightAbap(src);
+    case SourceLanguage::Xml:     return HighlightXml(src);
+    case SourceLanguage::Mermaid: return src;  // No tokenizer for Mermaid — pass through.
+    case SourceLanguage::Plain:   return src;
+    }
+    return src;
+}
+
+// ---------------------------------------------------------------------------
+// --editor helpers
+// ---------------------------------------------------------------------------
+
+std::string MakeTempPath(const std::string& ext) {
+    auto uid = std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    return (std::filesystem::temp_directory_path()
+            / ("erpl-adt-" + uid + ext)).string();
+}
+
+int LaunchEditor(const std::string& path) {
+    const char* ed = std::getenv("VISUAL");
+    if (!ed) ed = std::getenv("EDITOR");
+#ifdef _WIN32
+    if (!ed) ed = "notepad";
+    auto cmd = "\"" + std::string(ed) + "\" \"" + path + "\"";
+#else
+    if (!ed) ed = "vi";
+    auto cmd = std::string(ed) + " '" + path + "'";
+#endif
+    return std::system(cmd.c_str());
 }
 
 BwTemplateParams BuildBwObjectPathParams(const BwReadOptions& opts) {
@@ -924,6 +1174,9 @@ int HandleSourceRead(const CommandArgs& args) {
     static const std::vector<std::string> kAllSections = {
         "main", "localdefinitions", "localimplementations", "testclasses"};
 
+    const bool color_mode = ColorMode(args);
+    const bool editor_mode = HasFlag(args, "editor");
+
     if (section == "all") {
         auto main_result = ReadSource(*session, base_uri + "/source/main", version);
         if (main_result.IsErr()) {
@@ -945,23 +1198,45 @@ int HandleSourceRead(const CommandArgs& args) {
                     j["sections"][sec] = nullptr;
                 }
             }
-            fmt.PrintJson(j.dump());
+            if (editor_mode) {
+                auto tmp = MakeTempPath(".json");
+                std::ofstream tf(tmp);
+                tf << j.dump(2);
+                tf.close();
+                LaunchEditor(tmp);
+                std::remove(tmp.c_str());
+            } else {
+                fmt.PrintJson(j.dump());
+            }
         } else {
-            std::cout << "*--- source/main ---*\n" << main_source;
-            if (!main_source.empty() && main_source.back() != '\n') std::cout << '\n';
+            // Collect all sections into a combined string for --editor mode.
+            std::ostringstream combined;
+            combined << "*--- source/main ---*\n";
+            combined << main_source;
+            if (!main_source.empty() && main_source.back() != '\n') combined << '\n';
             for (const auto& sec : kAllSections) {
                 if (sec == "main") continue;
                 auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
-                std::cout << "\n*--- source/" << sec << " ---*\n";
+                combined << "\n*--- source/" << sec << " ---*\n";
                 if (sec_result.IsOk() && !sec_result.Value().empty() &&
                     sec_result.Value() != main_source) {
-                    std::cout << sec_result.Value();
-                    if (sec_result.Value().back() != '\n') std::cout << '\n';
+                    combined << sec_result.Value();
+                    if (sec_result.Value().back() != '\n') combined << '\n';
                 } else {
                     std::cerr << "Note: source/" << sec << " is not separately available"
                               << " on this system (returned same content as source/main or empty).\n";
-                    std::cout << "[not available]\n";
+                    combined << "[not available]\n";
                 }
+            }
+            if (editor_mode) {
+                auto tmp = MakeTempPath(".abap");
+                std::ofstream tf(tmp);
+                tf << combined.str();
+                tf.close();
+                LaunchEditor(tmp);
+                std::remove(tmp.c_str());
+            } else {
+                std::cout << HighlightSource(combined.str(), SourceLanguage::Abap, color_mode);
             }
         }
         return 0;
@@ -993,11 +1268,31 @@ int HandleSourceRead(const CommandArgs& args) {
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["source"] = result.Value();
-        fmt.PrintJson(j.dump());
+        if (editor_mode) {
+            auto tmp = MakeTempPath(".json");
+            std::ofstream tf(tmp);
+            tf << j.dump(2);
+            tf.close();
+            LaunchEditor(tmp);
+            std::remove(tmp.c_str());
+        } else {
+            fmt.PrintJson(j.dump());
+        }
     } else {
-        std::cout << result.Value();
-        if (!result.Value().empty() && result.Value().back() != '\n') {
-            std::cout << '\n';
+        const auto& src = result.Value();
+        if (editor_mode) {
+            auto tmp = MakeTempPath(".abap");
+            std::ofstream tf(tmp);
+            tf << src;
+            tf.close();
+            LaunchEditor(tmp);
+            std::remove(tmp.c_str());
+        } else {
+            auto highlighted = HighlightSource(src, SourceLanguage::Abap, color_mode);
+            std::cout << highlighted;
+            if (!highlighted.empty() && highlighted.back() != '\n') {
+                std::cout << '\n';
+            }
         }
     }
     return 0;
@@ -4175,13 +4470,43 @@ static int RenderBwExport(const CommandArgs& args,
         return 0;
     }
 
+    const bool editor_mode = HasFlag(args, "editor");
+
     if (mermaid_mode) {
-        std::cout << BwRenderExportMermaid(exp, mopts);
+        const auto mmd = BwRenderExportMermaid(exp, mopts);
+        if (editor_mode) {
+            auto tmp = MakeTempPath(".mmd");
+            std::ofstream tf(tmp);
+            tf << mmd;
+            tf.close();
+            LaunchEditor(tmp);
+            std::remove(tmp.c_str());
+        } else {
+            std::cout << mmd;
+        }
     } else if (shape == "openmetadata") {
-        fmt.PrintJson(om_json);
+        if (editor_mode) {
+            auto tmp = MakeTempPath(".json");
+            std::ofstream tf(tmp);
+            tf << om_json;
+            tf.close();
+            LaunchEditor(tmp);
+            std::remove(tmp.c_str());
+        } else {
+            fmt.PrintJson(om_json);
+        }
     } else {
         if (fmt.IsJsonMode()) {
-            fmt.PrintJson(catalog_json);
+            if (editor_mode) {
+                auto tmp = MakeTempPath(".json");
+                std::ofstream tf(tmp);
+                tf << catalog_json;
+                tf.close();
+                LaunchEditor(tmp);
+                std::remove(tmp.c_str());
+            } else {
+                fmt.PrintJson(catalog_json);
+            }
         } else {
             std::cout << "Object:   " << object_name << "\n";
             std::cout << "Objects:  " << exp.objects.size() << "\n";
@@ -5459,7 +5784,7 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
            arg == "--incl-except-def" || arg == "--compact-mode" ||
            arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges" ||
-           arg == "--iobj-edges";
+           arg == "--iobj-edges" || arg == "--editor";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -5898,6 +6223,9 @@ void RegisterAllCommands(CommandRouter& router) {
             {"version", "<version>",  "active or inactive (default: active)",                                        false},
             {"section", "<section>",  "Source section: main (default), localdefinitions, localimplementations, testclasses, all", false},
             {"type",    "<type>",     "Object type to disambiguate name resolution (e.g. CLAS, PROG, INTF)",          false},
+            {"color",   "",           "Force ANSI syntax highlighting even when piped",                               false},
+            {"no-color","",           "Disable ANSI syntax highlighting",                                             false},
+            {"editor",  "",           "Open source in $VISUAL/$EDITOR (plain text, no ANSI codes)",                  false},
         };
         help.examples = {
             "erpl-adt source read ZCL_MY_CLASS",
@@ -5906,6 +6234,8 @@ void RegisterAllCommands(CommandRouter& router) {
             "erpl-adt source read /DMO/CL_FLIGHT_LEGACY --type CLAS",
             "erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main",
             "erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main --version=inactive",
+            "erpl-adt source read ZCL_MY_CLASS --editor",
+            "erpl-adt source read ZCL_MY_CLASS --color | less -R",
         };
         router.Register("source", "read", "Read source code",
                          HandleSourceRead, std::move(help));

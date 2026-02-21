@@ -14,7 +14,8 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--help" || arg == "--raw" || arg == "--datasource" ||
            arg == "--search-desc" || arg == "--own-only" ||
            arg == "--simulate" || arg == "--validate" ||
-           arg == "--background" || arg == "--force" || arg == "--no-search";
+           arg == "--background" || arg == "--force" || arg == "--no-search" ||
+           arg == "--editor";
 }
 
 // Check if --json appears anywhere in argv (for pre-parse error formatting).

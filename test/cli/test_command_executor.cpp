@@ -371,3 +371,49 @@ TEST_CASE("source read: valid --section values are accepted past validation",
         CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
     }
 }
+
+// ===========================================================================
+// source read --editor and --color — flag parsing tests
+// ===========================================================================
+
+TEST_CASE("source read: --editor is a boolean flag (does not consume next arg)",
+          "[cli][executor][source]") {
+    // If --editor consumed "ZCL_MY_CLASS" as its value the positional would be
+    // empty and we'd get exit 99 with "Missing source URI".
+    // But with section validation passing (valid URI provided as first positional)
+    // the handler must get past section validation, proving the flag parsed correctly.
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--editor"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    // Should NOT complain about missing URI or invalid section — those validations
+    // pass. It will fail at session creation (no SAP system), but that's fine.
+    CHECK(result.stderr_text.find("Missing source URI") == std::string::npos);
+    CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+}
+
+TEST_CASE("source read: --color is a boolean flag (does not consume next arg)",
+          "[cli][executor][source]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--color"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.stderr_text.find("Missing source URI") == std::string::npos);
+    CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+}
+
+TEST_CASE("source read: --no-color is a boolean flag (does not consume next arg)",
+          "[cli][executor][source]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--no-color"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.stderr_text.find("Missing source URI") == std::string::npos);
+    CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+}
