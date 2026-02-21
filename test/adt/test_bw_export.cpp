@@ -265,14 +265,17 @@ TEST_CASE("BwExportQuery: iobj_refs harvested from query components",
     REQUIRE(result.IsOk());
 
     const auto& query_obj = result.Value().objects[0];
-    // ZQ_SALES has RKF/CKF members → at least one iobj_ref with key_figure role.
-    // (IobjRole uses case-sensitive "ariable" check; uppercase "VARIABLE" is skipped.)
+    // ZQ_SALES has RKF/CKF members → key_figure refs, and ZVAR_FISCYEAR with
+    // uppercase VARIABLE type → variable ref (case-insensitive detection).
     CHECK_FALSE(query_obj.iobj_refs.empty());
     bool found_key_figure = false;
+    bool found_variable = false;
     for (const auto& ref : query_obj.iobj_refs) {
         if (ref.role == "key_figure") found_key_figure = true;
+        if (ref.role == "variable") found_variable = true;
     }
     CHECK(found_key_figure);
+    CHECK(found_variable);  // uppercase VARIABLE type must be detected
 }
 
 TEST_CASE("BwExportQuery: BwReadQueryComponent failure propagates as Err",
@@ -378,6 +381,114 @@ TEST_CASE("BwRenderExportCatalogJson: contract, objects and dataflow present",
     CHECK(json_str.find("\"objects\"") != std::string::npos);
     CHECK(json_str.find("\"dataflow\"") != std::string::npos);
     CHECK(json_str.find("ZADSO_TEST") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Bug regression: BwGetNodes provenance recorded after call (q9n)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BwExportInfoarea: GetNodes failure records provenance as error",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // GetNodes fails (e.g. network error)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "/sap/bw/modeling/repo/infoproviderstructure/AREA/0D_NW_DEMO",
+              503, "Service unavailable", std::nullopt, ErrorCategory::Internal}));
+
+    BwExportOptions opts;
+    opts.infoarea_name = "0D_NW_DEMO";
+    opts.include_lineage = false;
+    opts.include_queries = false;
+
+    auto result = BwExportInfoarea(mock, opts);
+    REQUIRE(result.IsOk());  // partial failure — not a hard error
+
+    const auto& exp = result.Value();
+    // Warning must be recorded
+    CHECK_FALSE(exp.warnings.empty());
+    // Provenance must record "error", not "ok"
+    bool found_error_prov = false;
+    for (const auto& p : exp.provenance) {
+        if (p.operation == "BwGetNodes" && p.status == "error") {
+            found_error_prov = true;
+        }
+    }
+    CHECK(found_error_prov);
+    // Must NOT have a "ok" provenance entry for BwGetNodes when call failed
+    for (const auto& p : exp.provenance) {
+        if (p.operation == "BwGetNodes") {
+            CHECK(p.status == "error");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9dp: include_iobj_refs decoupled from include_elem_provider_edges
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BwExportOptions: include_iobj_refs alone triggers CollectOrphanElemEdges without adding edges",
+          "[adt][bw][export]") {
+    // When include_iobj_refs=true but include_elem_provider_edges=false,
+    // CollectOrphanElemEdges is called but must NOT add any provider edges.
+    // The query result has no ELEM objects, so no extra HTTP calls are made.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_adso.xml")}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;  // provider edges suppressed
+    opts.include_iobj_refs = true;             // iobj_refs harvesting enabled
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZQ_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    // 3 HTTP calls: query read + adso read + CollectOrphanElemEdges re-reads the
+    // query object (type=ELEM/subtype=REP) to harvest its iobj_refs.
+    // If include_iobj_refs were false (and include_elem_provider_edges false),
+    // CollectOrphanElemEdges would not be called and GetCallCount() would be 2.
+    CHECK(mock.GetCallCount() == 3);
+
+    // Exactly 1 dataflow edge: the direct query-provider relationship recorded
+    // before CollectOrphanElemEdges runs. CollectOrphanElemEdges must not add
+    // a duplicate edge because (a) include_edges=false was passed and (b) the
+    // query already has an incoming edge (skip guard).
+    const auto& exp = result.Value();
+    CHECK(exp.dataflow_edges.size() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Bug regression: IobjRole case-insensitive VARIABLE detection (9it)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BwExportQuery: uppercase VARIABLE type maps to variable role",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // The query fixture contains ZVAR_FISCYEAR with type="VARIABLE" (uppercase)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_adso.xml")}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZQ_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& query_obj = result.Value().objects[0];
+    bool found_variable = false;
+    for (const auto& ref : query_obj.iobj_refs) {
+        if (ref.role == "variable" && ref.name == "ZVAR_FISCYEAR") {
+            found_variable = true;
+        }
+    }
+    CHECK(found_variable);
 }
 
 // ---------------------------------------------------------------------------

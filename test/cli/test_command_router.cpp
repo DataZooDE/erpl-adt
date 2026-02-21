@@ -533,6 +533,28 @@ TEST_CASE("CommandRouter: --json missing group outputs JSON error", "[cli][route
     CHECK(exit_code == 1);
 }
 
+TEST_CASE("CommandRouter: --no-xref-edges is treated as boolean flag (5lu)", "[cli][router]") {
+    // Regression: --no-xref-edges must not consume the following positional arg.
+    const char* argv[] = {"erpl-adt", "bw", "export-query", "--no-xref-edges", "ZQ_SALES"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "bw");
+    CHECK(result.Value().action == "export-query");
+    // --no-xref-edges must be captured as a flag, not consume "ZQ_SALES"
+    CHECK(result.Value().flags.count("no-xref-edges") > 0);
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZQ_SALES");
+}
+
+TEST_CASE("CommandRouter: --no-xref-edges after positional also parses correctly (5lu)", "[cli][router]") {
+    const char* argv[] = {"erpl-adt", "bw", "export-query", "ZQ_SALES", "--no-xref-edges"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZQ_SALES");
+    CHECK(result.Value().flags.count("no-xref-edges") > 0);
+}
+
 TEST_CASE("CommandRouter: --json unknown action in known group outputs JSON error", "[cli][router][json]") {
     CommandRouter router;
     router.Register("search", "query", "Search", [](const CommandArgs&) { return 0; });

@@ -8,16 +8,6 @@ namespace erpl_adt {
 
 namespace {
 
-bool IsBooleanFlag(std::string_view arg) {
-    return arg == "--color" || arg == "--no-color" ||
-           arg == "--json" || arg == "--https" || arg == "--insecure" ||
-           arg == "--help" || arg == "--raw" || arg == "--datasource" ||
-           arg == "--search-desc" || arg == "--own-only" ||
-           arg == "--simulate" || arg == "--validate" ||
-           arg == "--background" || arg == "--force" || arg == "--no-search" ||
-           arg == "--editor" || arg == "--activate" || arg == "--no-write";
-}
-
 // Check if --json appears anywhere in argv (for pre-parse error formatting).
 bool HasJsonFlag(int argc, const char* const* argv) {
     for (int i = 1; i < argc; ++i) {
@@ -33,6 +23,30 @@ void PrintJsonError(const std::string& message, std::ostream& out) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// CommandRouter::IsBooleanFlag — canonical set of boolean (valueless) flags.
+//
+// A boolean flag does not consume the following argv token as its value.
+// Both CommandRouter::Parse and IsNewStyleCommand (command_executor.cpp) must
+// use this single definition so the two parsers stay in sync.
+// ---------------------------------------------------------------------------
+bool CommandRouter::IsBooleanFlag(std::string_view arg) {
+    return arg == "--color" || arg == "--no-color" ||
+           arg == "--json" || arg == "--https" || arg == "--insecure" ||
+           arg == "--help" || arg == "--activate" || arg == "--raw" ||
+           arg == "--datasource" || arg == "--search-desc" ||
+           arg == "--own-only" || arg == "--simulate" ||
+           arg == "--validate" || arg == "--background" || arg == "--force" ||
+           arg == "--sort" || arg == "--only-ina" || arg == "--exec-check" ||
+           arg == "--with-cto" || arg == "--rdprops" || arg == "--allmsgs" ||
+           arg == "--dbgmode" || arg == "--metadata-only" ||
+           arg == "--incl-metadata" || arg == "--incl-object-values" ||
+           arg == "--incl-except-def" || arg == "--compact-mode" ||
+           arg == "--no-xref" || arg == "--no-xref-edges" ||
+           arg == "--no-search" || arg == "--no-elem-edges" ||
+           arg == "--iobj-edges" || arg == "--editor" || arg == "--no-write";
+}
 
 void CommandRouter::Register(const std::string& group,
                              const std::string& action,
@@ -240,7 +254,7 @@ Result<CommandArgs, std::string> CommandRouter::Parse(
                 ++i;
             } else {
                 auto key = std::string(arg.substr(2));
-                if (IsBooleanFlag(arg)) {
+                if (CommandRouter::IsBooleanFlag(arg)) {
                     args.flags[key] = "true";
                     ++i;
                 } else if (i + 1 < argc &&
@@ -286,7 +300,7 @@ Result<CommandArgs, std::string> CommandRouter::Parse(
                 ++i;
             } else {
                 auto key = std::string(arg.substr(2));
-                if (IsBooleanFlag(arg)) {
+                if (CommandRouter::IsBooleanFlag(arg)) {
                     args.flags[key] = "true";
                     ++i;
                 } else if (i + 1 < argc &&

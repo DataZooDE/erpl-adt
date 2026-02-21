@@ -177,3 +177,44 @@ TEST_CASE("RunSourceEdit: read error returns non-zero exit code", "[source][edit
     CHECK(mock.PutCallCount() == 0);
     CHECK(err.str().find("404") != std::string::npos);
 }
+
+// ===========================================================================
+// Editor failure paths (4l4)
+// ===========================================================================
+
+TEST_CASE("RunSourceEdit: editor non-zero exit returns 99 without writing", "[source][edit]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, kOriginal}));
+    // No lock/write expected — editor failure must short-circuit before write.
+
+    SourceEditorFn failing_editor = [](const std::string&) -> int { return 1; };
+
+    std::ostringstream out, err;
+    int rc = RunSourceEdit(mock, kSourceUri, std::nullopt, false, false,
+                           failing_editor, out, err);
+
+    CHECK(rc != 0);
+    CHECK(mock.PostCallCount() == 0);
+    CHECK(mock.PutCallCount() == 0);
+    CHECK(err.str().find("non-zero") != std::string::npos);
+}
+
+TEST_CASE("RunSourceEdit: unreadable temp file returns 99 without writing", "[source][edit]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, kOriginal}));
+
+    // Editor deletes the temp file, simulating a readback failure.
+    SourceEditorFn deleting_editor = [](const std::string& path) -> int {
+        std::remove(path.c_str());
+        return 0;
+    };
+
+    std::ostringstream out, err;
+    int rc = RunSourceEdit(mock, kSourceUri, std::nullopt, false, false,
+                           deleting_editor, out, err);
+
+    CHECK(rc != 0);
+    CHECK(mock.PostCallCount() == 0);
+    CHECK(mock.PutCallCount() == 0);
+    CHECK(err.str().find("Cannot read back") != std::string::npos);
+}

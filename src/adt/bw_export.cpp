@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <queue>
 #include <set>
@@ -339,8 +341,11 @@ std::string IobjRole(const BwQueryComponentRef& ref) {
     const auto& t = ref.type;
     if (t == "DIMENSION")    return "dimension";
     if (t == "FILTER_FIELD") return "filter";
-    // subComponents: Qry:Variable, variable, VARIABLE, etc.
-    if (t.find("ariable") != std::string::npos) return "variable";
+    // subComponents: Qry:Variable, variable, VARIABLE, etc. — case-insensitive.
+    std::string t_lower = t;
+    std::transform(t_lower.begin(), t_lower.end(), t_lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (t_lower.find("ariable") != std::string::npos) return "variable";
     // Key figures: token-based (KEY_FIGURE), restricted/calculated (RKF, CKF),
     // or normalized xsi:type variants (RESTRKEYFIG, CALCKEYFIG, …).
     if (t == "KEY_FIGURE" || t == "RKF" || t == "CKF" ||
@@ -361,7 +366,8 @@ std::string IobjRole(const BwQueryComponentRef& ref) {
 // ---------------------------------------------------------------------------
 void CollectOrphanElemEdges(IAdtSession& session,
                              const std::string& version,
-                             BwInfoareaExport& exp) {
+                             BwInfoareaExport& exp,
+                             bool include_edges) {
     // Subtype → BwReadQueryComponent component_type mapping
     auto SubtypeToComponentType = [](const std::string& subtype) -> std::string {
         if (subtype == "REP")  return "QUERY";
@@ -435,6 +441,7 @@ void CollectOrphanElemEdges(IAdtSession& session,
         }
 
         // --- Provider edge (orphan ELEMs only) ---
+        if (!include_edges) continue;
         if (detail.info_provider.empty()) continue;
         if (has_incoming.count(elem.name)) continue;
 
@@ -508,14 +515,14 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
 
         std::string prov_endpoint = entry.endpoint_override.value_or(
             "/sap/bw/modeling/repo/infoproviderstructure/AREA/" + area_name);
-        exp.provenance.push_back({"BwGetNodes", prov_endpoint, "ok"});
-
         auto nodes_res = BwGetNodes(session, no);
         if (nodes_res.IsErr()) {
+            exp.provenance.push_back({"BwGetNodes", prov_endpoint, "error"});
             exp.warnings.push_back("GetNodes " + area_name + ": " +
                                    nodes_res.Error().message);
             continue;
         }
+        exp.provenance.push_back({"BwGetNodes", prov_endpoint, "ok"});
 
         for (const auto& node : nodes_res.Value()) {
             // Recurse into container types: AREA and semanticalFolder
@@ -613,8 +620,9 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
     if (options.include_xref_edges) {
         CollectInfoproviderXrefEdges(session, exp);
     }
-    if (options.include_elem_provider_edges) {
-        CollectOrphanElemEdges(session, options.version, exp);
+    if (options.include_elem_provider_edges || options.include_iobj_refs) {
+        CollectOrphanElemEdges(session, options.version, exp,
+                               options.include_elem_provider_edges);
     }
     BuildDataflowGraph(exp);
     return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
@@ -713,8 +721,9 @@ Result<BwInfoareaExport, Error> BwExportQuery(
     if (options.include_xref_edges) {
         CollectInfoproviderXrefEdges(session, exp);
     }
-    if (options.include_elem_provider_edges) {
-        CollectOrphanElemEdges(session, options.version, exp);
+    if (options.include_elem_provider_edges || options.include_iobj_refs) {
+        CollectOrphanElemEdges(session, options.version, exp,
+                               options.include_elem_provider_edges);
     }
     BuildDataflowGraph(exp);
     return Result<BwInfoareaExport, Error>::Ok(std::move(exp));
@@ -789,8 +798,9 @@ Result<BwInfoareaExport, Error> BwExportCube(
     }
 
     // Fill iobj_refs for ELEM objects discovered via xref.
-    if (options.include_elem_provider_edges) {
-        CollectOrphanElemEdges(session, options.version, exp);
+    if (options.include_elem_provider_edges || options.include_iobj_refs) {
+        CollectOrphanElemEdges(session, options.version, exp,
+                               options.include_elem_provider_edges);
     }
 
     BuildDataflowGraph(exp);

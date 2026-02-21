@@ -109,6 +109,11 @@ public:
     // Parse argv into CommandArgs without dispatching.
     static Result<CommandArgs, std::string> Parse(int argc, const char* const* argv);
 
+    // Return true if arg is a boolean flag that does not consume the next
+    // token as its value (e.g. --json, --color, --no-xref-edges, ...).
+    // Used by both CommandRouter::Parse and IsNewStyleCommand in the executor.
+    static bool IsBooleanFlag(std::string_view arg);
+
     // Get all registered command groups (sorted).
     [[nodiscard]] std::vector<std::string> Groups() const;
 

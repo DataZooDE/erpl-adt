@@ -29,6 +29,7 @@
 #include <erpl_adt/adt/bw_validation.hpp>
 #include <erpl_adt/adt/bw_valuehelp.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
+#include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -59,6 +60,7 @@
 
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <sys/wait.h>
 #endif
 
 namespace erpl_adt {
@@ -657,17 +659,39 @@ std::string MakeTempPath(const std::string& ext) {
             / ("erpl-adt-" + uid + ext)).string();
 }
 
+// Escape a path for use in a POSIX single-quoted shell argument.
+// Single-quoted strings cannot contain a literal single quote; we close the
+// quote, emit an escaped single quote, then reopen.
+static std::string ShellSingleQuote(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    out += '\'';
+    for (char c : s) {
+        if (c == '\'')
+            out += "'\\''";
+        else
+            out += c;
+    }
+    out += '\'';
+    return out;
+}
+
 int LaunchEditor(const std::string& path) {
     const char* ed = std::getenv("VISUAL");
     if (!ed) ed = std::getenv("EDITOR");
 #ifdef _WIN32
     if (!ed) ed = "notepad";
     auto cmd = "\"" + std::string(ed) + "\" \"" + path + "\"";
+    int raw = std::system(cmd.c_str());
+    return raw;
 #else
     if (!ed) ed = "vi";
-    auto cmd = std::string(ed) + " '" + path + "'";
+    auto cmd = std::string(ed) + " " + ShellSingleQuote(path);
+    int raw = std::system(cmd.c_str());
+    if (raw == -1) return 1;           // fork/exec failure
+    if (WIFEXITED(raw)) return WEXITSTATUS(raw);
+    return 1;                          // killed by signal
 #endif
-    return std::system(cmd.c_str());
 }
 
 BwTemplateParams BuildBwObjectPathParams(const BwReadOptions& opts) {
@@ -1191,11 +1215,16 @@ int HandleSourceRead(const CommandArgs& args) {
             for (const auto& sec : kAllSections) {
                 if (sec == "main") continue;
                 auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
-                if (sec_result.IsOk() && !sec_result.Value().empty() &&
-                    sec_result.Value() != main_source) {
-                    j["sections"][sec] = sec_result.Value();
-                } else {
+                if (sec_result.IsErr()) {
+                    if (sec_result.Error().category != ErrorCategory::NotFound) {
+                        fmt.PrintError(sec_result.Error());
+                        return sec_result.Error().ExitCode();
+                    }
                     j["sections"][sec] = nullptr;
+                } else if (sec_result.Value().empty() || sec_result.Value() == main_source) {
+                    j["sections"][sec] = nullptr;
+                } else {
+                    j["sections"][sec] = sec_result.Value();
                 }
             }
             if (editor_mode) {
@@ -1218,14 +1247,21 @@ int HandleSourceRead(const CommandArgs& args) {
                 if (sec == "main") continue;
                 auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
                 combined << "\n*--- source/" << sec << " ---*\n";
-                if (sec_result.IsOk() && !sec_result.Value().empty() &&
-                    sec_result.Value() != main_source) {
-                    combined << sec_result.Value();
-                    if (sec_result.Value().back() != '\n') combined << '\n';
-                } else {
+                if (sec_result.IsErr()) {
+                    if (sec_result.Error().category != ErrorCategory::NotFound) {
+                        fmt.PrintError(sec_result.Error());
+                        return sec_result.Error().ExitCode();
+                    }
                     std::cerr << "Note: source/" << sec << " is not separately available"
                               << " on this system (returned same content as source/main or empty).\n";
                     combined << "[not available]\n";
+                } else if (sec_result.Value().empty() || sec_result.Value() == main_source) {
+                    std::cerr << "Note: source/" << sec << " is not separately available"
+                              << " on this system (returned same content as source/main or empty).\n";
+                    combined << "[not available]\n";
+                } else {
+                    combined << sec_result.Value();
+                    if (sec_result.Value().back() != '\n') combined << '\n';
                 }
             }
             if (editor_mode) {
@@ -1687,6 +1723,37 @@ int HandleTestRun(const CommandArgs& args) {
                 }
             }
         }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// object run
+// ---------------------------------------------------------------------------
+int HandleObjectRun(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing class name. Usage: erpl-adt object run <class-name-or-uri>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+
+    auto result = RunClass(*session, args.positional[0]);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& cr = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j{{"class", cr.class_name}, {"output", cr.output}};
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << cr.output;
     }
     return 0;
 }
@@ -4628,7 +4695,7 @@ int HandleBwExport(const CommandArgs& args) {
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
-            "Usage: erpl-adt bw export <infoarea> [--mermaid] [--shape catalog|openmetadata] "
+            "Usage: erpl-adt bw export-area <infoarea> [--mermaid] [--shape catalog|openmetadata] "
             "[--max-depth N] [--types T1,T2,...] [--no-lineage] [--no-queries] [--no-search] "
             "[--version a|m] [--no-elem-edges] [--iobj-edges] [--out-dir <dir>] [--service-name <name>] [--system-id <id>]"));
         return 99;
@@ -4645,6 +4712,7 @@ int HandleBwExport(const CommandArgs& args) {
     opts.include_search_supplement = !HasFlag(args, "no-search");
     opts.include_xref_edges = !HasFlag(args, "no-xref-edges");
     opts.include_elem_provider_edges = !HasFlag(args, "no-elem-edges");
+    opts.include_iobj_refs = HasFlag(args, "iobj-edges");
 
     if (HasFlag(args, "max-depth")) {
         auto parsed = ParseIntInRange(GetFlag(args, "max-depth"), 0, 100, "--max-depth");
@@ -4696,6 +4764,7 @@ int HandleBwExportQuery(const CommandArgs& args) {
     opts.include_queries = !HasFlag(args, "no-queries");
     opts.include_xref_edges = !HasFlag(args, "no-xref-edges");
     opts.include_elem_provider_edges = !HasFlag(args, "no-elem-edges");
+    opts.include_iobj_refs = HasFlag(args, "iobj-edges");
 
     auto result = BwExportQuery(*session, name, opts);
     if (result.IsErr()) {
@@ -4728,6 +4797,7 @@ int HandleBwExportCube(const CommandArgs& args) {
     opts.include_lineage = !HasFlag(args, "no-lineage");
     opts.include_xref_edges = !HasFlag(args, "no-xref-edges");
     opts.include_elem_provider_edges = !HasFlag(args, "no-elem-edges");
+    opts.include_iobj_refs = HasFlag(args, "iobj-edges");
 
     auto result = BwExportCube(*session, name, opts);
     if (result.IsErr()) {
@@ -5614,12 +5684,26 @@ int RunSourceEdit(IAdtSession& session,
     }
 
     // 3. Invoke editor (blocks until editor closes).
-    editor_fn(tmp);
+    int editor_rc = editor_fn(tmp);
+    if (editor_rc != 0) {
+        std::remove(tmp.c_str());
+        fmt.PrintError(Error{"SourceEdit", source_uri, std::nullopt,
+                             "Editor exited with non-zero status: " + std::to_string(editor_rc),
+                             std::nullopt});
+        return 99;
+    }
 
     // 4. Read back modified content.
     std::string new_source;
     {
         std::ifstream in(tmp);
+        if (!in) {
+            std::remove(tmp.c_str());
+            fmt.PrintError(Error{"SourceEdit", tmp, std::nullopt,
+                                 "Cannot read back temp file: " + tmp,
+                                 std::nullopt});
+            return 99;
+        }
         new_source = std::string(std::istreambuf_iterator<char>(in),
                                  std::istreambuf_iterator<char>());
     }
@@ -5954,19 +6038,7 @@ void PrintLogoutHelp(std::ostream& out, bool color) {
 // ---------------------------------------------------------------------------
 // Boolean flags that don't consume a following value argument.
 bool IsBooleanFlag(std::string_view arg) {
-    return arg == "--color" || arg == "--no-color" ||
-           arg == "--json" || arg == "--https" || arg == "--insecure" ||
-           arg == "--help" || arg == "--activate" || arg == "--raw" ||
-           arg == "--datasource" || arg == "--search-desc" ||
-           arg == "--own-only" || arg == "--simulate" ||
-           arg == "--validate" || arg == "--background" || arg == "--force" ||
-           arg == "--sort" || arg == "--only-ina" || arg == "--exec-check" ||
-           arg == "--with-cto" || arg == "--rdprops" || arg == "--allmsgs" ||
-           arg == "--dbgmode" || arg == "--metadata-only" ||
-           arg == "--incl-metadata" || arg == "--incl-object-values" ||
-           arg == "--incl-except-def" || arg == "--compact-mode" ||
-           arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges" ||
-           arg == "--iobj-edges" || arg == "--editor" || arg == "--no-write";
+    return CommandRouter::IsBooleanFlag(arg);
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -6392,6 +6464,25 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("object", "unlock", "Unlock an object",
                          HandleObjectUnlock, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // object run
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt object run <class-name-or-uri> [flags]";
+        help.args_description = "<class-name-or-uri>  Class name (e.g. /DMO/CL_FLIGHT_DATA_GENERATOR) or full ADT URI";
+        help.long_description =
+            "Executes an ABAP class implementing IF_OO_ADT_CLASSRUN and prints its "
+            "console output. Useful for running data generators, migration utilities, "
+            "and console-mode tools without Eclipse.";
+        help.examples = {
+            "erpl-adt object run /DMO/CL_FLIGHT_DATA_GENERATOR",
+            "erpl-adt --json object run ZCL_MY_CONSOLE_APP",
+        };
+        router.Register("object", "run", "Run an ABAP console class (IF_OO_ADT_CLASSRUN)",
+                         HandleObjectRun, std::move(help));
     }
 
     // -----------------------------------------------------------------------

@@ -21,6 +21,7 @@
 #include <erpl_adt/adt/bw_lineage_graph.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/activation.hpp>
+#include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
 #include <erpl_adt/adt/discovery.hpp>
@@ -268,6 +269,20 @@ ToolResult HandleRunTests(IAdtSession& session,
     }
     j["classes"] = classes;
     return MakeOkResult(j);
+}
+
+// adt_run_class
+ToolResult HandleRunClass(IAdtSession& session,
+                          const nlohmann::json& params) {
+    ToolResult err;
+    auto class_name = RequireString(params, "class_name", err);
+    if (!class_name) return err;
+
+    auto result = RunClass(session, *class_name);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+
+    const auto& cr = result.Value();
+    return MakeOkResult(nlohmann::json{{"class", cr.class_name}, {"output", cr.output}});
 }
 
 // adt_run_atc
@@ -782,6 +797,18 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             {"uri"}),
         [&session](const nlohmann::json& params) {
             return HandleRunTests(session, params);
+        });
+
+    registry.Register(
+        "adt_run_class",
+        "Execute an ABAP class that implements IF_OO_ADT_CLASSRUN. "
+        "Returns the console output as plain text. Useful for running data generators "
+        "and console utilities without Eclipse. Example: /DMO/CL_FLIGHT_DATA_GENERATOR.",
+        MakeSchema(
+            {{"class_name", StringProp("ABAP class name (e.g. /DMO/CL_FLIGHT_DATA_GENERATOR) or full ADT URI")}},
+            {"class_name"}),
+        [&session](const nlohmann::json& params) {
+            return HandleRunClass(session, params);
         });
 
     registry.Register(

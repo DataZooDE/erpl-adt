@@ -96,12 +96,12 @@ TEST_CASE("RegisterAllCommands registers all expected groups",
     CHECK(actual == expected);
 }
 
-TEST_CASE("RegisterAllCommands: object group has 5 actions",
+TEST_CASE("RegisterAllCommands: object group has 6 actions",
           "[cli][executor]") {
     CommandRouter router;
     RegisterAllCommands(router);
     auto cmds = router.CommandsForGroup("object");
-    CHECK(cmds.size() == 5);
+    CHECK(cmds.size() == 6);
 }
 
 // ===========================================================================
@@ -416,4 +416,48 @@ TEST_CASE("source read: --no-color is a boolean flag (does not consume next arg)
     const auto result = DispatchWithStderrCapture(router, 5, argv);
     CHECK(result.stderr_text.find("Missing source URI") == std::string::npos);
     CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+}
+
+// ===========================================================================
+// --section all routing (liy)
+// ===========================================================================
+
+TEST_CASE("source read: --section all is a valid section value (liy)",
+          "[cli][executor][source]") {
+    // Validates that --section all dispatches correctly without a "Invalid --section" error.
+    // Error propagation of non-NotFound secondary-section failures is verified by integration tests
+    // (test_06_source.py) since it requires a live mock session.
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--section", "all"};
+    const auto result = DispatchWithStderrCapture(router, 6, argv);
+    CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+}
+
+// ===========================================================================
+// IsNewStyleCommand: --no-xref-edges is a boolean flag (5lu)
+// ===========================================================================
+
+TEST_CASE("IsNewStyleCommand: --no-xref-edges does not consume positional arg",
+          "[cli][executor]") {
+    const char* argv[] = {"erpl-adt", "--no-xref-edges", "bw", "export-query"};
+    // --no-xref-edges is a global boolean flag — must not consume "bw" as its value
+    CHECK(IsNewStyleCommand(4, argv));
+}
+
+// ===========================================================================
+// bw export-area usage string (y20)
+// ===========================================================================
+
+TEST_CASE("bw export-area: missing infoarea prints export-area usage hint",
+          "[cli][executor][bw]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "bw", "export-area"};
+    const auto result = DispatchWithStderrCapture(router, 3, argv);
+    CHECK(result.exit_code == 99);
+    // Error must reference "export-area", not the stale "export".
+    CHECK(result.stderr_text.find("export-area") != std::string::npos);
 }
