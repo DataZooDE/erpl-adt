@@ -839,19 +839,155 @@ int HandleSourceRead(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing source URI. Usage: erpl-adt source read <uri>"));
+        fmt.PrintError(MakeValidationError("Missing source URI or object name. Usage: erpl-adt source read <name-or-uri>"));
         return 99;
     }
 
-    auto version = GetFlag(args, "version", "active");
+    auto version     = GetFlag(args, "version", "active");
+    auto section     = GetFlag(args, "section",  "main");
+    auto type_filter = GetFlag(args, "type");
+
+    static const std::vector<std::string> kValidSections = {
+        "main", "localdefinitions", "localimplementations", "testclasses", "all"};
+    if (std::find(kValidSections.begin(), kValidSections.end(), section) == kValidSections.end()) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --section value '" + section +
+            "'. Valid values: main, localdefinitions, localimplementations, testclasses, all"));
+        return 99;
+    }
+
     auto session = RequireSession(args, fmt);
     if (!session) {
         return 99;
     }
-    auto result = ReadSource(*session, args.positional[0], version);
+
+    const auto& arg = args.positional[0];
+
+    // Determine the base object URI (without /source/...) and whether the
+    // caller already supplied a full source URI.
+    std::string base_uri;
+    bool arg_is_full_source_uri = false;
+
+    if (arg.find("/sap/bc/adt/") == 0) {
+        auto source_pos = arg.find("/source/");
+        if (source_pos != std::string::npos) {
+            arg_is_full_source_uri = true;
+            base_uri = arg.substr(0, source_pos);
+        } else {
+            base_uri = arg;
+        }
+    } else {
+        // Name resolution via search.
+        if (!type_filter.empty()) {
+            // Caller supplied --type: filter search results.
+            SearchOptions opts;
+            opts.query       = arg;
+            opts.max_results = 10;
+            opts.object_type = type_filter;
+            auto search_result = SearchObjects(*session, opts);
+            if (search_result.IsErr()) {
+                fmt.PrintError(search_result.Error());
+                return search_result.Error().ExitCode();
+            }
+            std::string upper_arg = arg;
+            std::transform(upper_arg.begin(), upper_arg.end(), upper_arg.begin(),
+                           [](unsigned char c) { return std::toupper(c); });
+            for (const auto& item : search_result.Value()) {
+                std::string upper_name = item.name;
+                std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                               [](unsigned char c) { return std::toupper(c); });
+                if (upper_name == upper_arg) {
+                    base_uri = item.uri;
+                    break;
+                }
+            }
+            if (base_uri.empty()) {
+                Error err;
+                err.operation = "SourceRead";
+                err.message   = "Object not found: " + arg;
+                err.category  = ErrorCategory::NotFound;
+                fmt.PrintError(err);
+                return 2;
+            }
+        } else {
+            // No type filter: delegate to existing resolver.
+            auto resolved = ResolveObjectUri(*session, arg);
+            if (resolved.IsErr()) {
+                fmt.PrintError(resolved.Error());
+                return resolved.Error().ExitCode();
+            }
+            base_uri = resolved.Value();
+        }
+    }
+
+    // --section all: read every section, skip duplicates with a stderr notice.
+    static const std::vector<std::string> kAllSections = {
+        "main", "localdefinitions", "localimplementations", "testclasses"};
+
+    if (section == "all") {
+        auto main_result = ReadSource(*session, base_uri + "/source/main", version);
+        if (main_result.IsErr()) {
+            fmt.PrintError(main_result.Error());
+            return main_result.Error().ExitCode();
+        }
+        const auto& main_source = main_result.Value();
+
+        if (fmt.IsJsonMode()) {
+            nlohmann::json j;
+            j["sections"]["main"] = main_source;
+            for (const auto& sec : kAllSections) {
+                if (sec == "main") continue;
+                auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
+                if (sec_result.IsOk() && !sec_result.Value().empty() &&
+                    sec_result.Value() != main_source) {
+                    j["sections"][sec] = sec_result.Value();
+                } else {
+                    j["sections"][sec] = nullptr;
+                }
+            }
+            fmt.PrintJson(j.dump());
+        } else {
+            std::cout << "*--- source/main ---*\n" << main_source;
+            if (!main_source.empty() && main_source.back() != '\n') std::cout << '\n';
+            for (const auto& sec : kAllSections) {
+                if (sec == "main") continue;
+                auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
+                std::cout << "\n*--- source/" << sec << " ---*\n";
+                if (sec_result.IsOk() && !sec_result.Value().empty() &&
+                    sec_result.Value() != main_source) {
+                    std::cout << sec_result.Value();
+                    if (sec_result.Value().back() != '\n') std::cout << '\n';
+                } else {
+                    std::cerr << "Note: source/" << sec << " is not separately available"
+                              << " on this system (returned same content as source/main or empty).\n";
+                    std::cout << "[not available]\n";
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Single section.
+    // Preserve exact URI when caller passed a full source URI and wants main.
+    std::string source_uri = (arg_is_full_source_uri && section == "main")
+                             ? arg
+                             : base_uri + "/source/" + section;
+
+    auto result = ReadSource(*session, source_uri, version);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
+    }
+
+    // Warn when a non-main section silently echoes the main source.
+    if (section != "main") {
+        auto main_result = ReadSource(*session, base_uri + "/source/main", version);
+        if (main_result.IsOk() && main_result.Value() == result.Value()) {
+            std::cerr << "Note: source/" << section << " returned the same content as"
+                      << " source/main on this system.\n"
+                      << "      The local class definitions (CCDEF/CCIMP includes) may not\n"
+                      << "      be separately accessible via ADT on this ABAP system.\n";
+        }
     }
 
     if (fmt.IsJsonMode()) {
@@ -860,7 +996,6 @@ int HandleSourceRead(const CommandArgs& args) {
         fmt.PrintJson(j.dump());
     } else {
         std::cout << result.Value();
-        // Ensure trailing newline so shell prompt doesn't append to last line
         if (!result.Value().empty() && result.Value().back() != '\n') {
             std::cout << '\n';
         }
@@ -5562,7 +5697,13 @@ void RegisterAllCommands(CommandRouter& router) {
 
     router.SetGroupDescription("source", "Read, write, and check ABAP source code");
     router.SetGroupExamples("source", {
-        "# Read active source",
+        "# Read source by class name (no URI required)",
+        "$ erpl-adt source read ZCL_MY_CLASS",
+        "",
+        "# Read all class source sections (main + local types)",
+        "$ erpl-adt source read ZCL_MY_CLASS --section all",
+        "",
+        "# Read active source by full URI",
         "$ erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main",
         "",
         "# Write source (auto-lock mode)",
@@ -5751,12 +5892,18 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt source read <uri> [flags]";
-        help.args_description = "<uri>    Source URI";
+        help.usage = "erpl-adt source read <name-or-uri> [flags]";
+        help.args_description = "<name-or-uri>    Object technical name (e.g. ZCL_MY_CLASS) or full ADT source URI";
         help.flags = {
-            {"version", "<version>", "active or inactive (default: active)", false},
+            {"version", "<version>",  "active or inactive (default: active)",                                        false},
+            {"section", "<section>",  "Source section: main (default), localdefinitions, localimplementations, testclasses, all", false},
+            {"type",    "<type>",     "Object type to disambiguate name resolution (e.g. CLAS, PROG, INTF)",          false},
         };
         help.examples = {
+            "erpl-adt source read ZCL_MY_CLASS",
+            "erpl-adt source read /DMO/CL_FLIGHT_LEGACY --section localimplementations",
+            "erpl-adt source read /DMO/CL_FLIGHT_LEGACY --section all",
+            "erpl-adt source read /DMO/CL_FLIGHT_LEGACY --type CLAS",
             "erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main",
             "erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main --version=inactive",
         };

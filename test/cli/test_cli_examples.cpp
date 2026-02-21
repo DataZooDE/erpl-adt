@@ -144,6 +144,51 @@ TEST_CASE("CLI example: source read inactive version", "[cli][examples]") {
     CHECK(result.Value().flags.at("version") == "inactive");
 }
 
+TEST_CASE("CLI example: source read with --section flag", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--section=localdefinitions"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "read");
+    CHECK(result.Value().flags.at("section") == "localdefinitions");
+    REQUIRE(result.Value().positional.size() == 1);
+}
+
+TEST_CASE("CLI example: source read with --section all", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--section=all"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().flags.at("section") == "all");
+}
+
+TEST_CASE("CLI example: source read by name with --type", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "ZCL_MY_CLASS", "--type=CLAS"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "read");
+    CHECK(result.Value().flags.at("type") == "CLAS");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+}
+
+TEST_CASE("CLI example: source read by name without --type", "[cli][examples]") {
+    // Name-based lookup without type hint — relies on ResolveObjectUri
+    const char* argv[] = {"erpl-adt", "source", "read", "/DMO/CL_FLIGHT_LEGACY"};
+    auto result = CommandRouter::Parse(4, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "read");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "/DMO/CL_FLIGHT_LEGACY");
+    CHECK(result.Value().flags.count("type") == 0);
+}
+
 TEST_CASE("CLI example: source write", "[cli][examples]") {
     const char* argv[] = {"erpl-adt", "source", "write",
                           "/sap/bc/adt/oo/classes/zcl_test/source/main",

@@ -327,3 +327,47 @@ TEST_CASE("bw read-query: too many positional args fails with usage hint",
     CHECK(result.exit_code == 99);
     CHECK(result.stderr_text.find("Too many arguments") != std::string::npos);
 }
+
+// ===========================================================================
+// source read — pre-session validation
+// ===========================================================================
+
+TEST_CASE("source read: missing arg returns 99",
+          "[cli][executor][source]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read"};
+    CHECK(router.Dispatch(3, argv) == 99);
+}
+
+TEST_CASE("source read: invalid --section value returns 99",
+          "[cli][executor][source]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "read",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--section=bogus"};
+    const auto result = DispatchWithStderrCapture(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Invalid --section") != std::string::npos);
+}
+
+TEST_CASE("source read: valid --section values are accepted past validation",
+          "[cli][executor][source]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    // These should NOT return 99 for the section validation check.
+    // They will fail later at session setup (exit 99 for missing credentials)
+    // but we verify the section name itself is accepted by checking the
+    // error message does NOT mention "Invalid --section".
+    for (const auto* sec : {"main", "localdefinitions", "localimplementations",
+                             "testclasses", "all"}) {
+        std::string section_flag = std::string("--section=") + sec;
+        const char* argv[] = {"erpl-adt", "source", "read",
+                               "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                               section_flag.c_str()};
+        const auto result = DispatchWithStderrCapture(router, 5, argv);
+        // Must not complain about the section value itself.
+        CHECK(result.stderr_text.find("Invalid --section") == std::string::npos);
+    }
+}
