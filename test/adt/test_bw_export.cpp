@@ -189,6 +189,162 @@ TEST_CASE("BwExportInfoarea: empty infoarea_name is validation error",
 }
 
 // ---------------------------------------------------------------------------
+// BwExportQuery tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BwExportQuery: happy path — provider is ADSO",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // GET 1: query XML (BwReadQueryComponent)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    // GET 2: ADSO detail for provider ZCP_SALES
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_adso.xml")}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZQ_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& exp = result.Value();
+    CHECK(exp.contract == "bw.query.export");
+    REQUIRE(exp.objects.size() == 2);
+    CHECK(exp.objects[0].type == "ELEM");
+    CHECK(exp.objects[0].name == "ZQ_SALES");
+    CHECK(exp.objects[1].type == "ADSO");
+    CHECK(exp.objects[1].name == "ZCP_SALES");
+    CHECK(exp.dataflow_edges.size() == 1);
+}
+
+TEST_CASE("BwExportQuery: provider fallback — ADSO read fails → type is CUBE",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // GET 1: query XML succeeds
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    // GET 2: ADSO detail fails (provider is a classic HCPR, not ADSO)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "/sap/bw/modeling/adso/ZCP_SALES/a", 404,
+              "Not found", std::nullopt, ErrorCategory::NotFound}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZQ_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& exp = result.Value();
+    REQUIRE(exp.objects.size() == 2);
+    CHECK(exp.objects[0].type == "ELEM");
+    CHECK(exp.objects[1].type == "CUBE");
+    CHECK(exp.objects[1].name == "ZCP_SALES");
+    // Edge still present: provider → query
+    CHECK(exp.dataflow_edges.size() == 1);
+}
+
+TEST_CASE("BwExportQuery: iobj_refs harvested from query components",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_adso.xml")}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZQ_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& query_obj = result.Value().objects[0];
+    // ZQ_SALES has RKF/CKF members → at least one iobj_ref with key_figure role.
+    // (IobjRole uses case-sensitive "ariable" check; uppercase "VARIABLE" is skipped.)
+    CHECK_FALSE(query_obj.iobj_refs.empty());
+    bool found_key_figure = false;
+    for (const auto& ref : query_obj.iobj_refs) {
+        if (ref.role == "key_figure") found_key_figure = true;
+    }
+    CHECK(found_key_figure);
+}
+
+TEST_CASE("BwExportQuery: BwReadQueryComponent failure propagates as Err",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // Query read fails (e.g. object does not exist)
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "/sap/bw/modeling/query/ZNONEXISTENT/a", 404,
+              "Object not found", std::nullopt, ErrorCategory::NotFound}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportQuery(mock, "ZNONEXISTENT", opts);
+    REQUIRE(result.IsErr());
+}
+
+// ---------------------------------------------------------------------------
+// BwExportCube tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BwExportCube: happy path — provider detail is ADSO",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // GET 1: ADSO detail
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_adso.xml")}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportCube(mock, "ZADSO_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& exp = result.Value();
+    CHECK(exp.contract == "bw.cube.export");
+    CHECK(exp.infoarea == "ZADSO_SALES");
+    REQUIRE(exp.objects.size() == 1);
+    CHECK(exp.objects[0].type == "ADSO");
+    CHECK(exp.objects[0].name == "ZADSO_SALES");
+    CHECK_FALSE(exp.objects[0].fields.empty());
+}
+
+TEST_CASE("BwExportCube: ADSO read fails → type is CUBE stub, always Ok",
+          "[adt][bw][export]") {
+    MockAdtSession mock;
+    // ADSO detail fails → classic InfoCube/HCPR fallback
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "/sap/bw/modeling/adso/ZCP_SALES/a", 404,
+              "Not found", std::nullopt, ErrorCategory::NotFound}));
+
+    BwExportOptions opts;
+    opts.include_xref_edges = false;
+    opts.include_elem_provider_edges = false;
+    opts.include_lineage = false;
+
+    auto result = BwExportCube(mock, "ZCP_SALES", opts);
+    REQUIRE(result.IsOk());
+
+    const auto& exp = result.Value();
+    REQUIRE(exp.objects.size() == 1);
+    CHECK(exp.objects[0].type == "CUBE");
+    CHECK(exp.objects[0].name == "ZCP_SALES");
+    // Fields are empty for a stub
+    CHECK(exp.objects[0].fields.empty());
+}
+
+// ---------------------------------------------------------------------------
 // BwRenderExportCatalogJson tests
 // ---------------------------------------------------------------------------
 

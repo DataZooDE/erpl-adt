@@ -69,3 +69,29 @@ class TestSource:
         source_uri = test_class["uri"] + "/source/main"
         data = cli.run_ok("source", "check", source_uri)
         assert isinstance(data, list)
+
+    def test_read_source_section_all(self, test_class, cli):
+        """source read --section all emits section banners for each section."""
+        uri = test_class["uri"] + "/source/main"
+        result = cli.run_no_json("source", "read", uri, "--section", "all",
+                                 "--no-color")
+        assert result.returncode == 0, (
+            f"source read --section all failed: {result.stderr}"
+        )
+        # Section banners are emitted as comment lines like *--- source/main ---*
+        assert "source/main" in result.stdout, (
+            f"Expected section banner containing 'source/main' in output:\n"
+            f"{result.stdout[:500]}"
+        )
+
+    def test_read_source_by_name(self, test_class, cli):
+        """source read with object name + --type resolves and reads source."""
+        name = test_class["name"]
+        result = cli.run_no_json("source", "read", name, "--type", "CLAS",
+                                 "--no-color")
+        assert result.returncode == 0, (
+            f"source read by name failed: {result.stderr}"
+        )
+        assert "CLASS" in result.stdout.upper(), (
+            f"Expected ABAP CLASS keyword in source output:\n{result.stdout[:500]}"
+        )

@@ -162,3 +162,80 @@ class TestBwExport:
         """Missing infoarea argument must exit non-zero."""
         result = cli.run_fail("bw", "export-area")
         assert result.returncode != 0
+
+
+@pytest.mark.bw
+class TestBwExportQuery:
+    """Integration tests for 'erpl-adt bw export-query <name>'."""
+
+    @pytest.fixture(scope="class")
+    def known_query(self, cli, bw_has_search):
+        """Find a known ELEM (query) object to export."""
+        data = cli.run_ok("bw", "search", "*", "--type", "ELEM", "--max", "5")
+        if not data:
+            pytest.skip("No ELEM (query) objects found on this system")
+        return data[0]["name"]
+
+    def test_export_query_catalog_json(self, cli, known_query):
+        """export-query returns contract, objects, and dataflow sections."""
+        data = cli.run_ok("bw", "export-query", known_query, "--no-lineage")
+        assert data.get("contract") == "bw.query.export", (
+            f"Expected contract='bw.query.export', got {data.get('contract')!r}"
+        )
+        assert "objects" in data, "Missing 'objects' key"
+        assert "dataflow" in data, "Missing 'dataflow' key"
+
+    def test_export_query_mermaid(self, cli, known_query):
+        """export-query --mermaid output starts with 'graph LR'."""
+        result = cli.run_no_json("bw", "export-query", known_query,
+                                 "--mermaid", "--no-lineage")
+        assert result.returncode == 0, (
+            f"bw export-query --mermaid failed: {result.stderr}"
+        )
+        assert "graph LR" in result.stdout, (
+            f"Expected 'graph LR' in Mermaid output:\n{result.stdout}"
+        )
+
+    def test_export_query_missing_arg_exits_nonzero(self, cli):
+        """Missing query name argument must exit non-zero."""
+        result = cli.run_fail("bw", "export-query")
+        assert result.returncode != 0
+
+
+@pytest.mark.bw
+class TestBwExportCube:
+    """Integration tests for 'erpl-adt bw export-cube <name>'."""
+
+    @pytest.fixture(scope="class")
+    def known_cube(self, cli, bw_has_search):
+        """Find a known ADSO/CUBE/HCPR object to export."""
+        for obj_type in ("ADSO", "HCPR", "CUBE"):
+            data = cli.run_ok("bw", "search", "*", "--type", obj_type, "--max", "5")
+            if data:
+                return data[0]["name"]
+        pytest.skip("No ADSO/CUBE/HCPR objects found on this system")
+
+    def test_export_cube_catalog_json(self, cli, known_cube):
+        """export-cube returns contract, objects, and dataflow sections."""
+        data = cli.run_ok("bw", "export-cube", known_cube, "--no-lineage")
+        assert data.get("contract") == "bw.cube.export", (
+            f"Expected contract='bw.cube.export', got {data.get('contract')!r}"
+        )
+        assert "objects" in data, "Missing 'objects' key"
+        assert "dataflow" in data, "Missing 'dataflow' key"
+
+    def test_export_cube_mermaid(self, cli, known_cube):
+        """export-cube --mermaid output starts with 'graph LR'."""
+        result = cli.run_no_json("bw", "export-cube", known_cube,
+                                 "--mermaid", "--no-lineage")
+        assert result.returncode == 0, (
+            f"bw export-cube --mermaid failed: {result.stderr}"
+        )
+        assert "graph LR" in result.stdout, (
+            f"Expected 'graph LR' in Mermaid output:\n{result.stdout}"
+        )
+
+    def test_export_cube_missing_arg_exits_nonzero(self, cli):
+        """Missing cube name argument must exit non-zero."""
+        result = cli.run_fail("bw", "export-cube")
+        assert result.returncode != 0
