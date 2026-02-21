@@ -1299,6 +1299,105 @@ int HandleSourceRead(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
+// source edit — CLI handler (name resolution + session creation)
+// ---------------------------------------------------------------------------
+int HandleSourceEdit(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing object name or URI. Usage: erpl-adt source edit <name-or-uri> [flags]"));
+        return 99;
+    }
+
+    const auto section     = GetFlag(args, "section", "main");
+    const auto type_filter = GetFlag(args, "type");
+    const bool activate    = HasFlag(args, "activate");
+    const bool no_write    = HasFlag(args, "no-write");
+
+    std::optional<std::string> transport;
+    if (HasFlag(args, "transport")) {
+        transport = GetFlag(args, "transport");
+    }
+
+    // Validate section.
+    static const std::vector<std::string> kValidSections = {
+        "main", "localdefinitions", "localimplementations", "testclasses"};
+    if (std::find(kValidSections.begin(), kValidSections.end(), section) == kValidSections.end()) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --section value '" + section +
+            "'. Valid values: main, localdefinitions, localimplementations, testclasses"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+
+    const auto& arg = args.positional[0];
+    std::string base_uri;
+    bool arg_is_full_source_uri = false;
+
+    // URI resolution — identical logic to HandleSourceRead.
+    if (arg.find("/sap/bc/adt/") == 0) {
+        auto source_pos = arg.find("/source/");
+        if (source_pos != std::string::npos) {
+            arg_is_full_source_uri = true;
+            base_uri = arg.substr(0, source_pos);
+        } else {
+            base_uri = arg;
+        }
+    } else {
+        if (!type_filter.empty()) {
+            SearchOptions opts;
+            opts.query       = arg;
+            opts.max_results = 10;
+            opts.object_type = type_filter;
+            auto search_result = SearchObjects(*session, opts);
+            if (search_result.IsErr()) {
+                fmt.PrintError(search_result.Error());
+                return search_result.Error().ExitCode();
+            }
+            std::string upper_arg = arg;
+            std::transform(upper_arg.begin(), upper_arg.end(), upper_arg.begin(),
+                           [](unsigned char c) { return std::toupper(c); });
+            for (const auto& item : search_result.Value()) {
+                std::string upper_name = item.name;
+                std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                               [](unsigned char c) { return std::toupper(c); });
+                if (upper_name == upper_arg) {
+                    base_uri = item.uri;
+                    break;
+                }
+            }
+            if (base_uri.empty()) {
+                Error err;
+                err.operation = "SourceEdit";
+                err.message   = "Object not found: " + arg;
+                err.category  = ErrorCategory::NotFound;
+                fmt.PrintError(err);
+                return 2;
+            }
+        } else {
+            auto resolved = ResolveObjectUri(*session, arg);
+            if (resolved.IsErr()) {
+                fmt.PrintError(resolved.Error());
+                return resolved.Error().ExitCode();
+            }
+            base_uri = resolved.Value();
+        }
+    }
+
+    const std::string source_uri = (arg_is_full_source_uri && section == "main")
+                                   ? arg
+                                   : base_uri + "/source/" + section;
+
+    return RunSourceEdit(*session, source_uri, transport, activate, no_write,
+                         LaunchEditor, std::cout, std::cerr);
+}
+
+// ---------------------------------------------------------------------------
 // source write
 // ---------------------------------------------------------------------------
 int HandleSourceWrite(const CommandArgs& args) {
@@ -5480,6 +5579,89 @@ int HandleBwJob(const CommandArgs& args) {
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
+// RunSourceEdit — core read→edit→write logic (exposed for unit testing).
+// Lives outside the anonymous namespace so tests can link against it.
+// ---------------------------------------------------------------------------
+int RunSourceEdit(IAdtSession& session,
+                  const std::string& source_uri,
+                  const std::optional<std::string>& transport,
+                  bool activate,
+                  bool no_write,
+                  SourceEditorFn editor_fn,
+                  std::ostream& out,
+                  std::ostream& err) {
+    OutputFormatter fmt(false, false, out, err);
+
+    // 1. Read current source from ADT.
+    auto read_result = ReadSource(session, source_uri);
+    if (read_result.IsErr()) {
+        fmt.PrintError(read_result.Error());
+        return read_result.Error().ExitCode();
+    }
+    const std::string original = read_result.Value();
+
+    // 2. Write to temp file.
+    auto tmp = MakeTempPath(".abap");
+    {
+        std::ofstream tf(tmp);
+        if (!tf) {
+            fmt.PrintError(Error{"SourceEdit", tmp, std::nullopt,
+                                 "Cannot create temp file: " + tmp,
+                                 std::nullopt});
+            return 99;
+        }
+        tf << original;
+    }
+
+    // 3. Invoke editor (blocks until editor closes).
+    editor_fn(tmp);
+
+    // 4. Read back modified content.
+    std::string new_source;
+    {
+        std::ifstream in(tmp);
+        new_source = std::string(std::istreambuf_iterator<char>(in),
+                                 std::istreambuf_iterator<char>());
+    }
+    std::remove(tmp.c_str());
+
+    // 5. No-change detection — skip write to avoid spurious ADT transport entries.
+    if (new_source == original) {
+        out << "No changes — skipping write.\n";
+        return 0;
+    }
+
+    // 6. --no-write dry run: open editor but do not push back.
+    if (no_write) {
+        out << "No changes written (--no-write flag).\n";
+        return 0;
+    }
+
+    // 7. Write back via auto-lock workflow.
+    auto write_result = WriteSourceWithAutoLock(session, source_uri, new_source, transport);
+    if (write_result.IsErr()) {
+        fmt.PrintError(write_result.Error());
+        return write_result.Error().ExitCode();
+    }
+    const std::string obj_uri = write_result.Value();
+    fmt.PrintSuccess("Source written: " + source_uri);
+
+    // 8. Optional activation.
+    if (activate && !obj_uri.empty()) {
+        ActivateObjectParams act_params;
+        act_params.uri = obj_uri;
+        auto act_result = ActivateObject(session, act_params);
+        if (act_result.IsErr()) {
+            fmt.PrintError(act_result.Error());
+            return act_result.Error().ExitCode();
+        }
+        fmt.PrintSuccess("Activated: " + obj_uri);
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // PrintTopLevelHelp
 // ---------------------------------------------------------------------------
 
@@ -5784,7 +5966,7 @@ bool IsBooleanFlag(std::string_view arg) {
            arg == "--incl-metadata" || arg == "--incl-object-values" ||
            arg == "--incl-except-def" || arg == "--compact-mode" ||
            arg == "--no-xref" || arg == "--no-search" || arg == "--no-elem-edges" ||
-           arg == "--iobj-edges" || arg == "--editor";
+           arg == "--iobj-edges" || arg == "--editor" || arg == "--no-write";
 }
 
 bool IsNewStyleCommand(int argc, const char* const* argv) {
@@ -6239,6 +6421,34 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("source", "read", "Read source code",
                          HandleSourceRead, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // source edit
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt source edit <name-or-uri> [flags]";
+        help.args_description = "<name-or-uri>    Object technical name (e.g. ZCL_MY_CLASS) or full ADT source URI";
+        help.long_description = "Opens ABAP source in the editor set by $VISUAL or $EDITOR (fallback: vi). "
+            "On save + close, the changed source is written back to the SAP system via auto-lock. "
+            "If the file is closed unchanged, no write is performed.";
+        help.flags = {
+            {"type",      "<type>",    "Object type for name resolution (e.g. CLAS, PROG, INTF)", false},
+            {"section",   "<section>", "Source section: main, localdefinitions, localimplementations, testclasses (default: main)", false},
+            {"transport", "<id>",      "Transport request number",                                 false},
+            {"activate",  "",          "Activate the object after writing",                        false},
+            {"no-write",  "",          "Open editor but do not write back (dry run / inspection)", false},
+        };
+        help.examples = {
+            "erpl-adt source edit ZCL_MY_CLASS",
+            "erpl-adt source edit ZCL_MY_CLASS --type=CLAS --activate",
+            "erpl-adt source edit /sap/bc/adt/oo/classes/zcl_test/source/main",
+            "erpl-adt source edit ZCL_MY_CLASS --section=testclasses --transport=NPLK900001",
+            "EDITOR=nano erpl-adt source edit ZCL_MY_CLASS",
+        };
+        router.Register("source", "edit", "Open ABAP source in editor and write back changes",
+                         HandleSourceEdit, std::move(help));
     }
 
     // -----------------------------------------------------------------------

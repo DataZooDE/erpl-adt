@@ -240,6 +240,44 @@ TEST_CASE("CLI example: source write", "[cli][examples]") {
     CHECK(result.Value().flags.at("transport") == "NPLK900001");
 }
 
+TEST_CASE("CLI example: source edit by name", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "edit", "ZCL_MY_CLASS",
+                          "--type=CLAS", "--activate"};
+    auto result = CommandRouter::Parse(6, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "edit");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+    CHECK(result.Value().flags.at("type") == "CLAS");
+    CHECK(result.Value().flags.count("activate") > 0);
+}
+
+TEST_CASE("CLI example: source edit by URI with section and transport", "[cli][examples]") {
+    const char* argv[] = {"erpl-adt", "source", "edit",
+                          "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                          "--section=testclasses", "--transport=NPLK900001"};
+    auto result = CommandRouter::Parse(6, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "edit");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().flags.at("section") == "testclasses");
+    CHECK(result.Value().flags.at("transport") == "NPLK900001");
+}
+
+TEST_CASE("CLI example: source edit --no-write flag is boolean", "[cli][examples]") {
+    // --no-write must not consume the next positional arg.
+    const char* argv[] = {"erpl-adt", "source", "edit", "--no-write", "ZCL_MY_CLASS"};
+    auto result = CommandRouter::Parse(5, argv);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().group == "source");
+    CHECK(result.Value().action == "edit");
+    REQUIRE(result.Value().positional.size() == 1);
+    CHECK(result.Value().positional[0] == "ZCL_MY_CLASS");
+    CHECK(result.Value().flags.count("no-write") > 0);
+}
+
 TEST_CASE("CLI example: source check", "[cli][examples]") {
     const char* argv[] = {"erpl-adt", "source", "check",
                           "/sap/bc/adt/oo/classes/zcl_test/source/main"};
