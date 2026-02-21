@@ -659,23 +659,6 @@ std::string MakeTempPath(const std::string& ext) {
             / ("erpl-adt-" + uid + ext)).string();
 }
 
-// Escape a path for use in a POSIX single-quoted shell argument.
-// Single-quoted strings cannot contain a literal single quote; we close the
-// quote, emit an escaped single quote, then reopen.
-static std::string ShellSingleQuote(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 8);
-    out += '\'';
-    for (char c : s) {
-        if (c == '\'')
-            out += "'\\''";
-        else
-            out += c;
-    }
-    out += '\'';
-    return out;
-}
-
 int LaunchEditor(const std::string& path) {
     const char* ed = std::getenv("VISUAL");
     if (!ed || !*ed) ed = std::getenv("EDITOR");
@@ -685,8 +668,20 @@ int LaunchEditor(const std::string& path) {
     int raw = std::system(cmd.c_str());
     return raw;
 #else
+    // Escape a path for use in a POSIX single-quoted shell argument.
+    auto shell_single_quote = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size() + 8);
+        out += '\'';
+        for (char c : s) {
+            if (c == '\'') out += "'\\''";
+            else            out += c;
+        }
+        out += '\'';
+        return out;
+    };
     if (!ed || !*ed) ed = "vi";
-    auto cmd = std::string(ed) + " " + ShellSingleQuote(path);
+    auto cmd = std::string(ed) + " " + shell_single_quote(path);
     int raw = std::system(cmd.c_str());
     if (raw == -1) return 1;           // fork/exec failure
     if (WIFEXITED(raw)) return WEXITSTATUS(raw);
