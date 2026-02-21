@@ -795,8 +795,9 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
     std::string received_cookie;
     std::string csrf_fetch_path;
 
-    svr.Get("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
-                                                httplib::Response& res) {
+    // In stateful mode CSRF is always fetched from /sap/bc/adt/discovery.
+    svr.Get("/sap/bc/adt/discovery", [&](const httplib::Request& req,
+                                          httplib::Response& res) {
         if (req.has_header("x-csrf-token") &&
             req.get_header_value("x-csrf-token") == "fetch") {
             csrf_fetch_path = req.path;
@@ -811,7 +812,7 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
                        "MYSAPSSO2=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz; path=/");
         res.set_header("set-cookie",
                        "SAP_SESSIONID_A4H_001=abc123%3d; path=/");
-        res.set_content("<class/>", "text/xml");
+        res.set_content("<discovery/>", "text/xml");
     });
 
     svr.Post("/sap/bc/adt/oo/classes/zfoo", [&](const httplib::Request& req,
@@ -833,12 +834,12 @@ TEST_CASE("AdtSession: stateful cookie header prioritizes sap-contextid", "[adt]
         "application/xml");
 
     REQUIRE(result.IsOk());
-    CHECK(csrf_fetch_path == "/sap/bc/adt/oo/classes/zfoo");
+    CHECK(csrf_fetch_path == "/sap/bc/adt/discovery");
     REQUIRE_FALSE(received_cookie.empty());
     CHECK(received_cookie.rfind("sap-contextid=", 0) == 0);
 }
 
-TEST_CASE("AdtSession: stateful CSRF fetch falls back to discovery on 404", "[adt][session][live]") {
+TEST_CASE("AdtSession: stateful CSRF fetch always uses discovery endpoint", "[adt][session][live]") {
     httplib::Server svr;
 
     int target_fetch_count = 0;
@@ -849,9 +850,6 @@ TEST_CASE("AdtSession: stateful CSRF fetch falls back to discovery on 404", "[ad
         if (req.has_header("x-csrf-token") &&
             req.get_header_value("x-csrf-token") == "fetch") {
             ++target_fetch_count;
-            res.status = 404;
-            res.set_content("not found", "text/plain");
-            return;
         }
         res.set_content("<class/>", "text/xml");
     });
@@ -881,7 +879,7 @@ TEST_CASE("AdtSession: stateful CSRF fetch falls back to discovery on 404", "[ad
     auto result = session->Post("/sap/bc/adt/oo/classes/zfoo", "", "application/xml");
 
     REQUIRE(result.IsOk());
-    CHECK(target_fetch_count == 1);
+    CHECK(target_fetch_count == 0);
     CHECK(discovery_fetch_count == 1);
 }
 

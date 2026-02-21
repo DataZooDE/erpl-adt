@@ -57,14 +57,6 @@ HttpHeaders ToHttpHeaders(const httplib::Headers& hdrs) {
     return result;
 }
 
-std::string PathWithoutQuery(std::string_view path) {
-    const auto pos = path.find('?');
-    if (pos == std::string_view::npos) {
-        return std::string(path);
-    }
-    return std::string(path.substr(0, pos));
-}
-
 // Build httplib::Headers from our HttpHeaders map plus SAP-specific headers.
 httplib::Headers BuildRequestHeaders(
     const HttpHeaders& extra,
@@ -426,17 +418,6 @@ struct AdtSession::Impl {
 
         if (bw) {
             return fetch_from("/sap/bw/modeling/discovery");
-        }
-
-        if (stateful_ && !request_path.empty()) {
-            auto target_result = fetch_from(PathWithoutQuery(request_path));
-            if (target_result.IsOk()) {
-                return target_result;
-            }
-            const auto& err = target_result.Error();
-            if (!(err.http_status.has_value() && *err.http_status == 404)) {
-                return target_result;
-            }
         }
 
         return fetch_from("/sap/bc/adt/discovery");

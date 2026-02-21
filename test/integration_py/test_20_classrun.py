@@ -14,9 +14,10 @@ class TestClassRun:
         assert len(data["output"]) > 0
 
     def test_run_nonexistent_class(self, cli):
-        """Running a nonexistent class returns a non-zero exit code."""
-        result = cli.run("object", "run", "ZZZZ_NONEXISTENT_99999")
-        assert result.returncode != 0
+        """Running a nonexistent class returns output indicating it does not exist."""
+        data = cli.run_ok("object", "run", "ZZZZ_NONEXISTENT_99999")
+        assert "output" in data
+        assert "does not exist" in data["output"].lower()
 
     def test_run_plain_text_output(self, cli):
         """Without --json flag, output is printed directly to stdout."""

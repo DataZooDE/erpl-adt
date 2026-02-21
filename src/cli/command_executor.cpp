@@ -678,14 +678,14 @@ static std::string ShellSingleQuote(const std::string& s) {
 
 int LaunchEditor(const std::string& path) {
     const char* ed = std::getenv("VISUAL");
-    if (!ed) ed = std::getenv("EDITOR");
+    if (!ed || !*ed) ed = std::getenv("EDITOR");
 #ifdef _WIN32
-    if (!ed) ed = "notepad";
+    if (!ed || !*ed) ed = "notepad";
     auto cmd = "\"" + std::string(ed) + "\" \"" + path + "\"";
     int raw = std::system(cmd.c_str());
     return raw;
 #else
-    if (!ed) ed = "vi";
+    if (!ed || !*ed) ed = "vi";
     auto cmd = std::string(ed) + " " + ShellSingleQuote(path);
     int raw = std::system(cmd.c_str());
     if (raw == -1) return 1;           // fork/exec failure
