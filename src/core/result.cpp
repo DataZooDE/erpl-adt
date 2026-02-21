@@ -4,34 +4,57 @@ namespace erpl_adt {
 
 namespace {
 
-// Extract text between XML tags using simple string search.
+// Extract text content of the first occurrence of an XML element by tag name.
+// Handles both plain tags (<message>) and tags with attributes (<message lang="EN">).
 // No tinyxml2 dependency — core/ must not depend on adt/ libraries.
 std::optional<std::string> ExtractXmlMessage(const std::string& body,
-                                              const std::string& open_tag,
-                                              const std::string& close_tag) {
-    auto start = body.find(open_tag);
-    if (start == std::string::npos) return std::nullopt;
-    start += open_tag.size();
-    auto end = body.find(close_tag, start);
-    if (end == std::string::npos) return std::nullopt;
-    auto msg = body.substr(start, end - start);
+                                              const std::string& tag_name) {
+    const std::string open_prefix = "<" + tag_name;
+    auto tag_pos = body.find(open_prefix);
+    if (tag_pos == std::string::npos) return std::nullopt;
+
+    // Verify the character after the tag name is '>', whitespace, or '/'.
+    // This prevents <messages> from matching when we search for <message.
+    const size_t after_prefix = tag_pos + open_prefix.size();
+    if (after_prefix >= body.size()) return std::nullopt;
+    const char next = body[after_prefix];
+    if (next != '>' && next != ' ' && next != '\t' && next != '\n' &&
+        next != '\r' && next != '/') {
+        return std::nullopt;
+    }
+
+    // Skip past the closing '>' of the opening tag (which may have attributes).
+    auto content_start = body.find('>', after_prefix);
+    if (content_start == std::string::npos) return std::nullopt;
+    ++content_start;
+
+    const std::string close_tag = "</" + tag_name + ">";
+    auto content_end = body.find(close_tag, content_start);
+    if (content_end == std::string::npos) return std::nullopt;
+
+    auto msg = body.substr(content_start, content_end - content_start);
     if (msg.empty()) return std::nullopt;
     return msg;
 }
 
 // Try to extract a human-readable SAP error message from an XML response body.
-// SAP ADT uses two common patterns:
-//   <message>...</message>  (communicationframework namespace)
-//   <exc:message>...</exc:message>  (ADT exceptions namespace)
+// SAP ADT uses several patterns depending on the error path:
+//   <exc:message>       — ADT exceptions namespace (most specific)
+//   <message>           — communicationframework (may have lang attribute)
+//   <localizedMessage>  — communicationframework localised variant
 std::optional<std::string> ExtractSapError(const std::string& body) {
     if (body.empty()) return std::nullopt;
 
-    // Try ADT exception message first (more specific).
-    auto msg = ExtractXmlMessage(body, "<exc:message>", "</exc:message>");
+    // Try ADT exception message first (most specific).
+    auto msg = ExtractXmlMessage(body, "exc:message");
     if (msg.has_value()) return msg;
 
-    // Try communicationframework message.
-    msg = ExtractXmlMessage(body, "<message>", "</message>");
+    // Try communicationframework message (handles <message lang="EN">).
+    msg = ExtractXmlMessage(body, "message");
+    if (msg.has_value()) return msg;
+
+    // Fallback: localizedMessage element.
+    msg = ExtractXmlMessage(body, "localizedMessage");
     if (msg.has_value()) return msg;
 
     return std::nullopt;

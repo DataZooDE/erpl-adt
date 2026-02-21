@@ -33,8 +33,9 @@ Error MakeSessionError(const std::string& operation,
 // Genuine CSRF expiry returns bare 403 with no XML error detail.
 bool HasSapErrorInBody(const std::string& body) {
     if (body.empty()) return false;
-    return body.find("<exc:message>") != std::string::npos ||
-           body.find("<message>") != std::string::npos;
+    // Match <exc:message>, <message>, or <message lang="..."> (attributes).
+    return body.find("<exc:message") != std::string::npos ||
+           body.find("<message") != std::string::npos;
 }
 
 ErrorCategory CategoryFromHttpTransportError(httplib::Error error) {

@@ -410,6 +410,34 @@ TEST_CASE("FromHttpStatus: extracts exc:message from XML body", "[error]") {
     CHECK(e.sap_error.value() == "Object ZCL_FOO not found");
 }
 
+TEST_CASE("FromHttpStatus: extracts message with lang attribute", "[error]") {
+    // Real SAP communicationframework body uses <message lang="EN">...</message>
+    std::string body =
+        R"(<?xml version="1.0" encoding="utf-8"?>)"
+        R"(<exc:exception xmlns:exc="http://www.sap.com/abapxml/types/communicationframework">)"
+        R"(<message lang="EN">Object cannot be modified in this namespace</message>)"
+        R"(<localizedMessage lang="EN">Object cannot be modified in this namespace</localizedMessage>)"
+        R"(</exc:exception>)";
+    auto e = Error::FromHttpStatus("WriteSource", "/ep", 500, body);
+    REQUIRE(e.sap_error.has_value());
+    CHECK(e.sap_error.value() == "Object cannot be modified in this namespace");
+}
+
+TEST_CASE("FromHttpStatus: extracts localizedMessage when message absent", "[error]") {
+    std::string body =
+        R"(<response><localizedMessage lang="EN">Lock handle has expired</localizedMessage></response>)";
+    auto e = Error::FromHttpStatus("WriteSource", "/ep", 500, body);
+    REQUIRE(e.sap_error.has_value());
+    CHECK(e.sap_error.value() == "Lock handle has expired");
+}
+
+TEST_CASE("FromHttpStatus: message tag does not match messages tag", "[error]") {
+    // <messages> must not be mistaken for <message>
+    std::string body = R"(<messages><entry>ignored</entry></messages>)";
+    auto e = Error::FromHttpStatus("Op", "/ep", 500, body);
+    CHECK_FALSE(e.sap_error.has_value());
+}
+
 TEST_CASE("FromHttpStatus: empty body yields no sap_error", "[error]") {
     auto e = Error::FromHttpStatus("Op", "/ep", 500, "");
     CHECK_FALSE(e.sap_error.has_value());

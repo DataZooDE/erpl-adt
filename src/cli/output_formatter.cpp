@@ -221,7 +221,19 @@ void OutputFormatter::PrintError(const Error& error) const {
         return;
     }
 
-    err_ << "Error: " << error.ToString() << "\n";
+    // Plain-text multi-line layout (same structure as color path, no ANSI).
+    err_ << "Error: " << error.operation;
+    if (error.http_status.has_value()) {
+        err_ << " (HTTP " << error.http_status.value() << ")";
+    }
+    err_ << "\n";
+    err_ << "  " << error.message << "\n";
+    if (error.sap_error.has_value() && !error.sap_error->empty()) {
+        err_ << "  SAP: " << error.sap_error.value() << "\n";
+    }
+    if (error.hint.has_value() && !error.hint->empty()) {
+        err_ << "  Hint: " << error.hint.value() << "\n";
+    }
 }
 
 void OutputFormatter::PrintSuccess(const std::string& message) const {
