@@ -192,7 +192,7 @@ TEST_CASE("BwExportInfoarea: empty infoarea_name is validation error",
 // BwExportQuery tests
 // ---------------------------------------------------------------------------
 
-TEST_CASE("BwExportQuery: happy path — provider is ADSO",
+TEST_CASE("BwExportQuery: happy path - provider is ADSO",
           "[adt][bw][export]") {
     MockAdtSession mock;
     // GET 1: query XML (BwReadQueryComponent)
@@ -220,7 +220,7 @@ TEST_CASE("BwExportQuery: happy path — provider is ADSO",
     CHECK(exp.dataflow_edges.size() == 1);
 }
 
-TEST_CASE("BwExportQuery: provider fallback — ADSO read fails → type is CUBE",
+TEST_CASE("BwExportQuery: provider fallback - ADSO read fails, type is CUBE",
           "[adt][bw][export]") {
     MockAdtSession mock;
     // GET 1: query XML succeeds
@@ -296,7 +296,7 @@ TEST_CASE("BwExportQuery: BwReadQueryComponent failure propagates as Err",
 // BwExportCube tests
 // ---------------------------------------------------------------------------
 
-TEST_CASE("BwExportCube: happy path — provider detail is ADSO",
+TEST_CASE("BwExportCube: happy path - provider detail is ADSO",
           "[adt][bw][export]") {
     MockAdtSession mock;
     // GET 1: ADSO detail
@@ -320,7 +320,7 @@ TEST_CASE("BwExportCube: happy path — provider detail is ADSO",
     CHECK_FALSE(exp.objects[0].fields.empty());
 }
 
-TEST_CASE("BwExportCube: ADSO read fails → type is CUBE stub, always Ok",
+TEST_CASE("BwExportCube: ADSO read fails, type falls back to CUBE stub",
           "[adt][bw][export]") {
     MockAdtSession mock;
     // ADSO detail fails → classic InfoCube/HCPR fallback
