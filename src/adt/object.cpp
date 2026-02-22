@@ -80,8 +80,8 @@ const ObjectTypeInfo kObjectTypes[] = {
     {"PROG/I",   "programs/includes",     "include:abapInclude",        "http://www.sap.com/adt/programs/includes",     "include"},
     {"FUGR/F",   "functions/groups",      "group:abapFunctionGroup",    "http://www.sap.com/adt/functions/groups",      "group"},
     {"DEVC/K",   "packages",             "pak:package",                "http://www.sap.com/adt/packages",              "pak"},
-    {"DDLS/DF",  "ddic/ddl/sources",      "ddl:ddlSource",              "http://www.sap.com/adt/ddic/ddl/sources",      "ddl"},
-    {"TABL/DT",  "ddic/tables",          "blue:blueSource",            "http://www.sap.com/adt/ddic/tables",           "blue"},
+    {"DDLS/DF",  "ddic/ddl/sources",      "ddl:ddlSource",              "http://www.sap.com/adt/ddic/ddlsources",       "ddl"},
+    {"TABL/DT",  "ddic/tables",          "blue:blueSource",            "http://www.sap.com/wbobj/blue",                "blue"},
     {"DTEL/DE",  "ddic/dataelements",    "blue:wbobj",                 "http://www.sap.com/adt/ddic/dataelements",     "blue"},
     {"MSAG/N",   "messageclass",         "mc:messageClass",            "http://www.sap.com/adt/messageclass",          "mc"},
 };
