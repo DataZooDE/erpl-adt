@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <set>
+#include <string>
 
 using namespace erpl_adt;
 
@@ -519,4 +520,136 @@ TEST_CASE("source write --help mentions TABL/DT annotations and ABAP Cloud mandt
     const auto& combined = result.stdout_text + result.stderr_text;
     CHECK(combined.find("TABL/DT") != std::string::npos);
     CHECK(combined.find("mandt") != std::string::npos);
+}
+
+// ===========================================================================
+// Outcome reporters
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// ReportActivationOutcome
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ReportActivationOutcome: total==0 prints nothing-to-activate and returns 0",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ActivationResult act;
+    act.total = 0;
+    const int code = ReportActivationOutcome(act, fmt, "ZCL_FOO", err);
+    CHECK(code == 0);
+    CHECK(out.str().find("Nothing to activate") != std::string::npos);
+    CHECK(err.str().empty());
+}
+
+TEST_CASE("ReportActivationOutcome: failed>0 writes error counts to err and returns 5",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ActivationResult act;
+    act.total = 1;
+    act.failed = 1;
+    act.error_messages = {"Syntax error in line 42"};
+    const int code = ReportActivationOutcome(act, fmt, "ZCL_FOO", err);
+    CHECK(code == 5);
+    CHECK(err.str().find("1 error") != std::string::npos);
+    CHECK(err.str().find("Syntax error in line 42") != std::string::npos);
+}
+
+TEST_CASE("ReportActivationOutcome: success prints Activated label and returns 0",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ActivationResult act;
+    act.total = 1;
+    act.activated = 1;
+    act.failed = 0;
+    const int code = ReportActivationOutcome(act, fmt, "/sap/bc/adt/oo/classes/zcl_foo", err);
+    CHECK(code == 0);
+    CHECK(out.str().find("Activated") != std::string::npos);
+    CHECK(out.str().find("zcl_foo") != std::string::npos);
+    CHECK(err.str().empty());
+}
+
+// ---------------------------------------------------------------------------
+// ReportClassRunOutcome
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ReportClassRunOutcome: Error: prefix causes PrintError and returns 99",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ClassRunResult cr;
+    cr.class_name = "ZCL_MY_CLASS";
+    cr.output = "Error: Something went wrong";
+    const int code = ReportClassRunOutcome(cr, fmt, out);
+    CHECK(code == 99);
+    CHECK(out.str().empty());
+    CHECK(err.str().find("Something went wrong") != std::string::npos);
+}
+
+TEST_CASE("ReportClassRunOutcome: normal output is written to out stream and returns 0",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ClassRunResult cr;
+    cr.class_name = "ZCL_MY_CLASS";
+    cr.output = "Hello from ABAP console\n";
+    const int code = ReportClassRunOutcome(cr, fmt, out);
+    CHECK(code == 0);
+    CHECK(out.str() == "Hello from ABAP console\n");
+    CHECK(err.str().empty());
+}
+
+TEST_CASE("ReportClassRunOutcome: JSON mode emits JSON and returns 0",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/true, /*color=*/false, out, err);
+    ClassRunResult cr;
+    cr.class_name = "ZCL_MY_CLASS";
+    cr.output = "Error: this is ignored in JSON mode";
+    const int code = ReportClassRunOutcome(cr, fmt, out);
+    CHECK(code == 0);
+    // JSON output must contain both the class name and output fields.
+    const auto& text = out.str();
+    CHECK(text.find("ZCL_MY_CLASS") != std::string::npos);
+    CHECK(text.find("Error: this is ignored in JSON mode") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// PrintTableAnnotationHintIfNeeded
+// ---------------------------------------------------------------------------
+
+TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + can't save → hint printed",
+          "[cli][executor][outcome]") {
+    std::ostringstream err;
+    Error e;
+    e.message = "Can't save due to errors in source; execute check for details";
+    PrintTableAnnotationHintIfNeeded(e, "/sap/bc/adt/ddic/tables/ztbl_foo/source/main", err);
+    CHECK(err.str().find("@AbapCatalog.tableCategory") != std::string::npos);
+    CHECK(err.str().find("TABL/DT") != std::string::npos);
+}
+
+TEST_CASE("PrintTableAnnotationHintIfNeeded: non-table URI → no hint printed",
+          "[cli][executor][outcome]") {
+    std::ostringstream err;
+    Error e;
+    e.message = "Can't save due to errors in source";
+    PrintTableAnnotationHintIfNeeded(e, "/sap/bc/adt/oo/classes/zcl_foo/source/main", err);
+    CHECK(err.str().empty());
+}
+
+TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + other error → no hint printed",
+          "[cli][executor][outcome]") {
+    std::ostringstream err;
+    Error e;
+    e.message = "Object not found";
+    PrintTableAnnotationHintIfNeeded(e, "/sap/bc/adt/ddic/tables/ztbl_foo/source/main", err);
+    CHECK(err.str().empty());
 }

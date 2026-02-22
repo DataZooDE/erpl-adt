@@ -1467,22 +1467,6 @@ int HandleSourceWrite(const CommandArgs& args) {
     // Derive object URI for --activate flag (needed in both paths).
     std::string obj_uri_for_activate;
 
-    // Print an actionable hint when a TABL/DT write fails with SAP's "can't save" message.
-    auto maybe_print_table_hint = [&](const Error& err) {
-        const auto& uri = args.positional[0];
-        if (uri.find("ddic/tables") == std::string::npos) return;
-        std::string lower_msg = err.message;
-        std::transform(lower_msg.begin(), lower_msg.end(), lower_msg.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (lower_msg.find("can't save") == std::string::npos &&
-            lower_msg.find("can not save") == std::string::npos) return;
-        std::cerr << "Hint: TABL/DT (transparent table) CDS source requires these annotations "
-                     "before the 'define table' statement:\n"
-                     "  @AbapCatalog.tableCategory : #TRANSPARENT\n"
-                     "  @AbapCatalog.deliveryClass : #A\n"
-                     "  @AbapCatalog.dataMaintenance : #RESTRICTED\n";
-    };
-
     if (!handle_str.empty()) {
         // Explicit handle: use it directly (advanced / session-file mode).
         auto handle_result = LockHandle::Create(handle_str);
@@ -1494,7 +1478,7 @@ int HandleSourceWrite(const CommandArgs& args) {
                                   handle_result.Value(), transport);
         if (result.IsErr()) {
             fmt.PrintError(result.Error());
-            maybe_print_table_hint(result.Error());
+            PrintTableAnnotationHintIfNeeded(result.Error(), args.positional[0], std::cerr);
             return result.Error().ExitCode();
         }
         MaybeSaveSession(*session, args);
@@ -1510,7 +1494,7 @@ int HandleSourceWrite(const CommandArgs& args) {
             *session, args.positional[0], source, transport);
         if (write_result.IsErr()) {
             fmt.PrintError(write_result.Error());
-            maybe_print_table_hint(write_result.Error());
+            PrintTableAnnotationHintIfNeeded(write_result.Error(), args.positional[0], std::cerr);
             return write_result.Error().ExitCode();
         }
         obj_uri_for_activate = std::move(write_result).Value();
@@ -1527,16 +1511,8 @@ int HandleSourceWrite(const CommandArgs& args) {
             fmt.PrintError(act_result.Error());
             return act_result.Error().ExitCode();
         }
-        if (act_result.Value().total == 0) {
-            fmt.PrintSuccess("Nothing to activate — object already active or no inactive version found");
-        } else if (act_result.Value().failed > 0) {
-            for (const auto& msg : act_result.Value().error_messages) {
-                std::cerr << "  Activation warning: " << msg << "\n";
-            }
-            fmt.PrintSuccess("Activated with warnings: " + obj_uri_for_activate);
-        } else {
-            fmt.PrintSuccess("Activated: " + obj_uri_for_activate);
-        }
+        const int act_exit = ReportActivationOutcome(act_result.Value(), fmt, obj_uri_for_activate, std::cerr);
+        if (act_exit != 0) return act_exit;
     }
 
     return 0;
@@ -1636,17 +1612,7 @@ int HandleActivateRun(const CommandArgs& args) {
         j["error_messages"] = msgs;
         fmt.PrintJson(j.dump());
     } else {
-        if (act.total == 0) {
-            fmt.PrintSuccess("Nothing to activate — object already active or no inactive version found");
-        } else if (act.failed > 0) {
-            std::cerr << "Activation completed with " << act.failed << " error(s)\n";
-            for (const auto& m : act.error_messages) {
-                std::cerr << "  " << m << "\n";
-            }
-            return 5;
-        } else {
-            fmt.PrintSuccess("Activated: " + args.positional[0]);
-        }
+        return ReportActivationOutcome(act, fmt, args.positional[0], std::cerr);
     }
     return 0;
 }
@@ -1769,17 +1735,7 @@ int HandleObjectRun(const CommandArgs& args) {
     }
 
     const auto& cr = result.Value();
-    if (fmt.IsJsonMode()) {
-        nlohmann::json j{{"class", cr.class_name}, {"output", cr.output}};
-        fmt.PrintJson(j.dump());
-    } else {
-        if (cr.output.rfind("Error:", 0) == 0) {
-            fmt.PrintError(MakeValidationError(cr.output.substr(6)));
-            return 99;
-        }
-        std::cout << cr.output;
-    }
-    return 0;
+    return ReportClassRunOutcome(cr, fmt, std::cout);
 }
 
 // ---------------------------------------------------------------------------
@@ -5671,6 +5627,61 @@ int HandleBwJob(const CommandArgs& args) {
 }
 
 } // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// Outcome reporters — exposed outside anonymous namespace for unit testing.
+// ---------------------------------------------------------------------------
+
+int ReportActivationOutcome(const ActivationResult& act,
+                            OutputFormatter& fmt,
+                            const std::string& label,
+                            std::ostream& err) {
+    if (act.total == 0) {
+        fmt.PrintSuccess("Nothing to activate — object already active or no inactive version found");
+        return 0;
+    }
+    if (act.failed > 0) {
+        err << "Activation completed with " << act.failed << " error(s)\n";
+        for (const auto& m : act.error_messages) {
+            err << "  " << m << "\n";
+        }
+        return 5;
+    }
+    fmt.PrintSuccess("Activated: " + label);
+    return 0;
+}
+
+int ReportClassRunOutcome(const ClassRunResult& cr,
+                          OutputFormatter& fmt,
+                          std::ostream& out) {
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j{{"class", cr.class_name}, {"output", cr.output}};
+        fmt.PrintJson(j.dump());
+        return 0;
+    }
+    if (cr.output.rfind("Error:", 0) == 0) {
+        fmt.PrintError(Error{"Validation", "", std::nullopt, cr.output.substr(6), std::nullopt});
+        return 99;
+    }
+    out << cr.output;
+    return 0;
+}
+
+void PrintTableAnnotationHintIfNeeded(const Error& err,
+                                      const std::string& source_uri,
+                                      std::ostream& err_stream) {
+    if (source_uri.find("ddic/tables") == std::string::npos) return;
+    std::string lower_msg = err.message;
+    std::transform(lower_msg.begin(), lower_msg.end(), lower_msg.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower_msg.find("can't save") == std::string::npos &&
+        lower_msg.find("can not save") == std::string::npos) return;
+    err_stream << "Hint: TABL/DT (transparent table) CDS source requires these annotations "
+                  "before the 'define table' statement:\n"
+                  "  @AbapCatalog.tableCategory : #TRANSPARENT\n"
+                  "  @AbapCatalog.deliveryClass : #A\n"
+                  "  @AbapCatalog.dataMaintenance : #RESTRICTED\n";
+}
 
 // ---------------------------------------------------------------------------
 // RunSourceEdit — core read→edit→write logic (exposed for unit testing).

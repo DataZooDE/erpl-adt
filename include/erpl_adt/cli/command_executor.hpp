@@ -1,7 +1,11 @@
 #pragma once
 
-#include <erpl_adt/cli/command_router.hpp>
+#include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
+#include <erpl_adt/adt/i_xml_codec.hpp>
+#include <erpl_adt/cli/command_router.hpp>
+#include <erpl_adt/cli/output_formatter.hpp>
+#include <erpl_adt/core/result.hpp>
 
 #include <functional>
 #include <iosfwd>
@@ -68,5 +72,36 @@ int HandleLogin(int argc, const char* const* argv);
 
 // Handle `erpl-adt logout` — delete .adt.creds.
 int HandleLogout();
+
+// ---------------------------------------------------------------------------
+// Outcome reporters — pure logic extracted for direct unit-testing.
+//
+// These functions interpret already-fetched result structs and emit output.
+// No IAdtSession or HTTP interaction required.
+// ---------------------------------------------------------------------------
+
+// Report the outcome of an activation request.
+// Returns 0 on success (including nothing-to-activate), 5 if activation failed.
+// label is included in the "Activated: …" success message.
+// Error counts and messages are written to err.
+int ReportActivationOutcome(const ActivationResult& act,
+                            OutputFormatter& fmt,
+                            const std::string& label,
+                            std::ostream& err);
+
+// Report the output of a class run (object run) request.
+// Returns 99 if the output starts with "Error:", 0 otherwise.
+// In JSON mode the class name and output are emitted via fmt.
+// In plain mode normal output is written to out.
+int ReportClassRunOutcome(const ClassRunResult& cr,
+                          OutputFormatter& fmt,
+                          std::ostream& out);
+
+// Print an actionable TABL/DT annotation hint to err_stream when
+// source_uri contains "ddic/tables" and err.message contains "can't save".
+// No output is produced if either condition is not met.
+void PrintTableAnnotationHintIfNeeded(const Error& err,
+                                      const std::string& source_uri,
+                                      std::ostream& err_stream);
 
 } // namespace erpl_adt
