@@ -90,7 +90,7 @@ Result<std::string, Error> ReadSource(
     const std::string& version) {
     auto url = source_uri;
     if (!version.empty()) {
-        url += "?version=" + version;
+        url += (url.find('?') != std::string::npos ? "&version=" : "?version=") + version;
     }
 
     HttpHeaders headers;

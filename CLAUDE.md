@@ -92,6 +92,17 @@ These are hard requirements, not suggestions:
 - Use explicit field assignment for multi-field structs, not aggregate init (triggers `-Wmissing-field-initializers`)
 - `[[nodiscard]]` return values must be captured in tests
 
+## ABAP Cloud Rules (important for agent-written ABAP code)
+
+- **No MANDT in WHERE clauses:** `DELETE FROM table WHERE mandt = sy-mandt` → error "client field cannot be in WHERE condition". Use `DELETE FROM table.` — client filtering is automatic.
+- **TABL/DT (transparent table) CDS source** requires three annotations before `define table`:
+  ```abap
+  @AbapCatalog.tableCategory : #TRANSPARENT
+  @AbapCatalog.deliveryClass : #A
+  @AbapCatalog.dataMaintenance : #RESTRICTED
+  ```
+  Missing any annotation → SAP returns HTTP 400 "Can't save due to errors in source; execute check for details".
+
 ## Dependencies (vcpkg)
 
 | Port | Role |

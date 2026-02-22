@@ -14,6 +14,7 @@ namespace {
 struct DispatchResult {
     int exit_code{0};
     std::string stderr_text;
+    std::string stdout_text;
 };
 
 DispatchResult DispatchWithStderrCapture(CommandRouter& router,
@@ -23,7 +24,20 @@ DispatchResult DispatchWithStderrCapture(CommandRouter& router,
     auto* old = std::cerr.rdbuf(err.rdbuf());
     const int code = router.Dispatch(argc, argv);
     std::cerr.rdbuf(old);
-    return DispatchResult{code, err.str()};
+    return DispatchResult{code, err.str(), {}};
+}
+
+DispatchResult DispatchCaptureBoth(CommandRouter& router,
+                                   int argc,
+                                   const char* const argv[]) {
+    std::ostringstream err;
+    std::ostringstream out;
+    auto* old_err = std::cerr.rdbuf(err.rdbuf());
+    auto* old_out = std::cout.rdbuf(out.rdbuf());
+    const int code = router.Dispatch(argc, argv);
+    std::cerr.rdbuf(old_err);
+    std::cout.rdbuf(old_out);
+    return DispatchResult{code, err.str(), out.str()};
 }
 
 }  // namespace
@@ -460,4 +474,49 @@ TEST_CASE("bw export-area: missing infoarea prints export-area usage hint",
     CHECK(result.exit_code == 99);
     // Error must reference "export-area", not the stale "export".
     CHECK(result.stderr_text.find("export-area") != std::string::npos);
+}
+
+// ===========================================================================
+// activate: missing positional arg (y21)
+// ===========================================================================
+
+TEST_CASE("activate run: missing object name returns 99",
+          "[cli][executor]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "activate", "run"};
+    const auto result = DispatchWithStderrCapture(router, 3, argv);
+    CHECK(result.exit_code == 99);
+    CHECK(result.stderr_text.find("Missing object") != std::string::npos);
+}
+
+// ===========================================================================
+// Help text: object create mentions TABL/DT annotations (Task 5)
+// ===========================================================================
+
+TEST_CASE("object create --help mentions TABL/DT annotation requirement",
+          "[cli][executor][help]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "object", "create", "--help"};
+    const auto result = DispatchCaptureBoth(router, 4, argv);
+    CHECK(result.exit_code == 0);
+    const auto& combined = result.stdout_text + result.stderr_text;
+    CHECK(combined.find("TABL/DT") != std::string::npos);
+}
+
+// ===========================================================================
+// Help text: source write mentions TABL/DT and mandt rule (Task 5)
+// ===========================================================================
+
+TEST_CASE("source write --help mentions TABL/DT annotations and ABAP Cloud mandt rule",
+          "[cli][executor][help]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "write", "--help"};
+    const auto result = DispatchCaptureBoth(router, 4, argv);
+    CHECK(result.exit_code == 0);
+    const auto& combined = result.stdout_text + result.stderr_text;
+    CHECK(combined.find("TABL/DT") != std::string::npos);
+    CHECK(combined.find("mandt") != std::string::npos);
 }

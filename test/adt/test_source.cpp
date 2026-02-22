@@ -86,6 +86,35 @@ TEST_CASE("ReadSource: HTTP error propagated", "[adt][source]") {
     REQUIRE(result.IsErr());
 }
 
+TEST_CASE("ReadSource: URI with existing query string uses & separator", "[adt][source]") {
+    // Bug fix: ReadSource must not append ?version= if URI already has ? from caller.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "source"}));
+
+    const std::string uri_with_query =
+        "/sap/bc/adt/oo/classes/zcl_test/source/main?other=foo";
+    auto result = ReadSource(mock, uri_with_query, "active");
+    REQUIRE(result.IsOk());
+
+    const auto& path = mock.GetCalls()[0].path;
+    // Must use & not ? for the version parameter.
+    CHECK(path.find("&version=active") != std::string::npos);
+    CHECK(path.find("?version=active") == std::string::npos);
+    // Original query param must still be present.
+    CHECK(path.find("other=foo") != std::string::npos);
+}
+
+TEST_CASE("ReadSource: URI without existing query string uses ? separator", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "source"}));
+
+    auto result = ReadSource(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main", "active");
+    REQUIRE(result.IsOk());
+
+    const auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("?version=active") != std::string::npos);
+}
+
 // ===========================================================================
 // WriteSource
 // ===========================================================================
