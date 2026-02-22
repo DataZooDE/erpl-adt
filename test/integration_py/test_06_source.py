@@ -95,3 +95,28 @@ class TestSource:
         assert "CLASS" in result.stdout.upper(), (
             f"Expected ABAP CLASS keyword in source output:\n{result.stdout[:500]}"
         )
+
+    def test_write_source_by_name(self, test_class, cli, tmp_path):
+        """source write accepts a plain object name (name resolution via search)."""
+        name = test_class["name"]
+        src = (
+            f"CLASS {name} DEFINITION PUBLIC FINAL CREATE PUBLIC.\n"
+            "  PUBLIC SECTION.\n"
+            "    METHODS greet RETURNING VALUE(rv) TYPE string.\n"
+            "ENDCLASS.\n\n"
+            f"CLASS {name} IMPLEMENTATION.\n"
+            "  METHOD greet. rv = 'hello'. ENDMETHOD.\n"
+            "ENDCLASS.\n"
+        )
+        src_file = tmp_path / "source.abap"
+        src_file.write_text(src)
+        # Pass name instead of URI — should resolve via search.
+        cli.run_ok("source", "write", name, "--file", str(src_file))
+        read = cli.run_ok("source", "read", name, "--type", "CLAS", "--version", "inactive")
+        assert "greet" in read.get("source", "").lower()
+
+    def test_check_by_name(self, test_class, cli):
+        """source check accepts a plain object name."""
+        name = test_class["name"]
+        data = cli.run_ok("source", "check", name)
+        assert isinstance(data, list)

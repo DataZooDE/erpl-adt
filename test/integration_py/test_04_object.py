@@ -38,6 +38,13 @@ class TestObject:
         data = cli.run_ok("object", "read", test_class["uri"])
         assert test_class["name"] in data.get("name", "").upper()
 
+    def test_read_by_name(self, test_class, cli):
+        """object read accepts a plain object name (name resolution via search)."""
+        name = test_class["name"]
+        data = cli.run_ok("object", "read", name)
+        assert data["name"].upper() == name.upper()
+        assert "uri" in data
+
     def test_create_class_returns_uri(self, cli, test_class_name):
         """object create returns the new object's URI."""
         name = test_class_name

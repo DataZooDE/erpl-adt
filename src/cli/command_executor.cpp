@@ -830,13 +830,7 @@ int HandleObjectRead(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing object URI. Usage: erpl-adt object read <uri>"));
-        return 99;
-    }
-
-    auto uri_result = ObjectUri::Create(args.positional[0]);
-    if (uri_result.IsErr()) {
-        fmt.PrintError(MakeValidationError("Invalid URI: " + uri_result.Error()));
+        fmt.PrintError(MakeValidationError("Missing object name or URI. Usage: erpl-adt object read <name-or-uri>"));
         return 99;
     }
 
@@ -844,6 +838,26 @@ int HandleObjectRead(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
+
+    // Accept object name or ADT URI.
+    std::string resolved_uri;
+    if (args.positional[0].find("/sap/bc/adt/") == 0) {
+        resolved_uri = args.positional[0];
+    } else {
+        auto resolved = ResolveObjectUri(*session, args.positional[0]);
+        if (resolved.IsErr()) {
+            fmt.PrintError(resolved.Error());
+            return resolved.Error().ExitCode();
+        }
+        resolved_uri = resolved.Value();
+    }
+
+    auto uri_result = ObjectUri::Create(resolved_uri);
+    if (uri_result.IsErr()) {
+        fmt.PrintError(MakeValidationError("Invalid URI: " + uri_result.Error()));
+        return 99;
+    }
+
     auto result = GetObjectStructure(*session, uri_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -1435,12 +1449,23 @@ int HandleSourceWrite(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing source URI. Usage: erpl-adt source write <uri> --file <path>"));
+        fmt.PrintError(MakeValidationError("Missing source URI or object name. Usage: erpl-adt source write <name-or-uri> --file <path>"));
         return 99;
     }
     auto file_path = GetFlag(args, "file");
     if (file_path.empty()) {
         fmt.PrintError(MakeValidationError("Missing --file flag"));
+        return 99;
+    }
+
+    auto section = GetFlag(args, "section", "main");
+    static const std::vector<std::string> kValidWriteSections = {
+        "main", "localdefinitions", "localimplementations", "testclasses"};
+    if (std::find(kValidWriteSections.begin(), kValidWriteSections.end(), section) ==
+        kValidWriteSections.end()) {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --section value '" + section +
+            "'. Valid values: main, localdefinitions, localimplementations, testclasses"));
         return 99;
     }
 
@@ -1462,6 +1487,29 @@ int HandleSourceWrite(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
+
+    // Resolve name or URI to a full source URI.
+    const auto& arg = args.positional[0];
+    std::string source_uri;
+    if (arg.find("/sap/bc/adt/") == 0) {
+        auto source_pos = arg.find("/source/");
+        if (source_pos != std::string::npos) {
+            // Full source URI given — use as-is.
+            source_uri = arg;
+        } else {
+            // Object URI given — append section.
+            source_uri = arg + "/source/" + section;
+        }
+    } else {
+        // Plain name — resolve via search then append section.
+        auto resolved = ResolveObjectUri(*session, arg);
+        if (resolved.IsErr()) {
+            fmt.PrintError(resolved.Error());
+            return resolved.Error().ExitCode();
+        }
+        source_uri = resolved.Value() + "/source/" + section;
+    }
+
     auto handle_str = GetFlag(args, "handle");
 
     // Derive object URI for --activate flag (needed in both paths).
@@ -1474,33 +1522,33 @@ int HandleSourceWrite(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Invalid handle: " + handle_result.Error()));
             return 99;
         }
-        auto result = WriteSource(*session, args.positional[0], source,
+        auto result = WriteSource(*session, source_uri, source,
                                   handle_result.Value(), transport);
         if (result.IsErr()) {
             fmt.PrintError(result.Error());
-            PrintTableAnnotationHintIfNeeded(result.Error(), args.positional[0], std::cerr);
+            PrintTableAnnotationHintIfNeeded(result.Error(), source_uri, std::cerr);
             return result.Error().ExitCode();
         }
         MaybeSaveSession(*session, args);
 
         // Try to derive object URI from source URI for activation.
-        auto slash_pos = std::string(args.positional[0]).find("/source/");
+        auto slash_pos = source_uri.find("/source/");
         if (slash_pos != std::string::npos) {
-            obj_uri_for_activate = std::string(args.positional[0]).substr(0, slash_pos);
+            obj_uri_for_activate = source_uri.substr(0, slash_pos);
         }
     } else {
         // Auto-lock mode: derive object URI, lock → write → unlock.
         auto write_result = WriteSourceWithAutoLock(
-            *session, args.positional[0], source, transport);
+            *session, source_uri, source, transport);
         if (write_result.IsErr()) {
             fmt.PrintError(write_result.Error());
-            PrintTableAnnotationHintIfNeeded(write_result.Error(), args.positional[0], std::cerr);
+            PrintTableAnnotationHintIfNeeded(write_result.Error(), source_uri, std::cerr);
             return write_result.Error().ExitCode();
         }
         obj_uri_for_activate = std::move(write_result).Value();
     }
 
-    fmt.PrintSuccess("Source written: " + args.positional[0]);
+    fmt.PrintSuccess("Source written: " + source_uri);
 
     // Optional activation after successful write.
     if (HasFlag(args, "activate") && !obj_uri_for_activate.empty()) {
@@ -1525,7 +1573,7 @@ int HandleSourceCheck(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
     if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError("Missing source URI. Usage: erpl-adt source check <uri>"));
+        fmt.PrintError(MakeValidationError("Missing source URI or object name. Usage: erpl-adt source check <name-or-uri>"));
         return 99;
     }
 
@@ -1533,7 +1581,22 @@ int HandleSourceCheck(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
-    auto result = CheckSyntax(*session, args.positional[0]);
+
+    // Resolve name or URI to a full source URI.
+    const auto& arg = args.positional[0];
+    std::string source_uri;
+    if (arg.find("/sap/bc/adt/") == 0) {
+        source_uri = arg;
+    } else {
+        auto resolved = ResolveObjectUri(*session, arg);
+        if (resolved.IsErr()) {
+            fmt.PrintError(resolved.Error());
+            return resolved.Error().ExitCode();
+        }
+        source_uri = resolved.Value() + "/source/main";
+    }
+
+    auto result = CheckSyntax(*session, source_uri);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -6414,9 +6477,10 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt object read <uri>";
-        help.args_description = "<uri>    ADT object URI (e.g., /sap/bc/adt/oo/classes/ZCL_EXAMPLE)";
+        help.usage = "erpl-adt object read <name-or-uri>";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_MY_CLASS) or ADT URI";
         help.examples = {
+            "erpl-adt object read ZCL_MY_CLASS",
             "erpl-adt object read /sap/bc/adt/oo/classes/ZCL_EXAMPLE",
             "erpl-adt --json object read /sap/bc/adt/programs/programs/ZREPORT",
         };
@@ -6588,8 +6652,8 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt source write <uri> --file <path> [flags]";
-        help.args_description = "<uri>    Source URI (e.g., /sap/bc/adt/oo/classes/zcl_test/source/main)";
+        help.usage = "erpl-adt source write <name-or-uri> --file <path> [flags]";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_MY_CLASS) or source URI";
         help.long_description =
             "Without --handle, the object is automatically locked, written, and unlocked. "
             "Use --activate to activate the object after writing. "
@@ -6600,12 +6664,14 @@ void RegisterAllCommands(CommandRouter& router) {
             "(client filtering is automatic).";
         help.flags = {
             {"file", "<path>", "Path to local source file", true},
+            {"section", "<section>", "Source section: main (default), localdefinitions, localimplementations, testclasses", false},
             {"handle", "<handle>", "Lock handle (skips auto-lock if provided)", false},
             {"transport", "<id>", "Transport request number", false},
             {"session-file", "<path>", "Session file for stateful workflow", false},
             {"activate", "", "Activate the object after writing", false},
         };
         help.examples = {
+            "erpl-adt source write ZCL_MY_CLASS --file source.abap --activate",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --activate",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --handle=LOCK_HANDLE --transport=NPLK900001",
@@ -6619,9 +6685,10 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt source check <uri>";
-        help.args_description = "<uri>    Source URI";
+        help.usage = "erpl-adt source check <name-or-uri>";
+        help.args_description = "<name-or-uri>    Object name or source URI";
         help.examples = {
+            "erpl-adt source check ZCL_MY_CLASS",
             "erpl-adt source check /sap/bc/adt/oo/classes/zcl_test/source/main",
             "erpl-adt --json source check /sap/bc/adt/oo/classes/zcl_test/source/main",
         };

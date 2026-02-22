@@ -653,3 +653,63 @@ TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + other error → n
     PrintTableAnnotationHintIfNeeded(e, "/sap/bc/adt/ddic/tables/ztbl_foo/source/main", err);
     CHECK(err.str().empty());
 }
+
+// ===========================================================================
+// Name-or-URI support: object read, source write, source check
+// ===========================================================================
+
+TEST_CASE("object read: plain name fails at session (not URI parse)",
+          "[cli][executor][name-resolution]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    // Pass a plain name with --host invalid.local — connection will fail,
+    // but the error must NOT be "Invalid URI".
+    const char* argv[] = {"erpl-adt", "--host", "invalid.local",
+                          "object", "read", "ZCL_TEST"};
+    std::ostringstream err;
+    auto* old_err = std::cerr.rdbuf(err.rdbuf());
+    const int code = router.Dispatch(6, argv);
+    std::cerr.rdbuf(old_err);
+    CHECK(code != 0);
+    CHECK(err.str().find("Invalid URI") == std::string::npos);
+}
+
+TEST_CASE("source write: plain name fails at session (not /source/ segment error)",
+          "[cli][executor][name-resolution]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    // Need a real (but missing) file so we get past file-read validation.
+    // Use /dev/null as a zero-byte "file".
+    const char* argv[] = {"erpl-adt", "--host", "invalid.local",
+                          "source", "write", "ZCL_TEST",
+                          "--file", "/dev/null"};
+    std::ostringstream err;
+    auto* old_err = std::cerr.rdbuf(err.rdbuf());
+    const int code = router.Dispatch(8, argv);
+    std::cerr.rdbuf(old_err);
+    CHECK(code != 0);
+    CHECK(err.str().find("expected /source/ segment") == std::string::npos);
+}
+
+TEST_CASE("source check: plain name fails at session (not Invalid URI error)",
+          "[cli][executor][name-resolution]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "--host", "invalid.local",
+                          "source", "check", "ZCL_TEST"};
+    std::ostringstream err;
+    auto* old_err = std::cerr.rdbuf(err.rdbuf());
+    const int code = router.Dispatch(6, argv);
+    std::cerr.rdbuf(old_err);
+    CHECK(code != 0);
+    CHECK(err.str().find("Invalid URI") == std::string::npos);
+}
+
+TEST_CASE("source write: --section invalid value returns 99 before session",
+          "[cli][executor][name-resolution]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "write", "ZCL_TEST",
+                          "--file", "/dev/null", "--section", "badvalue"};
+    CHECK(router.Dispatch(8, argv) == 99);
+}
