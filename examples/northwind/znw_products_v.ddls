@@ -1,0 +1,16 @@
+@EndUserText.label : 'Northwind Products'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_PRODUCTS_V
+  as select from znw_products
+{
+  key product_id,
+      product_name,
+      supplier_id,
+      category_id,
+      qty_per_unit,
+      unit_price,
+      units_in_stock,
+      units_on_order,
+      reorder_level,
+      discontinued
+}

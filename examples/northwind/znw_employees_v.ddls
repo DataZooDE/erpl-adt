@@ -1,0 +1,19 @@
+@EndUserText.label : 'Northwind Employees'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_EMPLOYEES_V
+  as select from znw_employees
+{
+  key employee_id,
+      last_name,
+      first_name,
+      title,
+      birth_date,
+      hire_date,
+      address,
+      city,
+      region,
+      postal_code,
+      country,
+      home_phone,
+      reports_to
+}

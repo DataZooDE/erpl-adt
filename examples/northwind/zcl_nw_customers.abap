@@ -1,16 +1,15 @@
-CLASS zcl_northwind_setup DEFINITION
+CLASS zcl_nw_customers DEFINITION
   PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
     INTERFACES if_oo_adt_classrun.
 ENDCLASS.
 
-CLASS zcl_northwind_setup IMPLEMENTATION.
+CLASS zcl_nw_customers IMPLEMENTATION.
   METHOD if_oo_adt_classrun~main.
 
-    DATA lt_data TYPE TABLE OF znorthwind_cust WITH EMPTY KEY.
+    DATA lt_data TYPE TABLE OF znw_customers WITH EMPTY KEY.
 
     lt_data = VALUE #(
-      mandt = sy-mandt
       ( cust_id = 'ALFKI' comp_name = 'Alfreds Futterkiste'
         contact_name = 'Maria Anders' contact_title = 'Sales Representative'
         address = 'Obere Str. 57' city = 'Berlin' postal_code = '12209'
@@ -415,14 +414,10 @@ CLASS zcl_northwind_setup IMPLEMENTATION.
         country = 'Poland' phone = '(26) 642-7012' fax = '(26) 642-7012' )
     ).
 
-    DELETE FROM znorthwind_cust.
-    INSERT znorthwind_cust FROM TABLE @lt_data.
-    IF sy-subrc = 0.
-      out->write( |Loaded { lines( lt_data ) } Northwind customers into ZNORTHWIND_CUST.| ).
-      out->write( 'Query via rfc_read_table using table name: ZNWCUSTV' ).
-    ELSE.
-      out->write( 'INSERT failed - check that ZNORTHWIND_CUST is activated.' ).
-    ENDIF.
+    DELETE FROM znw_customers.
+    INSERT znw_customers FROM TABLE @lt_data.
+
+    out->write( |Loaded { lines( lt_data ) } Northwind customers into ZNW_CUSTOMERS| ).
 
   ENDMETHOD.
 ENDCLASS.

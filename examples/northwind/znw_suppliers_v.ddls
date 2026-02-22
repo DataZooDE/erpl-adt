@@ -1,0 +1,17 @@
+@EndUserText.label : 'Northwind Suppliers'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_SUPPLIERS_V
+  as select from znw_suppliers
+{
+  key supplier_id,
+      company_name,
+      contact_name,
+      contact_title,
+      address,
+      city,
+      region,
+      postal_code,
+      country,
+      phone,
+      fax
+}

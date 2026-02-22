@@ -1,0 +1,11 @@
+@EndUserText.label : 'Northwind Order Details'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_ORDER_DETAILS_V
+  as select from znw_order_details
+{
+  key order_id,
+  key product_id,
+      unit_price,
+      quantity,
+      discount
+}

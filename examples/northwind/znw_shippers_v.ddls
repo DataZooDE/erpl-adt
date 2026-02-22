@@ -1,0 +1,9 @@
+@EndUserText.label : 'Northwind Shippers'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_SHIPPERS_V
+  as select from znw_shippers
+{
+  key shipper_id,
+      company_name,
+      phone
+}

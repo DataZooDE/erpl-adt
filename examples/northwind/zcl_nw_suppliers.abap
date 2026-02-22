@@ -1,0 +1,50 @@
+CLASS zcl_nw_suppliers DEFINITION
+  PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_nw_suppliers IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+
+    DATA lt_data TYPE TABLE OF znw_suppliers WITH EMPTY KEY.
+
+    lt_data = VALUE #(
+      ( supplier_id = 1  company_name = 'Exotic Liquids'                      contact_name = 'Charlotte Cooper'    contact_title = 'Purchasing Manager'   address = '49 Gilbert St.'                city = 'London'         region = ''     postal_code = 'EC1 4SD'  country = 'UK'          phone = '(171) 555-2222' )
+      ( supplier_id = 2  company_name = 'New Orleans Cajun Delights'           contact_name = 'Shelley Burke'       contact_title = 'Order Administrator'  address = 'P.O. Box 78934'                city = 'New Orleans'    region = 'LA'   postal_code = '70117'    country = 'USA'         phone = '(100) 555-4822' )
+      ( supplier_id = 3  company_name = 'Grandma Kelly''s Homestead'           contact_name = 'Regina Murphy'       contact_title = 'Sales Representative' address = '707 Oxford Rd.'                city = 'Ann Arbor'      region = 'MI'   postal_code = '48104'    country = 'USA'         phone = '(313) 555-5735' fax = '(313) 555-3349' )
+      ( supplier_id = 4  company_name = 'Tokyo Traders'                        contact_name = 'Yoshi Nagase'        contact_title = 'Marketing Manager'    address = '9-8 Sekimai Musashino-shi'     city = 'Tokyo'          region = ''     postal_code = '100'      country = 'Japan'       phone = '(03) 3555-5011' )
+      ( supplier_id = 5  company_name = 'Cooperativa de Quesos ''Las Cabras''' contact_name = 'Antonio del Valle Saavedra' contact_title = 'Export Administrator' address = 'Calle del Rosal 4' city = 'Oviedo' region = 'Asturias' postal_code = '33007' country = 'Spain' phone = '(98) 598 76 54' )
+      ( supplier_id = 6  company_name = 'Mayumi''s'                            contact_name = 'Mayumi Ohno'         contact_title = 'Marketing Representative' address = '92 Setsuko Chuo-ku' city = 'Osaka' region = '' postal_code = '545' country = 'Japan' phone = '(06) 431-7877' )
+      ( supplier_id = 7  company_name = 'Pavlova, Ltd.'                        contact_name = 'Ian Devling'         contact_title = 'Marketing Manager'    address = '74 Rose St. Moonie Ponds'      city = 'Melbourne'      region = 'Victoria' postal_code = '3058' country = 'Australia'    phone = '(03) 444-2343' fax = '(03) 444-6588' )
+      ( supplier_id = 8  company_name = 'Specialty Biscuits, Ltd.'             contact_name = 'Peter Wilson'        contact_title = 'Sales Representative' address = '29 King''s Way'                city = 'Manchester'     region = ''     postal_code = 'M14 GSD' country = 'UK'          phone = '(161) 555-4448' )
+      ( supplier_id = 9  company_name = 'PB Knackebrod AB'                     contact_name = 'Lars Peterson'       contact_title = 'Sales Agent'          address = 'Kaloadagatan 13'               city = 'Göteborg'       region = ''     postal_code = 'S-345 67' country = 'Sweden'      phone = '031-987 65 43' fax = '031-987 65 91' )
+      ( supplier_id = 10 company_name = 'Refrescos Americanas LTDA'            contact_name = 'Carlos Diaz'         contact_title = 'Marketing Manager'    address = 'Av. das Americanas 12.890'     city = 'São Paulo'      region = ''     postal_code = '5442'     country = 'Brazil'      phone = '(11) 555 4640' )
+      ( supplier_id = 11 company_name = 'Heli Susswaaren GmbH & Co. KG'        contact_name = 'Petra Winkler'       contact_title = 'Sales Manager'        address = 'Tiergartenstrasse 5'           city = 'Berlin'         region = ''     postal_code = '10785'    country = 'Germany'     phone = '(010) 9984510' )
+      ( supplier_id = 12 company_name = 'Plutzer Lebensmittelgrossmarkte AG'   contact_name = 'Martin Bein'         contact_title = 'International Marketing Mgr' address = 'Bogenallee 51'      city = 'Frankfurt'      region = ''     postal_code = '60439'    country = 'Germany'     phone = '(069) 992755' )
+      ( supplier_id = 13 company_name = 'Nord-Ost-Fisch Handelsgesellschaft'   contact_name = 'Sven Petersen'       contact_title = 'Coordinator Foreign Markets' address = 'Frahmredder 112a' city = 'Cuxhaven'       region = ''     postal_code = '27478'    country = 'Germany'     phone = '(04721) 8713' fax = '(04721) 8714' )
+      ( supplier_id = 14 company_name = 'Formaggi Fortini s.r.l.'              contact_name = 'Elio Rossi'          contact_title = 'Sales Representative' address = 'Viale Dante, 75'               city = 'Ravenna'        region = ''     postal_code = '48100'    country = 'Italy'       phone = '(0544) 60323' fax = '(0544) 60603' )
+      ( supplier_id = 15 company_name = 'Norske Meierier'                      contact_name = 'Beate Vileid'        contact_title = 'Marketing Manager'    address = 'Hatlevegen 5'                  city = 'Sandvika'       region = ''     postal_code = '1320'     country = 'Norway'      phone = '(0)2-953010' )
+      ( supplier_id = 16 company_name = 'Bigfoot Breweries'                    contact_name = 'Cheryl Saylor'       contact_title = 'Regional Account Rep.' address = '3400 - 8th Avenue Suite 210'  city = 'Bend'           region = 'OR'   postal_code = '97401'    country = 'USA'         phone = '(503) 555-9931' )
+      ( supplier_id = 17 company_name = 'Svensk Sjöföda AB'                    contact_name = 'Michael Björn'       contact_title = 'Sales Representative' address = 'Brovallavägen 231'             city = 'Stockholm'      region = ''     postal_code = 'S-123 45' country = 'Sweden'      phone = '08-123 45 67' )
+      ( supplier_id = 18 company_name = 'Aux joyeux ecclésiastiques'           contact_name = 'Guylène Nodier'      contact_title = 'Sales Manager'        address = '203, Rue des Francs-Bourgeois' city = 'Paris'         region = ''     postal_code = '75004'    country = 'France'      phone = '(1) 03.83.00.68' fax = '(1) 03.83.00.62' )
+      ( supplier_id = 19 company_name = 'New England Seafood Cannery'          contact_name = 'Robb Merchant'       contact_title = 'Wholesale Account Agent' address = 'Order Processing Dept. 2100 Paul Revere Blvd.' city = 'Boston' region = 'MA' postal_code = '02134' country = 'USA' phone = '(617) 555-3267' fax = '(617) 555-3389' )
+      ( supplier_id = 20 company_name = 'Leka Trading'                         contact_name = 'Chandra Leka'        contact_title = 'Owner'                address = '471 Serangoon Loop, Suite #402' city = 'Singapore'     region = ''     postal_code = '0512'     country = 'Singapore'   phone = '555-8787' )
+      ( supplier_id = 21 company_name = 'Lyngbysild'                           contact_name = 'Niels Petersen'      contact_title = 'Sales Manager'        address = 'Lyngbyvej 10'                  city = 'Lyngby'         region = ''     postal_code = '2800'     country = 'Denmark'     phone = '43844108' fax = '43844115' )
+      ( supplier_id = 22 company_name = 'Zaanse Snoepfabriek'                  contact_name = 'Dirk Luchte'         contact_title = 'Accounting Manager'   address = 'Verkoop Rijnweg 22'            city = 'Zaandam'        region = ''     postal_code = '9999 GG'  country = 'Netherlands' phone = '(12345) 1212' fax = '(12345) 1210' )
+      ( supplier_id = 23 company_name = 'Karkki Oy'                            contact_name = 'Anne Heikkonen'      contact_title = 'Product Manager'      address = 'Valtakatu 12'                  city = 'Lappeenranta'   region = ''     postal_code = '53120'    country = 'Finland'     phone = '(953) 10956' )
+      ( supplier_id = 24 company_name = 'G''day, Mate'                         contact_name = 'Wendy Mackenzie'     contact_title = 'Sales Representative' address = '170 Prince Edward Parade Hunter''s Hill' city = 'Sydney' region = 'NSW' postal_code = '2042' country = 'Australia' phone = '(02) 555-5914' fax = '(02) 555-4873' )
+      ( supplier_id = 25 company_name = 'Ma Maison'                            contact_name = 'Jean-Guy Lauzon'     contact_title = 'Marketing Manager'    address = '2960 Rue St. Laurent'          city = 'Montréal'       region = 'Québec' postal_code = 'H1J 1C3' country = 'Canada'   phone = '(514) 555-9022' )
+      ( supplier_id = 26 company_name = 'Pasta Buttini s.r.l.'                 contact_name = 'Giovanni Giudici'    contact_title = 'Order Administrator'  address = 'Via dei Gelsomini, 153'        city = 'Salerno'        region = ''     postal_code = '84100'    country = 'Italy'       phone = '(089) 6547665' fax = '(089) 6547667' )
+      ( supplier_id = 27 company_name = 'Escargots Nouveaux'                   contact_name = 'Marie Delamare'      contact_title = 'Sales Manager'        address = '22, rue H. Voiron'             city = 'Montceau'       region = ''     postal_code = '71300'    country = 'France'      phone = '85.57.00.07' )
+      ( supplier_id = 28 company_name = 'Gai pâturage'                         contact_name = 'Eliane Noz'          contact_title = 'Sales Representative' address = 'Bat. B 3, rue des Alpes'       city = 'Annecy'         region = ''     postal_code = '74000'    country = 'France'      phone = '38.76.98.06' fax = '38.76.98.58' )
+      ( supplier_id = 29 company_name = 'Forêts d''érables'                    contact_name = 'Chantal Goulet'      contact_title = 'Accounting Manager'   address = '148 rue Chasseur'              city = 'Ste-Hyacinthe'  region = 'Québec' postal_code = 'J2S 7S8' country = 'Canada'   phone = '(514) 555-2955' fax = '(514) 555-2921' )
+    ).
+
+    DELETE FROM znw_suppliers.
+    INSERT znw_suppliers FROM TABLE @lt_data.
+
+    out->write( |Loaded { lines( lt_data ) } Northwind suppliers into ZNW_SUPPLIERS| ).
+
+  ENDMETHOD.
+ENDCLASS.

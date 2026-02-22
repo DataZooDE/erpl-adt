@@ -1,0 +1,9 @@
+@EndUserText.label : 'Northwind Categories'
+@AccessControl.authorizationCheck : #NOT_REQUIRED
+define view entity ZNW_CATEGORIES_V
+  as select from znw_categories
+{
+  key category_id,
+      category_name,
+      description
+}
