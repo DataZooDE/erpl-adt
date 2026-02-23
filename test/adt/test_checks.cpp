@@ -37,9 +37,9 @@ std::string LoadFixture(const std::string& filename) {
 TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
     MockAdtSession mock;
 
-    // Step 1: Create worklist → returns ID.
+    // Step 1: Create worklist -> returns ID.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_001"}));
-    // Step 2: Create run → OK.
+    // Step 2: Create run -> OK.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     // Step 3: Get worklist results.
     auto xml = LoadFixture("checks/atc_worklist.xml");

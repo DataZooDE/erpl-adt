@@ -136,7 +136,7 @@ TEST_CASE("search short form: missing pattern returns 99",
           "[cli][executor]") {
     CommandRouter router;
     RegisterAllCommands(router);
-    // "erpl-adt search" with no pattern → group help (exit 0), not handler
+    // "erpl-adt search" with no pattern -> group help (exit 0), not handler
     // This shows group help because Parse returns "Missing action" error.
     const char* argv[] = {"erpl-adt", "search"};
     CHECK(router.Dispatch(2, argv) == 0);
@@ -173,7 +173,7 @@ TEST_CASE("source write: missing --file returns 99",
     const char* argv[] = {"erpl-adt", "source", "write",
                           "/sap/bc/adt/oo/classes/foo/source/main",
                           "--handle", "abc123"};
-    // Has URI and handle but no --file → 99
+    // Has URI and handle but no --file -> 99
     CHECK(router.Dispatch(6, argv) == 99);
 }
 
@@ -626,7 +626,7 @@ TEST_CASE("ReportClassRunOutcome: JSON mode emits JSON and returns 0",
 // PrintTableAnnotationHintIfNeeded
 // ---------------------------------------------------------------------------
 
-TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + can't save → hint printed",
+TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + can't save -> hint printed",
           "[cli][executor][outcome]") {
     std::ostringstream err;
     Error e;
@@ -637,7 +637,7 @@ TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + can't save → hi
     CHECK(err.str().find("TABL/DT") != std::string::npos);
 }
 
-TEST_CASE("PrintTableAnnotationHintIfNeeded: non-table URI → no hint printed",
+TEST_CASE("PrintTableAnnotationHintIfNeeded: non-table URI -> no hint printed",
           "[cli][executor][outcome]") {
     std::ostringstream err;
     Error e;
@@ -646,7 +646,7 @@ TEST_CASE("PrintTableAnnotationHintIfNeeded: non-table URI → no hint printed",
     CHECK(err.str().empty());
 }
 
-TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + other error → no hint printed",
+TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + other error -> no hint printed",
           "[cli][executor][outcome]") {
     std::ostringstream err;
     Error e;

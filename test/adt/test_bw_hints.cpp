@@ -5,7 +5,7 @@
 using namespace erpl_adt;
 
 // ===========================================================================
-// 406 on BW endpoint → content type version mismatch hint
+// 406 on BW endpoint -> content type version mismatch hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 406 on BW endpoint adds content type hint", "[bw_hints]") {
@@ -26,7 +26,7 @@ TEST_CASE("AddBwHint: 406 on non-BW endpoint adds no hint", "[bw_hints]") {
 }
 
 // ===========================================================================
-// 404 on BW endpoint → SICF hint
+// 404 on BW endpoint -> SICF hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 404 on BW endpoint adds SICF hint", "[bw_hints]") {
@@ -47,7 +47,7 @@ TEST_CASE("AddBwHint: 404 on BW search endpoint adds SICF hint", "[bw_hints]") {
 }
 
 // ===========================================================================
-// 404 on non-BW endpoint → no hint
+// 404 on non-BW endpoint -> no hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 404 on non-BW endpoint adds no hint", "[bw_hints]") {
@@ -58,7 +58,7 @@ TEST_CASE("AddBwHint: 404 on non-BW endpoint adds no hint", "[bw_hints]") {
 }
 
 // ===========================================================================
-// 500 + "not activated" on bwsearch → RSOSM/Search hint
+// 500 + "not activated" on bwsearch -> RSOSM/Search hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 500 not activated on bwsearch adds Search hint", "[bw_hints]") {
@@ -72,7 +72,7 @@ TEST_CASE("AddBwHint: 500 not activated on bwsearch adds Search hint", "[bw_hint
 }
 
 // ===========================================================================
-// 500 + "not activated" on CTO → RSOSM/CTO hint
+// 500 + "not activated" on CTO -> RSOSM/CTO hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 500 not activated on CTO adds CTO hint", "[bw_hints]") {
@@ -96,7 +96,7 @@ TEST_CASE("AddBwHint: 500 not activated on /cto/ path adds CTO hint", "[bw_hints
 }
 
 // ===========================================================================
-// 500 + "not activated" on other BW endpoint → generic RSOSM hint
+// 500 + "not activated" on other BW endpoint -> generic RSOSM hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 500 not activated on other BW endpoint adds generic RSOSM hint", "[bw_hints]") {
@@ -123,7 +123,7 @@ TEST_CASE("AddBwHint: 500 not implemented on bwsearch adds Search hint", "[bw_hi
 }
 
 // ===========================================================================
-// 500 without "not activated" → no hint
+// 500 without "not activated" -> no hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: 500 on bwsearch without activation message adds type hint", "[bw_hints]") {
@@ -146,7 +146,7 @@ TEST_CASE("AddBwHint: 500 on non-search BW endpoint without activation adds no h
 }
 
 // ===========================================================================
-// Non-HTTP error → no hint
+// Non-HTTP error -> no hint
 // ===========================================================================
 
 TEST_CASE("AddBwHint: non-HTTP error on BW endpoint adds no hint", "[bw_hints]") {

@@ -142,7 +142,7 @@ TEST_CASE("BwExportInfoarea: TRFN read 404 yields warning, not error",
     // We use bw_nodes.xml which has TRFN + DTPA
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("bw/bw_nodes.xml")}));
-    // TRFN read → 404 (partial failure)
+    // TRFN read -> 404 (partial failure)
     mock.EnqueueGet(Result<HttpResponse, Error>::Err(
         Error{"Get", "/sap/bw/modeling/trfn/ZTRFN_SALES/a", 404,
               "Object not found", std::nullopt, ErrorCategory::NotFound}));
@@ -244,7 +244,7 @@ TEST_CASE("BwExportQuery: provider fallback - ADSO read fails, type is CUBE",
     CHECK(exp.objects[0].type == "ELEM");
     CHECK(exp.objects[1].type == "CUBE");
     CHECK(exp.objects[1].name == "ZCP_SALES");
-    // Edge still present: provider → query
+    // Edge still present: provider -> query
     CHECK(exp.dataflow_edges.size() == 1);
 }
 
@@ -265,8 +265,8 @@ TEST_CASE("BwExportQuery: iobj_refs harvested from query components",
     REQUIRE(result.IsOk());
 
     const auto& query_obj = result.Value().objects[0];
-    // ZQ_SALES has RKF/CKF members → key_figure refs, and ZVAR_FISCYEAR with
-    // uppercase VARIABLE type → variable ref (case-insensitive detection).
+    // ZQ_SALES has RKF/CKF members -> key_figure refs, and ZVAR_FISCYEAR with
+    // uppercase VARIABLE type -> variable ref (case-insensitive detection).
     CHECK_FALSE(query_obj.iobj_refs.empty());
     bool found_key_figure = false;
     bool found_variable = false;
@@ -326,7 +326,7 @@ TEST_CASE("BwExportCube: happy path - provider detail is ADSO",
 TEST_CASE("BwExportCube: ADSO read fails, type falls back to CUBE stub",
           "[adt][bw][export]") {
     MockAdtSession mock;
-    // ADSO detail fails → classic InfoCube/HCPR fallback
+    // ADSO detail fails -> classic InfoCube/HCPR fallback
     mock.EnqueueGet(Result<HttpResponse, Error>::Err(
         Error{"Get", "/sap/bw/modeling/adso/ZCP_SALES/a", 404,
               "Not found", std::nullopt, ErrorCategory::NotFound}));

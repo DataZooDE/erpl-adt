@@ -324,7 +324,7 @@ TEST_CASE("CommandRouter: group-only dispatch shows group help and returns 0", "
     router.Register("search", "query", "Search for ABAP objects",
                     [](const CommandArgs&) { return 0; });
 
-    // "erpl-adt search" (missing action) → group help, exit 0
+    // "erpl-adt search" (missing action) -> group help, exit 0
     const char* argv[] = {"erpl-adt", "search"};
     int exit_code = router.Dispatch(2, argv);
     CHECK(exit_code == 0);

@@ -405,12 +405,12 @@ TEST_CASE("AdtSession: POST 403 triggers CSRF re-fetch and retry", "[adt][sessio
         if (req.has_header("x-csrf-token")) {
             token = req.get_header_value("x-csrf-token");
         }
-        // First POST with old token → 403
+        // First POST with old token -> 403
         if (count == 1) {
             res.status = 403;
             res.set_content("CSRF validation failed", "text/plain");
         } else {
-            // Retry with new token → 201
+            // Retry with new token -> 201
             res.status = 201;
             res.set_content("<created/>", "text/xml");
         }
