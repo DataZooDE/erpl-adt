@@ -3,7 +3,7 @@
 @AbapCatalog.tableCategory : #TRANSPARENT
 @AbapCatalog.deliveryClass : #A
 @AbapCatalog.dataMaintenance : #RESTRICTED
-define table znw_order_details {
+define table znw_ord_details {
 
   key client        : abap.clnt not null;
   key order_id      : abap.int4 not null;

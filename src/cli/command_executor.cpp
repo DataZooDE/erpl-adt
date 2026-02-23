@@ -5741,6 +5741,7 @@ void PrintTableAnnotationHintIfNeeded(const Error& err,
         lower_msg.find("can not save") == std::string::npos) return;
     err_stream << "Hint: TABL/DT (transparent table) CDS source requires these annotations "
                   "before the 'define table' statement:\n"
+                  "  @AbapCatalog.enhancement.category : #NOT_EXTENSIBLE\n"
                   "  @AbapCatalog.tableCategory : #TRANSPARENT\n"
                   "  @AbapCatalog.deliveryClass : #A\n"
                   "  @AbapCatalog.dataMaintenance : #RESTRICTED\n";
@@ -6503,6 +6504,7 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         help.long_description =
             "For TABL/DT (transparent tables): after create, write CDS source including "
+            "@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE, "
             "@AbapCatalog.tableCategory : #TRANSPARENT, "
             "@AbapCatalog.deliveryClass : #A, and "
             "@AbapCatalog.dataMaintenance : #RESTRICTED before the 'define table' statement.";
@@ -6658,7 +6660,8 @@ void RegisterAllCommands(CommandRouter& router) {
             "Without --handle, the object is automatically locked, written, and unlocked. "
             "Use --activate to activate the object after writing. "
             "Note: For TABL/DT transparent tables, the CDS source must include "
-            "@AbapCatalog.tableCategory, @AbapCatalog.deliveryClass, and "
+            "@AbapCatalog.enhancement.category, @AbapCatalog.tableCategory, "
+            "@AbapCatalog.deliveryClass, and "
             "@AbapCatalog.dataMaintenance before the 'define table' statement. "
             "ABAP Cloud: use 'DELETE FROM table.' without WHERE mandt clause "
             "(client filtering is automatic).";

@@ -632,6 +632,7 @@ TEST_CASE("PrintTableAnnotationHintIfNeeded: ddic/tables URI + can't save → hi
     Error e;
     e.message = "Can't save due to errors in source; execute check for details";
     PrintTableAnnotationHintIfNeeded(e, "/sap/bc/adt/ddic/tables/ztbl_foo/source/main", err);
+    CHECK(err.str().find("enhancement.category") != std::string::npos);
     CHECK(err.str().find("@AbapCatalog.tableCategory") != std::string::npos);
     CHECK(err.str().find("TABL/DT") != std::string::npos);
 }

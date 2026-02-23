@@ -114,6 +114,32 @@ std::string BuildCreateXml(const CreateObjectParams& params,
     pkg_ref->SetAttribute("adtcore:name", params.package_name.c_str());
     root->InsertEndChild(pkg_ref);
 
+    if (params.object_type == "DEVC/K") {
+        auto* attrs = doc.NewElement("pak:attributes");
+        attrs->SetAttribute("pak:packageType", "development");
+        root->InsertEndChild(attrs);
+
+        auto* super_pkg = doc.NewElement("pak:superPackage");
+        super_pkg->SetAttribute("adtcore:name", params.package_name.c_str());
+        root->InsertEndChild(super_pkg);
+
+        root->InsertEndChild(doc.NewElement("pak:applicationComponent"));
+
+        auto* transport = doc.NewElement("pak:transport");
+        auto* sw_component = doc.NewElement("pak:softwareComponent");
+        sw_component->SetAttribute("pak:name", "LOCAL");
+        transport->InsertEndChild(sw_component);
+        auto* transport_layer = doc.NewElement("pak:transportLayer");
+        transport_layer->SetAttribute("pak:name", "");
+        transport->InsertEndChild(transport_layer);
+        root->InsertEndChild(transport);
+
+        root->InsertEndChild(doc.NewElement("pak:translation"));
+        root->InsertEndChild(doc.NewElement("pak:useAccesses"));
+        root->InsertEndChild(doc.NewElement("pak:packageInterfaces"));
+        root->InsertEndChild(doc.NewElement("pak:subPackages"));
+    }
+
     doc.InsertEndChild(root);
 
     tinyxml2::XMLPrinter printer;

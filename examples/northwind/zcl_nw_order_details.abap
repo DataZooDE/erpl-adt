@@ -7,7 +7,8 @@ ENDCLASS.
 CLASS zcl_nw_order_details IMPLEMENTATION.
   METHOD if_oo_adt_classrun~main.
 
-    DATA lt_data TYPE TABLE OF znw_order_details WITH EMPTY KEY.
+    DATA lt_data TYPE TABLE OF znw_ord_details WITH EMPTY KEY.
+    DATA lt_all  TYPE TABLE OF znw_ord_details WITH EMPTY KEY.
 
     lt_data = VALUE #(
       ( order_id = 10248 product_id = 5 unit_price = '20.3500' quantity = 14 discount = '0.0000' )
@@ -110,6 +111,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10284 product_id = 13 unit_price = '6.1200' quantity = 9 discount = '0.0000' )
       ( order_id = 10284 product_id = 25 unit_price = '14.6600' quantity = 36 discount = '0.0000' )
       ( order_id = 10284 product_id = 38 unit_price = '275.2000' quantity = 41 discount = '0.1500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10285 product_id = 33 unit_price = '2.4000' quantity = 5 discount = '0.0000' )
       ( order_id = 10285 product_id = 62 unit_price = '47.2000' quantity = 41 discount = '0.1000' )
       ( order_id = 10286 product_id = 49 unit_price = '19.9000' quantity = 29 discount = '0.0000' )
@@ -210,6 +215,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10323 product_id = 77 unit_price = '13.2200' quantity = 48 discount = '0.2500' )
       ( order_id = 10324 product_id = 63 unit_price = '46.0900' quantity = 10 discount = '0.0000' )
       ( order_id = 10324 product_id = 25 unit_price = '14.4800' quantity = 7 discount = '0.0500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10324 product_id = 29 unit_price = '124.2800' quantity = 48 discount = '0.1500' )
       ( order_id = 10325 product_id = 22 unit_price = '21.3700' quantity = 16 discount = '0.2500' )
       ( order_id = 10325 product_id = 57 unit_price = '19.7200' quantity = 49 discount = '0.1000' )
@@ -310,6 +319,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10357 product_id = 58 unit_price = '13.1400' quantity = 37 discount = '0.0000' )
       ( order_id = 10358 product_id = 9 unit_price = '92.4600' quantity = 27 discount = '0.0000' )
       ( order_id = 10358 product_id = 70 unit_price = '14.4500' quantity = 42 discount = '0.2500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10358 product_id = 8 unit_price = '40.5800' quantity = 27 discount = '0.0000' )
       ( order_id = 10358 product_id = 61 unit_price = '29.6200' quantity = 29 discount = '0.1500' )
       ( order_id = 10359 product_id = 45 unit_price = '9.9700' quantity = 26 discount = '0.0500' )
@@ -410,6 +423,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10396 product_id = 41 unit_price = '10.0100' quantity = 42 discount = '0.2500' )
       ( order_id = 10396 product_id = 48 unit_price = '12.2900' quantity = 34 discount = '0.0500' )
       ( order_id = 10396 product_id = 39 unit_price = '18.2000' quantity = 11 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10397 product_id = 18 unit_price = '61.5700' quantity = 28 discount = '0.0000' )
       ( order_id = 10397 product_id = 16 unit_price = '16.8200' quantity = 18 discount = '0.0500' )
       ( order_id = 10397 product_id = 76 unit_price = '17.5500' quantity = 39 discount = '0.0500' )
@@ -510,6 +527,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10434 product_id = 36 unit_price = '19.3000' quantity = 42 discount = '0.0000' )
       ( order_id = 10434 product_id = 34 unit_price = '13.5100' quantity = 49 discount = '0.0000' )
       ( order_id = 10435 product_id = 38 unit_price = '260.9900' quantity = 48 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10435 product_id = 34 unit_price = '14.2900' quantity = 37 discount = '0.1500' )
       ( order_id = 10435 product_id = 54 unit_price = '7.3300' quantity = 46 discount = '0.0000' )
       ( order_id = 10436 product_id = 17 unit_price = '40.0300' quantity = 12 discount = '0.2000' )
@@ -610,6 +631,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10471 product_id = 22 unit_price = '20.8900' quantity = 12 discount = '0.0500' )
       ( order_id = 10471 product_id = 66 unit_price = '17.1100' quantity = 10 discount = '0.1000' )
       ( order_id = 10471 product_id = 18 unit_price = '62.4000' quantity = 23 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10472 product_id = 61 unit_price = '27.1900' quantity = 42 discount = '0.0000' )
       ( order_id = 10472 product_id = 59 unit_price = '56.1200' quantity = 34 discount = '0.0500' )
       ( order_id = 10472 product_id = 6 unit_price = '24.4300' quantity = 48 discount = '0.0000' )
@@ -710,6 +735,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10513 product_id = 24 unit_price = '4.5000' quantity = 43 discount = '0.0000' )
       ( order_id = 10513 product_id = 71 unit_price = '22.5700' quantity = 29 discount = '0.2000' )
       ( order_id = 10513 product_id = 52 unit_price = '7.2800' quantity = 36 discount = '0.2500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10514 product_id = 71 unit_price = '21.2000' quantity = 29 discount = '0.0000' )
       ( order_id = 10514 product_id = 33 unit_price = '2.4700' quantity = 47 discount = '0.0000' )
       ( order_id = 10515 product_id = 3 unit_price = '10.4200' quantity = 33 discount = '0.0500' )
@@ -810,6 +839,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10553 product_id = 20 unit_price = '80.5700' quantity = 14 discount = '0.1000' )
       ( order_id = 10553 product_id = 58 unit_price = '13.0100' quantity = 37 discount = '0.1000' )
       ( order_id = 10554 product_id = 71 unit_price = '21.9400' quantity = 23 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10554 product_id = 7 unit_price = '29.3500' quantity = 2 discount = '0.0000' )
       ( order_id = 10554 product_id = 1 unit_price = '18.3600' quantity = 26 discount = '0.0500' )
       ( order_id = 10555 product_id = 72 unit_price = '35.9900' quantity = 24 discount = '0.1500' )
@@ -910,6 +943,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10591 product_id = 29 unit_price = '123.1200' quantity = 6 discount = '0.0000' )
       ( order_id = 10592 product_id = 66 unit_price = '16.8200' quantity = 32 discount = '0.0000' )
       ( order_id = 10593 product_id = 2 unit_price = '18.5900' quantity = 23 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10594 product_id = 55 unit_price = '24.8100' quantity = 39 discount = '0.0000' )
       ( order_id = 10594 product_id = 54 unit_price = '7.2300' quantity = 31 discount = '0.2500' )
       ( order_id = 10594 product_id = 18 unit_price = '62.6600' quantity = 22 discount = '0.0000' )
@@ -1010,6 +1047,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10632 product_id = 7 unit_price = '29.9100' quantity = 11 discount = '0.1000' )
       ( order_id = 10632 product_id = 25 unit_price = '13.9100' quantity = 32 discount = '0.0000' )
       ( order_id = 10633 product_id = 27 unit_price = '42.5000' quantity = 11 discount = '0.1000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10633 product_id = 37 unit_price = '26.8400' quantity = 37 discount = '0.1500' )
       ( order_id = 10634 product_id = 16 unit_price = '17.6100' quantity = 7 discount = '0.1500' )
       ( order_id = 10634 product_id = 51 unit_price = '51.1700' quantity = 6 discount = '0.0000' )
@@ -1110,6 +1151,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10672 product_id = 65 unit_price = '21.1900' quantity = 5 discount = '0.0500' )
       ( order_id = 10673 product_id = 25 unit_price = '14.6900' quantity = 45 discount = '0.1000' )
       ( order_id = 10673 product_id = 3 unit_price = '10.1100' quantity = 44 discount = '0.0500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10674 product_id = 67 unit_price = '14.3600' quantity = 47 discount = '0.0000' )
       ( order_id = 10675 product_id = 74 unit_price = '10.4900' quantity = 15 discount = '0.2500' )
       ( order_id = 10675 product_id = 4 unit_price = '21.8300' quantity = 5 discount = '0.2000' )
@@ -1210,6 +1255,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10710 product_id = 52 unit_price = '7.3100' quantity = 48 discount = '0.0000' )
       ( order_id = 10710 product_id = 54 unit_price = '7.4400' quantity = 42 discount = '0.2500' )
       ( order_id = 10711 product_id = 33 unit_price = '2.5000' quantity = 32 discount = '0.0500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10711 product_id = 45 unit_price = '9.3700' quantity = 4 discount = '0.1000' )
       ( order_id = 10712 product_id = 19 unit_price = '8.9700' quantity = 38 discount = '0.2500' )
       ( order_id = 10712 product_id = 34 unit_price = '14.4800' quantity = 1 discount = '0.0000' )
@@ -1310,6 +1359,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10749 product_id = 29 unit_price = '122.8900' quantity = 4 discount = '0.0000' )
       ( order_id = 10750 product_id = 28 unit_price = '47.4600' quantity = 7 discount = '0.0000' )
       ( order_id = 10750 product_id = 37 unit_price = '25.3600' quantity = 32 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10750 product_id = 61 unit_price = '27.9400' quantity = 7 discount = '0.1000' )
       ( order_id = 10750 product_id = 36 unit_price = '19.3500' quantity = 50 discount = '0.1500' )
       ( order_id = 10751 product_id = 14 unit_price = '22.1800' quantity = 42 discount = '0.1500' )
@@ -1410,6 +1463,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10789 product_id = 30 unit_price = '25.9000' quantity = 41 discount = '0.0500' )
       ( order_id = 10789 product_id = 13 unit_price = '5.9400' quantity = 49 discount = '0.0500' )
       ( order_id = 10789 product_id = 17 unit_price = '38.0600' quantity = 36 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10790 product_id = 11 unit_price = '20.7500' quantity = 48 discount = '0.1000' )
       ( order_id = 10790 product_id = 74 unit_price = '10.4800' quantity = 41 discount = '0.0500' )
       ( order_id = 10791 product_id = 49 unit_price = '20.5400' quantity = 43 discount = '0.0000' )
@@ -1510,6 +1567,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10825 product_id = 4 unit_price = '22.6000' quantity = 47 discount = '0.1000' )
       ( order_id = 10826 product_id = 57 unit_price = '19.1500' quantity = 45 discount = '0.0000' )
       ( order_id = 10826 product_id = 48 unit_price = '12.2800' quantity = 41 discount = '0.0500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10826 product_id = 4 unit_price = '21.3400' quantity = 17 discount = '0.0000' )
       ( order_id = 10826 product_id = 23 unit_price = '9.1600' quantity = 15 discount = '0.0000' )
       ( order_id = 10827 product_id = 18 unit_price = '64.2100' quantity = 37 discount = '0.0500' )
@@ -1610,6 +1671,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10863 product_id = 11 unit_price = '21.5500' quantity = 27 discount = '0.0000' )
       ( order_id = 10864 product_id = 55 unit_price = '23.4600' quantity = 13 discount = '0.0000' )
       ( order_id = 10864 product_id = 66 unit_price = '17.8000' quantity = 37 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10864 product_id = 3 unit_price = '9.7900' quantity = 6 discount = '0.0000' )
       ( order_id = 10864 product_id = 39 unit_price = '17.8300' quantity = 18 discount = '0.0000' )
       ( order_id = 10865 product_id = 48 unit_price = '13.0800' quantity = 46 discount = '0.0000' )
@@ -1710,6 +1775,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10901 product_id = 15 unit_price = '16.2500' quantity = 26 discount = '0.0500' )
       ( order_id = 10901 product_id = 74 unit_price = '9.8500' quantity = 14 discount = '0.0000' )
       ( order_id = 10902 product_id = 64 unit_price = '34.1000' quantity = 19 discount = '0.1500' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10903 product_id = 13 unit_price = '6.2800' quantity = 27 discount = '0.0000' )
       ( order_id = 10903 product_id = 50 unit_price = '15.4800' quantity = 15 discount = '0.0000' )
       ( order_id = 10903 product_id = 75 unit_price = '7.8400' quantity = 6 discount = '0.0500' )
@@ -1810,6 +1879,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10940 product_id = 68 unit_price = '12.0700' quantity = 44 discount = '0.0000' )
       ( order_id = 10941 product_id = 52 unit_price = '6.8600' quantity = 34 discount = '0.2500' )
       ( order_id = 10942 product_id = 27 unit_price = '45.9200' quantity = 4 discount = '0.1000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10942 product_id = 77 unit_price = '12.5300' quantity = 31 discount = '0.1500' )
       ( order_id = 10943 product_id = 45 unit_price = '9.0900' quantity = 18 discount = '0.0000' )
       ( order_id = 10944 product_id = 14 unit_price = '22.6300' quantity = 29 discount = '0.0000' )
@@ -1910,6 +1983,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 10979 product_id = 17 unit_price = '39.4300' quantity = 49 discount = '0.0500' )
       ( order_id = 10979 product_id = 63 unit_price = '44.9300' quantity = 3 discount = '0.1000' )
       ( order_id = 10979 product_id = 41 unit_price = '9.9300' quantity = 6 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 10980 product_id = 9 unit_price = '97.8100' quantity = 29 discount = '0.0000' )
       ( order_id = 10980 product_id = 47 unit_price = '9.6900' quantity = 19 discount = '0.0000' )
       ( order_id = 10980 product_id = 41 unit_price = '9.9400' quantity = 11 discount = '0.2000' )
@@ -2010,6 +2087,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 11017 product_id = 29 unit_price = '126.1900' quantity = 49 discount = '0.0000' )
       ( order_id = 11018 product_id = 27 unit_price = '45.8800' quantity = 13 discount = '0.0000' )
       ( order_id = 11018 product_id = 70 unit_price = '14.3000' quantity = 8 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 11018 product_id = 13 unit_price = '6.2000' quantity = 44 discount = '0.0000' )
       ( order_id = 11019 product_id = 44 unit_price = '19.0700' quantity = 40 discount = '0.0500' )
       ( order_id = 11019 product_id = 50 unit_price = '16.2100' quantity = 40 discount = '0.0500' )
@@ -2110,6 +2191,10 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 11057 product_id = 4 unit_price = '21.1600' quantity = 16 discount = '0.0000' )
       ( order_id = 11057 product_id = 43 unit_price = '48.2900' quantity = 26 discount = '0.0500' )
       ( order_id = 11057 product_id = 48 unit_price = '12.6300' quantity = 16 discount = '0.0000' )
+    ).
+    APPEND LINES OF lt_data TO lt_all.
+
+    lt_data = VALUE #(
       ( order_id = 11058 product_id = 2 unit_price = '18.8600' quantity = 6 discount = '0.2000' )
       ( order_id = 11058 product_id = 20 unit_price = '83.3800' quantity = 45 discount = '0.0500' )
       ( order_id = 11058 product_id = 70 unit_price = '15.7400' quantity = 1 discount = '0.0000' )
@@ -2166,11 +2251,12 @@ CLASS zcl_nw_order_details IMPLEMENTATION.
       ( order_id = 11077 product_id = 2 unit_price = '19.0000' quantity = 5 discount = '0.0000' )
       ( order_id = 11077 product_id = 4 unit_price = '22.0000' quantity = 3 discount = '0.0500' )
     ).
+    APPEND LINES OF lt_data TO lt_all.
 
-    DELETE FROM znw_order_details.
-    INSERT znw_order_details FROM TABLE @lt_data.
+    DELETE FROM znw_ord_details.
+    INSERT znw_ord_details FROM TABLE @lt_all.
 
-    out->write( |Loaded { lines( lt_data ) } Northwind order details into ZNW_ORDER_DETAILS| ).
+    out->write( |Loaded { lines( lt_all ) } Northwind order details into ZNW_ORD_DETAILS| ).
 
   ENDMETHOD.
 ENDCLASS.
