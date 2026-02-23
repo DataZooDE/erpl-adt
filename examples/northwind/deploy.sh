@@ -101,6 +101,7 @@ create_view ZNW_SHIPPERS_V     "Northwind Shippers"      znw_shippers_v.ddls
 create_view ZNW_PRODUCTS_V     "Northwind Products"      znw_products_v.ddls
 create_view ZNW_ORDERS_V       "Northwind Orders"        znw_orders_v.ddls
 create_view ZNW_ORDER_DETAILS_V "Northwind Order Details" znw_order_details_v.ddls
+create_view ZNW_ORDER_ITEMS_V  "Northwind Order Items: orders, details, customers, products" znw_order_items_v.ddls
 
 # ─── 4. Data loader classes ───────────────────────────────────────────────────
 
@@ -129,3 +130,4 @@ echo "  ZNW_ORDERS       830 rows"
 echo "  ZNW_ORDER_DETAILS 2155 rows"
 echo ""
 echo "Query via CDS views: ZNW_CATEGORIES_V, ZNW_CUSTOMERS_V, ZNW_PRODUCTS_V, ..."
+echo "  Joined view:        ZNW_ORDER_ITEMS_V (orders + details + customers + products)"
