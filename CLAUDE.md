@@ -95,8 +95,9 @@ These are hard requirements, not suggestions:
 ## ABAP Cloud Rules (important for agent-written ABAP code)
 
 - **No MANDT in WHERE clauses:** `DELETE FROM table WHERE mandt = sy-mandt` → error "client field cannot be in WHERE condition". Use `DELETE FROM table.` — client filtering is automatic.
-- **TABL/DT (transparent table) CDS source** requires three annotations before `define table`:
+- **TABL/DT (transparent table) CDS source** requires four annotations before `define table`:
   ```abap
+  @AbapCatalog.enhancement.category : #NOT_EXTENSIBLE
   @AbapCatalog.tableCategory : #TRANSPARENT
   @AbapCatalog.deliveryClass : #A
   @AbapCatalog.dataMaintenance : #RESTRICTED

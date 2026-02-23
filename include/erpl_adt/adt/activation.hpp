@@ -36,9 +36,10 @@ namespace erpl_adt {
 // ---------------------------------------------------------------------------
 
 struct ActivateObjectParams {
-    std::string uri;   // e.g. "/sap/bc/adt/oo/classes/ZCL_MY_CLASS"
-    std::string type;  // e.g. "CLAS/OC" (optional, improves activation)
-    std::string name;  // e.g. "ZCL_MY_CLASS" (optional)
+    std::string uri;        // e.g. "/sap/bc/adt/oo/classes/ZCL_MY_CLASS"
+    std::string type;       // e.g. "CLAS/OC" (optional, improves activation)
+    std::string name;       // e.g. "ZCL_MY_CLASS" (optional)
+    std::string parent_uri; // e.g. "/sap/bc/adt/packages/ZLOCAL" (optional)
 };
 
 [[nodiscard]] Result<ActivationResult, Error> ActivateObject(

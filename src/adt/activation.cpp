@@ -31,6 +31,9 @@ std::string BuildActivationRequestXml(const ActivateObjectParams& params) {
     if (!params.name.empty()) {
         ref->SetAttribute("adtcore:name", params.name.c_str());
     }
+    if (!params.parent_uri.empty()) {
+        ref->SetAttribute("adtcore:parentUri", params.parent_uri.c_str());
+    }
     root->InsertEndChild(ref);
 
     tinyxml2::XMLPrinter printer;

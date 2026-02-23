@@ -75,6 +75,61 @@ const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
     "transport", "ddic", "package", "discover"};
 
+// ---------------------------------------------------------------------------
+// DeriveActivationParamsFromUri
+//
+// Extracts type and name from a well-known ADT object URI without an extra
+// HTTP round-trip.  Used by source write/edit --activate so the activation
+// XML carries adtcore:type and adtcore:name, which SAP requires to generate
+// the DDIC artefact (e.g. a DDIC VIEW for DDLS/DF).
+// ---------------------------------------------------------------------------
+struct UriTypeMapping {
+    const char* path_segment; // segment after "/sap/bc/adt/"
+    const char* type;
+};
+
+static const UriTypeMapping kUriTypeMap[] = {
+    {"programs/programs/",  "PROG/P"},
+    {"oo/classes/",         "CLAS/OC"},
+    {"oo/interfaces/",      "INTF/OI"},
+    {"programs/includes/",  "PROG/I"},
+    {"functions/groups/",   "FUGR/F"},
+    {"packages/",           "DEVC/K"},
+    {"ddic/ddl/sources/",   "DDLS/DF"},
+    {"ddic/tables/",        "TABL/DT"},
+    {"ddic/dataelements/",  "DTEL/DE"},
+    {"messageclass/",       "MSAG/N"},
+};
+
+ActivateObjectParams DeriveActivationParamsFromUri(const std::string& obj_uri) {
+    ActivateObjectParams params;
+    params.uri = obj_uri;
+
+    const std::string base = "/sap/bc/adt/";
+    if (obj_uri.substr(0, base.size()) != base) {
+        return params;
+    }
+    const std::string tail = obj_uri.substr(base.size());
+
+    for (const auto& m : kUriTypeMap) {
+        const std::string seg(m.path_segment);
+        if (tail.size() > seg.size() && tail.substr(0, seg.size()) == seg) {
+            params.type = m.type;
+            std::string raw_name = tail.substr(seg.size());
+            // Strip any trailing path segments (e.g. "/source/main").
+            auto slash = raw_name.find('/');
+            if (slash != std::string::npos) {
+                raw_name = raw_name.substr(0, slash);
+            }
+            std::transform(raw_name.begin(), raw_name.end(), raw_name.begin(),
+                           [](unsigned char c) { return std::toupper(c); });
+            params.name = std::move(raw_name);
+            break;
+        }
+    }
+    return params;
+}
+
 constexpr const char* kCredsFile = ".adt.creds";
 
 struct SavedCredentials {
@@ -1552,8 +1607,7 @@ int HandleSourceWrite(const CommandArgs& args) {
 
     // Optional activation after successful write.
     if (HasFlag(args, "activate") && !obj_uri_for_activate.empty()) {
-        ActivateObjectParams act_params;
-        act_params.uri = obj_uri_for_activate;
+        auto act_params = DeriveActivationParamsFromUri(obj_uri_for_activate);
         auto act_result = ActivateObject(*session, act_params);
         if (act_result.IsErr()) {
             fmt.PrintError(act_result.Error());
@@ -5831,8 +5885,7 @@ int RunSourceEdit(IAdtSession& session,
 
     // 8. Optional activation.
     if (activate && !obj_uri.empty()) {
-        ActivateObjectParams act_params;
-        act_params.uri = obj_uri;
+        auto act_params = DeriveActivationParamsFromUri(obj_uri);
         auto act_result = ActivateObject(session, act_params);
         if (act_result.IsErr()) {
             fmt.PrintError(act_result.Error());

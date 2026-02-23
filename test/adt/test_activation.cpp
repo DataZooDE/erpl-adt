@@ -455,3 +455,45 @@ TEST_CASE("ActivateObject: optional type and name omitted from XML", "[adt][acti
     CHECK(body.find("adtcore:type=") == std::string::npos);
     CHECK(body.find("adtcore:name=") == std::string::npos);
 }
+
+TEST_CASE("ActivateObject: parent_uri included in XML when set", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri        = "/sap/bc/adt/ddic/ddl/sources/znw_ord_items_v";
+    params.type       = "DDLS/DF";
+    params.name       = "ZNW_ORD_ITEMS_V";
+    params.parent_uri = "/sap/bc/adt/packages/znorthwind";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+
+    auto& body = session.PostCalls()[0].body;
+    CHECK(body.find("adtcore:parentUri=\"/sap/bc/adt/packages/znorthwind\"") != std::string::npos);
+}
+
+TEST_CASE("ActivateObject: parent_uri omitted from XML when empty", "[adt][activation]") {
+    MockAdtSession session;
+
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri  = "/sap/bc/adt/oo/classes/ZCL_TEST";
+    params.type = "CLAS/OC";
+    params.name = "ZCL_TEST";
+    // parent_uri intentionally left empty
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+
+    auto& body = session.PostCalls()[0].body;
+    CHECK(body.find("adtcore:parentUri=") == std::string::npos);
+}
