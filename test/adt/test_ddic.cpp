@@ -378,3 +378,43 @@ TEST_CASE("GetTableDefinition: blueSource DDL source fetch failure -> empty fiel
     CHECK(result.Value().name == "SFLIGHT");
     CHECK(result.Value().fields.empty());
 }
+
+TEST_CASE("GetTableDefinition: blueSource DDL with abap built-in dotted types", "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    // DDL with abap.* built-in types — previously truncated to "abap"
+    std::string ddl =
+        "@AbapCatalog.tableCategory : #TRANSPARENT\n"
+        "define table ztypes_test {\n"
+        "  key mandt   : s_mandt not null;\n"
+        "      descr   : abap.sstring(255);\n"
+        "      raw_val : abap.rawstring(0);\n"
+        "      amount  : abap.curr(15,2);\n"
+        "      counter : abap.int4;\n"
+        "}\n";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+
+    auto result = GetTableDefinition(mock, "ZTYPES_TEST");
+    REQUIRE(result.IsOk());
+
+    auto& fields = result.Value().fields;
+    REQUIRE(fields.size() == 5);
+
+    CHECK(fields[0].name == "mandt");
+    CHECK(fields[0].type == "s_mandt");
+    CHECK(fields[0].key_field);
+
+    CHECK(fields[1].name == "descr");
+    CHECK(fields[1].type == "abap.sstring(255)");
+    CHECK_FALSE(fields[1].key_field);
+
+    CHECK(fields[2].name == "raw_val");
+    CHECK(fields[2].type == "abap.rawstring(0)");
+
+    CHECK(fields[3].name == "amount");
+    CHECK(fields[3].type == "abap.curr(15,2)");
+
+    CHECK(fields[4].name == "counter");
+    CHECK(fields[4].type == "abap.int4");
+}

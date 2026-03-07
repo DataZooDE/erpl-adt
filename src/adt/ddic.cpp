@@ -92,9 +92,11 @@ bool IsBlueSource(std::string_view xml) {
 // Skips annotations (@...), define/}, and foreign key continuation lines.
 std::vector<TableField> ParseFieldsFromDdl(const std::string& ddl) {
     std::vector<TableField> fields;
-    // Matches: optional "key " prefix, field name, colon, type name
+    // Matches: optional "key " prefix, field name, colon, type name.
+    // Type handles both data elements (s_mandt) and built-in dotted types
+    // (abap.sstring(255), abap.curr(15,2), abap.int4).
     static const std::regex kFieldRe(
-        R"(^\s*(key\s+)?([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*))",
+        R"(^\s*(key\s+)?([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\([^)]*\))?))",
         std::regex::icase);
 
     std::istringstream stream(ddl);
