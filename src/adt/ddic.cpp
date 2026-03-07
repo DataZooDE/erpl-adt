@@ -5,7 +5,9 @@
 #include <tinyxml2.h>
 
 #include <queue>
+#include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace erpl_adt {
@@ -68,6 +70,59 @@ Result<std::vector<PackageEntry>, Error> ParseNodeStructure(
     }
 
     return Result<std::vector<PackageEntry>, Error>::Ok(std::move(entries));
+}
+
+// Returns true when the ADT response is a blue:blueSource element (TABL/DT DDL form).
+// On modern ABAP systems, transparent tables with DDL source return this format instead
+// of <tabl:table> with <tabl:field> children.
+bool IsBlueSource(std::string_view xml) {
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS) {
+        return false;
+    }
+    const auto* root = doc.RootElement();
+    if (!root || !root->Name()) return false;
+    return std::string_view(root->Name()).find("blueSource") != std::string_view::npos;
+}
+
+// Parse table fields from ABAP SQL DDL source text.
+// Handles lines of the form:
+//   key fieldname : TypeName [not null] ...
+//       fieldname : TypeName [not null] ...
+// Skips annotations (@...), define/}, and foreign key continuation lines.
+std::vector<TableField> ParseFieldsFromDdl(const std::string& ddl) {
+    std::vector<TableField> fields;
+    // Matches: optional "key " prefix, field name, colon, type name
+    static const std::regex kFieldRe(
+        R"(^\s*(key\s+)?([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*))",
+        std::regex::icase);
+
+    std::istringstream stream(ddl);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Skip annotation lines and lines that clearly aren't field declarations
+        if (line.empty()) continue;
+        auto first = line.find_first_not_of(" \t");
+        if (first == std::string::npos) continue;
+        if (line[first] == '@') continue;  // annotation
+
+        std::smatch m;
+        if (!std::regex_search(line, m, kFieldRe)) continue;
+
+        const std::string name = m[2].str();
+        // Skip DDL keywords that pattern-match but aren't fields
+        if (name == "define" || name == "with" || name == "where" ||
+            name == "and" || name == "key") {
+            continue;
+        }
+
+        TableField field;
+        field.name = name;
+        field.type = m[3].str();
+        field.key_field = m[1].matched;  // "key " prefix present
+        fields.push_back(std::move(field));
+    }
+    return fields;
 }
 
 Result<TableInfo, Error> ParseTableDefinition(
@@ -224,7 +279,24 @@ Result<TableInfo, Error> GetTableDefinition(
             Error::FromHttpStatus("GetTableDefinition", table_name, http.status_code, http.body));
     }
 
-    return ParseTableDefinition(http.body, table_name);
+    auto result = ParseTableDefinition(http.body, table_name);
+    if (result.IsErr()) return result;
+
+    // On modern ABAP systems, tables stored as DDL source (TABL/DT) return a
+    // <blue:blueSource> element with no field children. Fall back to fetching
+    // the DDL source text and parsing fields from it.
+    if (result.Value().fields.empty() && IsBlueSource(http.body)) {
+        HttpHeaders src_headers;
+        src_headers["Accept"] = "text/plain";
+        auto src_response = session.Get(url + "/source/main", src_headers);
+        if (src_response.IsOk() && src_response.Value().status_code == 200) {
+            auto info = std::move(result).Value();
+            info.fields = ParseFieldsFromDdl(src_response.Value().body);
+            return Result<TableInfo, Error>::Ok(std::move(info));
+        }
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------
