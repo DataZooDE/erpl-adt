@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Git Commits
+## Git Commits and Pull Requests
 
-Do NOT include `Co-Authored-By` or any AI attribution lines in commit messages.
+Do NOT include `Co-Authored-By`, `🤖 Generated with Claude Code`, or any AI attribution lines in commit messages or pull request bodies.
 
 ## Project Overview
 
