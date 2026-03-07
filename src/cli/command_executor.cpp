@@ -2063,8 +2063,7 @@ int HandleDdicTable(const CommandArgs& args) {
         }
         fmt.PrintTable(headers, rows);
         if (table.fields.empty()) {
-            std::cerr << "Note: Field definitions may be in DDL source on ABAP Cloud systems. "
-                      << "Try 'erpl-adt ddic cds " << table.name << "' instead.\n";
+            std::cerr << "Note: No field definitions found for " << table.name << ".\n";
         }
     }
     return 0;

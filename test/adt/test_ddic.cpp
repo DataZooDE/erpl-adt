@@ -324,3 +324,57 @@ TEST_CASE("GetCdsSource: HTTP error propagated", "[adt][ddic]") {
     auto result = GetCdsSource(mock, "ZCDS_VIEW");
     REQUIRE(result.IsErr());
 }
+
+// ===========================================================================
+// GetTableDefinition: blue:blueSource fallback (TABL/DT DDL source format)
+// ===========================================================================
+
+TEST_CASE("GetTableDefinition: blueSource falls back to DDL source", "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    auto ddl = LoadFixture("ddic/table_sflight_source.abap");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+
+    auto result = GetTableDefinition(mock, "SFLIGHT");
+    REQUIRE(result.IsOk());
+
+    auto& table = result.Value();
+    CHECK(table.name == "SFLIGHT");
+    CHECK(table.description == "Flug");
+
+    // 14 fields: mandt carrid connid fldate price currency planetype
+    //            seatsmax seatsocc paymentsum seatsmax_b seatsocc_b seatsmax_f seatsocc_f
+    REQUIRE(table.fields.size() == 14);
+
+    CHECK(table.fields[0].name == "mandt");
+    CHECK(table.fields[0].type == "s_mandt");
+    CHECK(table.fields[0].key_field);
+
+    CHECK(table.fields[1].name == "carrid");
+    CHECK(table.fields[1].key_field);
+
+    CHECK(table.fields[3].name == "fldate");
+    CHECK(table.fields[3].key_field);
+
+    CHECK(table.fields[4].name == "price");
+    CHECK(table.fields[4].type == "s_price");
+    CHECK_FALSE(table.fields[4].key_field);
+
+    // Second GET goes to /source/main
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[1].path == "/sap/bc/adt/ddic/tables/SFLIGHT/source/main");
+    CHECK(mock.GetCalls()[1].headers.at("Accept") == "text/plain");
+}
+
+TEST_CASE("GetTableDefinition: blueSource DDL source fetch failure -> empty fields returned", "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({500, {}, ""}));
+
+    auto result = GetTableDefinition(mock, "SFLIGHT");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().name == "SFLIGHT");
+    CHECK(result.Value().fields.empty());
+}
