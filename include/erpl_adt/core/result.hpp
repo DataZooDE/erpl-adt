@@ -121,6 +121,10 @@ private:
     Result(ErrTag, const E& error) : storage_(std::in_place_index<1>, error) {}
     Result(ErrTag, E&& error) : storage_(std::in_place_index<1>, std::move(error)) {}
 
+    // Copy-constructibility is inherited from std::variant: Result<T,E> is
+    // copy-constructible iff both T and E are copy-constructible.
+    // For move-only T (e.g. std::unique_ptr), always extract via:
+    //   std::move(result).Value()
     std::variant<T, E> storage_;
 };
 

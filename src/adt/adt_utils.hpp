@@ -109,4 +109,41 @@ inline std::string XmlEscape(std::string_view input) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// ParseXmlWithRoot<T>
+//
+// Encapsulates the repeated parse → root-check → fn(root) pattern that
+// appears in every ADT module. Eliminates the tinyxml2 boilerplate and
+// ensures consistent error messages for parse and empty-response failures.
+//
+// Usage:
+//   return adt_utils::ParseXmlWithRoot<MyResult>(
+//       http.body, "MyOperation", kMyPath, "context msg",
+//       [](const tinyxml2::XMLElement* root) {
+//           ...parse root...
+//           return Result<MyResult, Error>::Ok(...);
+//       });
+// ---------------------------------------------------------------------------
+template <typename T, typename Fn>
+Result<T, Error> ParseXmlWithRoot(std::string_view xml,
+                                  std::string_view operation,
+                                  std::string_view endpoint,
+                                  std::string_view parse_error_context,
+                                  Fn&& fn) {
+    tinyxml2::XMLDocument doc;
+    if (auto err = ParseXmlOrError(doc, xml, operation, endpoint,
+                                   parse_error_context)) {
+        return Result<T, Error>::Err(std::move(*err));
+    }
+
+    const auto* root = doc.RootElement();
+    if (!root) {
+        return Result<T, Error>::Err(Error{
+            std::string(operation), std::string(endpoint), std::nullopt,
+            "Empty response", std::nullopt});
+    }
+
+    return std::forward<Fn>(fn)(root);
+}
+
 } // namespace erpl_adt::adt_utils

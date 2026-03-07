@@ -9,6 +9,34 @@
 using namespace erpl_adt;
 
 // ===========================================================================
+// Compile-time copy/move semantics
+//
+// Result<T,E> is copy-constructible iff both T and E are copy-constructible.
+// It is always move-constructible when T and E are move-constructible.
+// These static_asserts document and enforce the contract.
+// ===========================================================================
+
+// Copyable T and E → Result is copyable.
+static_assert(std::is_copy_constructible_v<Result<std::string, int>>,
+              "Result<copyable, copyable> must be copy-constructible");
+static_assert(std::is_copy_assignable_v<Result<std::string, int>>,
+              "Result<copyable, copyable> must be copy-assignable");
+
+// Move-only T → Result is NOT copyable, but IS movable.
+static_assert(!std::is_copy_constructible_v<Result<std::unique_ptr<int>, std::string>>,
+              "Result with move-only T must not be copy-constructible");
+static_assert(!std::is_copy_assignable_v<Result<std::unique_ptr<int>, std::string>>,
+              "Result with move-only T must not be copy-assignable");
+static_assert(std::is_move_constructible_v<Result<std::unique_ptr<int>, std::string>>,
+              "Result with move-only T must be move-constructible");
+static_assert(std::is_move_assignable_v<Result<std::unique_ptr<int>, std::string>>,
+              "Result with move-only T must be move-assignable");
+
+// Result<void, E> is always copyable (no T to restrict it).
+static_assert(std::is_copy_constructible_v<Result<void, std::string>>,
+              "Result<void, copyable> must be copy-constructible");
+
+// ===========================================================================
 // Basic Ok / Err
 // ===========================================================================
 

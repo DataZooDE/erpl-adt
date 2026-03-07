@@ -94,6 +94,9 @@ struct ActivationResult {
     int activated = 0;
     int failed = 0;
     std::vector<std::string> error_messages;
+    // True when chkl:properties activationExecuted="true" is present in the
+    // SAP Cloud response format (chkl:messages as root element).
+    bool activation_executed = false;
 };
 
 // Poll: parsed from async operation poll responses (202 follow-up).

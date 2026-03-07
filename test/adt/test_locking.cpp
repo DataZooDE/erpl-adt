@@ -183,3 +183,37 @@ TEST_CASE("LockGuard: move transfers ownership", "[adt][locking]") {
     auto guard2 = std::move(guard1);
     CHECK(guard2.Handle().Value() == "lock_handle_abc123");
 }
+
+TEST_CASE("LockGuard: move chain issues exactly one unlock", "[adt][locking]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("object/lock_response.xml");
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_TEST").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));   // lock
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));    // unlock (exactly once)
+
+    {
+        auto r = LockGuard::Acquire(mock, uri);
+        REQUIRE(r.IsOk());
+        auto g1 = std::move(r).Value();   // owns lock
+        auto g2 = std::move(g1);          // g1 moved-from, g2 owns
+        auto g3 = std::move(g2);          // g2 moved-from, g3 owns
+        // g1 and g2 destructors run here (moved-from, must NOT unlock)
+    }
+    // g3 destructor: exactly one unlock POST
+    CHECK(mock.PostCallCount() == 2); // 1 lock + 1 unlock
+    CHECK_FALSE(mock.IsStateful());
+}
+
+TEST_CASE("LockGuard: acquire failure leaves zero unlocks", "[adt][locking]") {
+    MockAdtSession mock;
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_LOCKED").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({409, {}, ""}));
+
+    {
+        auto r = LockGuard::Acquire(mock, uri);
+        REQUIRE(r.IsErr());
+        // No LockGuard was constructed — no unlock should be issued.
+    }
+    CHECK(mock.PostCallCount() == 1); // lock attempt only
+    CHECK_FALSE(mock.IsStateful());
+}

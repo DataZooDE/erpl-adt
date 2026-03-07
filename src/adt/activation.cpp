@@ -54,9 +54,30 @@ ActivationResult ParseActivationResultXml(std::string_view xml) {
         return result;
     }
 
-    // Parse messages from <chkl:messages>.
-    const auto* messages = root->FirstChildElement("chkl:messages");
+    // SAP Cloud returns chkl:messages as the root element directly.
+    // Older/test format wraps it: <chkl:activationResultList><chkl:messages>...
+    // Detect which format we have and resolve the messages container.
+    const tinyxml2::XMLElement* messages = nullptr;
+    const char* root_name = root->Name();
+    if (root_name && std::string_view(root_name).find("messages") != std::string_view::npos) {
+        // Root IS the messages container (SAP Cloud format).
+        messages = root;
+    } else {
+        // Wrapped format: look for chkl:messages child.
+        messages = root->FirstChildElement("chkl:messages");
+    }
+
     if (messages) {
+        // Parse <chkl:properties activationExecuted="true"> if present.
+        const auto* props = messages->FirstChildElement("chkl:properties");
+        if (props) {
+            const char* activated_attr = props->Attribute("activationExecuted");
+            if (activated_attr && std::string_view(activated_attr) == "true") {
+                result.activation_executed = true;
+            }
+        }
+
+        // Parse <msg> children.
         for (auto* msg = messages->FirstChildElement("msg"); msg;
              msg = msg->NextSiblingElement("msg")) {
 

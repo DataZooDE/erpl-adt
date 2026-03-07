@@ -53,6 +53,19 @@ Result<void, Error> DeleteObjectWithAutoLock(
     return Result<void, Error>::Ok();
 }
 
+// WriteSourceWithAutoLock — lock, write, unlock via RAII LockGuard.
+//
+// Lock lifecycle:
+//   Acquire() sets stateful session and locks the object.
+//   The LockGuard destructor calls UnlockObject() and disables the stateful
+//   session — this happens both on success and on any write error.
+//
+// Leak risk on process kill:
+//   If the process is killed (SIGKILL, OOM) while the lock is held, the SAP
+//   lock handle is never released by this process. SAP systems auto-expire
+//   stale locks after a configurable timeout (default ~10 min in ADT Cloud).
+//   If a manual release is needed before then, use:
+//     erpl-adt object unlock <object-uri> --handle <handle>
 Result<std::string, Error> WriteSourceWithAutoLock(
     IAdtSession& session,
     std::string_view source_uri,

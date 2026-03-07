@@ -25,39 +25,28 @@ std::string BuildSearchUrl(const SearchOptions& options) {
 
 Result<std::vector<SearchResult>, Error> ParseSearchResponse(
     std::string_view xml) {
-    tinyxml2::XMLDocument doc;
-    if (auto parse_error = adt_utils::ParseXmlOrError(
-            doc, xml, "SearchObjects", kSearchPath,
-            "Failed to parse search response XML")) {
-        return Result<std::vector<SearchResult>, Error>::Err(
-            std::move(*parse_error));
-    }
+    return adt_utils::ParseXmlWithRoot<std::vector<SearchResult>>(
+        xml, "SearchObjects", kSearchPath,
+        "Failed to parse search response XML",
+        [](const tinyxml2::XMLElement* root) {
+            std::vector<SearchResult> results;
 
-    auto* root = doc.RootElement();
-    if (!root) {
-        return Result<std::vector<SearchResult>, Error>::Err(Error{
-            "SearchObjects", kSearchPath, std::nullopt,
-            "Empty search response", std::nullopt});
-    }
+            // Iterate over all child elements (objectReference with ns prefix).
+            for (auto* el = root->FirstChildElement(); el;
+                 el = el->NextSiblingElement()) {
+                SearchResult r;
+                r.uri = xml_utils::AttrAny(el, "adtcore:uri", "uri");
+                r.type = xml_utils::AttrAny(el, "adtcore:type", "type");
+                r.name = xml_utils::AttrAny(el, "adtcore:name", "name");
+                r.description = xml_utils::AttrAny(el, "adtcore:description", "description");
+                r.package_name = xml_utils::AttrAny(el, "adtcore:packageName", "packageName");
+                if (!r.name.empty()) {
+                    results.push_back(std::move(r));
+                }
+            }
 
-    std::vector<SearchResult> results;
-
-    // Iterate over all child elements named "objectReference" (with namespace prefix).
-    for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
-        SearchResult r;
-
-        r.uri = xml_utils::AttrAny(el, "adtcore:uri", "uri");
-        r.type = xml_utils::AttrAny(el, "adtcore:type", "type");
-        r.name = xml_utils::AttrAny(el, "adtcore:name", "name");
-        r.description = xml_utils::AttrAny(el, "adtcore:description", "description");
-        r.package_name = xml_utils::AttrAny(el, "adtcore:packageName", "packageName");
-
-        if (!r.name.empty()) {
-            results.push_back(std::move(r));
-        }
-    }
-
-    return Result<std::vector<SearchResult>, Error>::Ok(std::move(results));
+            return Result<std::vector<SearchResult>, Error>::Ok(std::move(results));
+        });
 }
 
 } // anonymous namespace

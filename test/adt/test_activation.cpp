@@ -278,6 +278,26 @@ const char* kActivationSuccessXml =
 <chkl:activationResultList xmlns:chkl="http://www.sap.com/adt/checklistresult">
 </chkl:activationResultList>)";
 
+// Real SAP Cloud format: chkl:messages IS the root, activationExecuted=true.
+const char* kSapCloudActivationSuccessXml =
+    R"(<?xml version="1.0" encoding="utf-8"?>
+<chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist">
+  <chkl:properties checkExecuted="true" activationExecuted="true" generationExecuted="true"/>
+</chkl:messages>)";
+
+// Real SAP Cloud format: activation cancelled (preaudit errors).
+const char* kSapCloudActivationCancelledXml =
+    R"(<?xml version="1.0" encoding="utf-8"?>
+<chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist">
+  <chkl:properties checkExecuted="true" activationExecuted="false" generationExecuted="false"/>
+  <msg type="W" line="0" href="">
+    <shortText><txt>Activation was cancelled.</txt></shortText>
+  </msg>
+  <msg type="E" line="1" href="/sap/bc/adt/oo/classes/zcl_test/source/main#start=10,1">
+    <shortText><txt>Syntax error in method MAIN</txt></shortText>
+  </msg>
+</chkl:messages>)";
+
 // Sample activation response XML with error messages.
 const char* kActivationWithErrorsXml =
     R"(<?xml version="1.0" encoding="utf-8"?>
@@ -496,4 +516,66 @@ TEST_CASE("ActivateObject: parent_uri omitted from XML when empty", "[adt][activ
 
     auto& body = session.PostCalls()[0].body;
     CHECK(body.find("adtcore:parentUri=") == std::string::npos);
+}
+
+// ===========================================================================
+// ParseActivationResultXml — real SAP Cloud response format
+// (chkl:messages as root, with chkl:properties activationExecuted attribute)
+// ===========================================================================
+
+TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=true sets flag, no errors",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kSapCloudActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/zcl_test";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().activation_executed == true);
+    CHECK(result.Value().failed == 0);
+    CHECK(result.Value().error_messages.empty());
+}
+
+TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=false with error messages",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kSapCloudActivationCancelledXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/zcl_test";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().activation_executed == false);
+    CHECK(result.Value().failed == 1);   // 1 "E" message
+    CHECK(result.Value().total == 2);    // 1 "W" + 1 "E"
+    CHECK(result.Value().error_messages.size() == 2);
+    CHECK(result.Value().error_messages[0] == "Activation was cancelled.");
+    CHECK(result.Value().error_messages[1] == "Syntax error in method MAIN");
+}
+
+TEST_CASE("ActivateObject: legacy activationResultList format — activation_executed stays false",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, kActivationSuccessXml}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/zcl_test";
+
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    // Legacy format has no chkl:properties — activation_executed stays false.
+    CHECK(result.Value().activation_executed == false);
+    CHECK(result.Value().failed == 0);
 }

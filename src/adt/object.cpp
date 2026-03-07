@@ -193,6 +193,12 @@ Result<ObjectUri, Error> CreateObject(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 201) {
+        if (http.status_code == 400 &&
+            http.body.find("Enter a description") != std::string::npos) {
+            auto err = Error::FromHttpStatus("CreateObject", url, http.status_code, http.body);
+            err.hint = "Add a description with --description 'text'.";
+            return Result<ObjectUri, Error>::Err(std::move(err));
+        }
         return Result<ObjectUri, Error>::Err(
             Error::FromHttpStatus("CreateObject", url, http.status_code, http.body));
     }
