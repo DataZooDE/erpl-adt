@@ -523,7 +523,7 @@ TEST_CASE("ActivateObject: parent_uri omitted from XML when empty", "[adt][activ
 // (chkl:messages as root, with chkl:properties activationExecuted attribute)
 // ===========================================================================
 
-TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=true sets flag, no errors",
+TEST_CASE("ActivateObject: SAP Cloud format - activationExecuted=true sets flag, no errors",
           "[adt][activation]") {
     MockAdtSession session;
     session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
@@ -541,7 +541,7 @@ TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=true sets fla
     CHECK(result.Value().error_messages.empty());
 }
 
-TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=false with error messages",
+TEST_CASE("ActivateObject: SAP Cloud format - activationExecuted=false with error messages",
           "[adt][activation]") {
     MockAdtSession session;
     session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
@@ -562,7 +562,7 @@ TEST_CASE("ActivateObject: SAP Cloud format — activationExecuted=false with er
     CHECK(result.Value().error_messages[1] == "Syntax error in method MAIN");
 }
 
-TEST_CASE("ActivateObject: legacy activationResultList format — activation_executed stays false",
+TEST_CASE("ActivateObject: legacy activationResultList format - activation_executed stays false",
           "[adt][activation]") {
     MockAdtSession session;
     session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
