@@ -4,12 +4,12 @@
   adtcore:name="SFLIGHT"
   adtcore:description="Flight schedule"
   tabl:deliveryClass="A">
-  <tabl:field adtcore:name="MANDT" tabl:type="CLNT" adtcore:description="Client" tabl:keyField="true"/>
-  <tabl:field adtcore:name="CARRID" tabl:type="S_CARR_ID" adtcore:description="Airline code" tabl:keyField="true"/>
-  <tabl:field adtcore:name="CONNID" tabl:type="S_CONN_ID" adtcore:description="Connection number" tabl:keyField="true"/>
-  <tabl:field adtcore:name="FLDATE" tabl:type="S_DATE" adtcore:description="Flight date" tabl:keyField="true"/>
-  <tabl:field adtcore:name="PRICE" tabl:type="S_PRICE" adtcore:description="Airfare"/>
-  <tabl:field adtcore:name="CURRENCY" tabl:type="S_CURRCODE" adtcore:description="Currency"/>
-  <tabl:field adtcore:name="PLANETYPE" tabl:type="S_PLANE" adtcore:description="Aircraft type"/>
-  <tabl:field adtcore:name="SEATSMAX" tabl:type="S_SEATSMAX" adtcore:description="Maximum capacity"/>
+  <tabl:field adtcore:name="MANDT" tabl:type="CLNT" adtcore:description="Client" tabl:keyField="true" tabl:length="3"/>
+  <tabl:field adtcore:name="CARRID" tabl:type="S_CARR_ID" adtcore:description="Airline code" tabl:keyField="true" tabl:length="3"/>
+  <tabl:field adtcore:name="CONNID" tabl:type="S_CONN_ID" adtcore:description="Connection number" tabl:keyField="true" tabl:length="4"/>
+  <tabl:field adtcore:name="FLDATE" tabl:type="S_DATE" adtcore:description="Flight date" tabl:keyField="true" tabl:length="8"/>
+  <tabl:field adtcore:name="PRICE" tabl:type="S_PRICE" adtcore:description="Airfare" tabl:length="15" tabl:decimals="2"/>
+  <tabl:field adtcore:name="CURRENCY" tabl:type="S_CURRCODE" adtcore:description="Currency" tabl:length="5"/>
+  <tabl:field adtcore:name="PLANETYPE" tabl:type="S_PLANE" adtcore:description="Aircraft type" tabl:length="10"/>
+  <tabl:field adtcore:name="SEATSMAX" tabl:type="S_SEATSMAX" adtcore:description="Maximum capacity" tabl:length="3"/>
 </tabl:table>

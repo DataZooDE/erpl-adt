@@ -163,6 +163,15 @@ Result<TableInfo, Error> ParseTableDefinition(
         field.description = xml_utils::AttrAny(el, "adtcore:description", "description");
         field.key_field = (xml_utils::AttrAny(el, "tabl:keyField", "keyField") == "true");
 
+        auto len_str = xml_utils::AttrAny(el, "tabl:length", "length");
+        if (!len_str.empty()) {
+            try { field.length = std::stoi(len_str); } catch (...) {}
+        }
+        auto dec_str = xml_utils::AttrAny(el, "tabl:decimals", "decimals");
+        if (!dec_str.empty()) {
+            try { field.decimals = std::stoi(dec_str); } catch (...) {}
+        }
+
         if (!field.name.empty()) {
             info.fields.push_back(std::move(field));
         }

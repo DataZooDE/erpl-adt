@@ -348,10 +348,13 @@ ToolResult HandleReadTable(IAdtSession& session,
     j["delivery_class"] = table.delivery_class;
     nlohmann::json fields = nlohmann::json::array();
     for (const auto& f : table.fields) {
-        fields.push_back({{"name", f.name},
-                          {"type", f.type},
-                          {"description", f.description},
-                          {"key_field", f.key_field}});
+        nlohmann::json fj = {{"name", f.name},
+                             {"type", f.type},
+                             {"description", f.description},
+                             {"key_field", f.key_field}};
+        if (f.length.has_value()) fj["length"] = *f.length;
+        if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
+        fields.push_back(std::move(fj));
     }
     j["fields"] = fields;
     return MakeOkResult(j);

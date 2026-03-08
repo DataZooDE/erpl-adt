@@ -55,6 +55,8 @@ struct TableField {
     std::string type;          // data element or built-in type
     std::string description;
     bool key_field = false;
+    std::optional<int> length;    // field length (chars/bytes depending on type)
+    std::optional<int> decimals;  // decimal places (for P/F/currency types)
 };
 
 // ---------------------------------------------------------------------------
