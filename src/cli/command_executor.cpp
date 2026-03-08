@@ -2044,7 +2044,7 @@ int HandleDdicTable(const CommandArgs& args) {
             return resp.Error().ExitCode();
         }
         if (resp.Value().status_code != 200) {
-            auto e = Error::FromHttpStatus("GetTableDefinition", url, resp.Value().status_code, resp.Value().body);
+            auto e = Error::FromHttpStatus("GetTableDefinition", args.positional[0], resp.Value().status_code, resp.Value().body);
             fmt.PrintError(e);
             return e.ExitCode();
         }
@@ -6880,8 +6880,10 @@ void RegisterAllCommands(CommandRouter& router) {
     {
         CommandHelp help;
         help.usage = "erpl-adt ddic table <name> [--raw]";
-        help.args_description = "<name>    Table name\n"
-                                "  --raw     Print raw SAP XML response";
+        help.args_description = "<name>    Table name";
+        help.flags = {
+            {"raw", "", "Print raw SAP XML response", false},
+        };
         help.examples = {
             "erpl-adt ddic table SFLIGHT",
             "erpl-adt --json ddic table MARA",
