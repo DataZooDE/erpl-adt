@@ -229,3 +229,17 @@ TEST_CASE("CheckSyntax: HTTP error propagated", "[adt][source]") {
     auto result = CheckSyntax(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main");
     REQUIRE(result.IsErr());
 }
+
+TEST_CASE("WriteSource: 400 Session not found adds actionable hint", "[adt][source]") {
+    MockAdtSession mock;
+    auto handle = LockHandle::Create("h").Value();
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<html><body>Session not found</body></html>"}));
+
+    auto result = WriteSource(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                              "CLASS zcl_test DEFINITION.", handle, std::nullopt);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 400);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+}

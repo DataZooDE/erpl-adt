@@ -5753,7 +5753,11 @@ int ReportActivationOutcome(const ActivationResult& act,
                             const std::string& label,
                             std::ostream& err) {
     if (act.total == 0) {
-        fmt.PrintSuccess("Nothing to activate — object already active or no inactive version found");
+        if (act.activation_executed) {
+            fmt.PrintSuccess("Activated: " + label);
+        } else {
+            fmt.PrintSuccess("Nothing to activate — object already active or no inactive version found");
+        }
         return 0;
     }
     if (act.failed > 0) {

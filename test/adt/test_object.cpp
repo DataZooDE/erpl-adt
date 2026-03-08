@@ -260,3 +260,20 @@ TEST_CASE("DeleteObject: unexpected status code returns error", "[adt][object]")
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status.value() == 500);
 }
+
+TEST_CASE("CreateObject: 400 Enter a description adds hint for --description flag", "[adt][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<exc:message>Enter a description</exc:message>"}));
+
+    CreateObjectParams params;
+    params.object_type = "CLAS/OC";
+    params.name = "ZCL_TEST";
+    params.package_name = "$TMP";
+
+    auto result = CreateObject(mock, params);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 400);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--description") != std::string::npos);
+}

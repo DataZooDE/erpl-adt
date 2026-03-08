@@ -140,7 +140,7 @@ Result<void, Error> UnlockObject(
 // LockGuard
 // ---------------------------------------------------------------------------
 LockGuard::LockGuard(IAdtSession& session, const ObjectUri& uri, LockResult result)
-    : session_(&session), uri_(uri), result_(std::move(result)) {}
+    : session_(&session), uri_(uri), result_(std::move(result)), acquired_(true) {}
 
 Result<LockGuard, Error> LockGuard::Acquire(
     IAdtSession& session,
@@ -158,7 +158,7 @@ Result<LockGuard, Error> LockGuard::Acquire(
 }
 
 LockGuard::~LockGuard() {
-    if (!released_ && session_) {
+    if (acquired_ && !released_ && session_) {
         // Best-effort unlock; ignore errors in destructor.
         (void)UnlockObject(*session_, uri_, result_.handle);
         session_->SetStateful(false);
@@ -169,21 +169,25 @@ LockGuard::LockGuard(LockGuard&& other) noexcept
     : session_(other.session_),
       uri_(std::move(other.uri_)),
       result_(std::move(other.result_)),
+      acquired_(other.acquired_),
       released_(other.released_) {
+    other.acquired_ = false;
     other.released_ = true;
     other.session_ = nullptr;
 }
 
 LockGuard& LockGuard::operator=(LockGuard&& other) noexcept {
     if (this != &other) {
-        if (!released_ && session_) {
+        if (acquired_ && !released_ && session_) {
             (void)UnlockObject(*session_, uri_, result_.handle);
             session_->SetStateful(false);
         }
         session_ = other.session_;
         uri_ = std::move(other.uri_);
         result_ = std::move(other.result_);
+        acquired_ = other.acquired_;
         released_ = other.released_;
+        other.acquired_ = false;
         other.released_ = true;
         other.session_ = nullptr;
     }

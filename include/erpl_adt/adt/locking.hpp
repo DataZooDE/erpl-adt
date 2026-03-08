@@ -68,6 +68,7 @@ private:
     IAdtSession* session_;
     ObjectUri uri_;
     LockResult result_;
+    bool acquired_ = false;  // true only after successful Acquire()
     bool released_ = false;
 };
 
