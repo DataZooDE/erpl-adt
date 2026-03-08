@@ -2033,6 +2033,25 @@ int HandleDdicTable(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
+
+    if (HasFlag(args, "raw")) {
+        auto url = "/sap/bc/adt/ddic/tables/" + args.positional[0];
+        HttpHeaders headers;
+        headers["Accept"] = "application/vnd.sap.adt.tables.v2+xml";
+        auto resp = session->Get(url, headers);
+        if (resp.IsErr()) {
+            fmt.PrintError(resp.Error());
+            return resp.Error().ExitCode();
+        }
+        if (resp.Value().status_code != 200) {
+            auto e = Error::FromHttpStatus("GetTableDefinition", args.positional[0], resp.Value().status_code, resp.Value().body);
+            fmt.PrintError(e);
+            return e.ExitCode();
+        }
+        std::cout << resp.Value().body;
+        return 0;
+    }
+
     auto result = GetTableDefinition(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2047,19 +2066,29 @@ int HandleDdicTable(const CommandArgs& args) {
         j["delivery_class"] = table.delivery_class;
         nlohmann::json fields = nlohmann::json::array();
         for (const auto& f : table.fields) {
-            fields.push_back({{"name", f.name},
-                              {"type", f.type},
-                              {"description", f.description},
-                              {"key_field", f.key_field}});
+            nlohmann::json fj = {{"name", f.name},
+                                 {"type", f.type},
+                                 {"description", f.description},
+                                 {"key_field", f.key_field}};
+            if (f.length.has_value()) fj["length"] = *f.length;
+            if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
+            fields.push_back(std::move(fj));
         }
         j["fields"] = fields;
         fmt.PrintJson(j.dump());
     } else {
-        std::cout << table.name << " — " << table.description << "\n";
-        std::vector<std::string> headers = {"Field", "Type", "Key", "Description"};
+        std::cout << table.name << " - " << table.description << "\n";
+        std::vector<std::string> headers = {"Field", "Type", "Key", "Length", "Description"};
         std::vector<std::vector<std::string>> rows;
         for (const auto& f : table.fields) {
-            rows.push_back({f.name, f.type, f.key_field ? "Y" : "", f.description});
+            std::string len_str;
+            if (f.length.has_value()) {
+                len_str = std::to_string(*f.length);
+                if (f.decimals.has_value()) {
+                    len_str += "," + std::to_string(*f.decimals);
+                }
+            }
+            rows.push_back({f.name, f.type, f.key_field ? "Y" : "", len_str, f.description});
         }
         fmt.PrintTable(headers, rows);
         if (table.fields.empty()) {
@@ -6850,11 +6879,15 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt ddic table <name>";
+        help.usage = "erpl-adt ddic table <name> [--raw]";
         help.args_description = "<name>    Table name";
+        help.flags = {
+            {"raw", "", "Print raw SAP XML response", false},
+        };
         help.examples = {
             "erpl-adt ddic table SFLIGHT",
             "erpl-adt --json ddic table MARA",
+            "erpl-adt ddic table SFLIGHT --raw",
         };
         router.Register("ddic", "table", "Get table definition",
                          HandleDdicTable, std::move(help));

@@ -358,6 +358,19 @@ TEST_CASE("adt_read_table: happy path", "[mcp][handlers][ddic]") {
     CHECK(j.contains("name"));
     CHECK(j.contains("fields"));
     CHECK(j["fields"].is_array());
+
+    bool found_price = false;
+    for (const auto& f : j["fields"]) {
+        if (f["name"] == "PRICE") {
+            CHECK(f.contains("length"));
+            CHECK(f["length"] == 15);
+            CHECK(f.contains("decimals"));
+            CHECK(f["decimals"] == 2);
+            found_price = true;
+            break;
+        }
+    }
+    CHECK(found_price);
 }
 
 TEST_CASE("adt_read_table: missing table_name", "[mcp][handlers][ddic]") {

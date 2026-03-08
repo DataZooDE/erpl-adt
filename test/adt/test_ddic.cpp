@@ -253,6 +253,45 @@ TEST_CASE("GetTableDefinition: parses SFLIGHT table", "[adt][ddic]") {
     CHECK_FALSE(table.fields[4].key_field);
 }
 
+TEST_CASE("GetTableDefinition: parses length and decimals", "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = GetTableDefinition(mock, "SFLIGHT");
+    REQUIRE(result.IsOk());
+
+    auto& table = result.Value();
+    REQUIRE(table.fields.size() == 8);
+
+    // MANDT: length=3, no decimals
+    REQUIRE(table.fields[0].length.has_value());
+    CHECK(*table.fields[0].length == 3);
+    CHECK_FALSE(table.fields[0].decimals.has_value());
+
+    // PRICE: length=15, decimals=2
+    REQUIRE(table.fields[4].length.has_value());
+    CHECK(*table.fields[4].length == 15);
+    REQUIRE(table.fields[4].decimals.has_value());
+    CHECK(*table.fields[4].decimals == 2);
+}
+
+TEST_CASE("GetTableDefinition: fields without length have empty optional", "[adt][ddic]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<tabl:table xmlns:tabl=\"http://www.sap.com/adt/ddic/tables\" "
+                  "xmlns:adtcore=\"http://www.sap.com/adt/core\" "
+                  "adtcore:name=\"MARA\">"
+                  "<tabl:field adtcore:name=\"MATNR\" tabl:type=\"MATNR\"/>"
+                  "</tabl:table>"}));
+
+    auto result = GetTableDefinition(mock, "MARA");
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().fields.size() == 1);
+    CHECK_FALSE(result.Value().fields[0].length.has_value());
+    CHECK_FALSE(result.Value().fields[0].decimals.has_value());
+}
+
 TEST_CASE("GetTableDefinition: 404 returns NotFound", "[adt][ddic]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
