@@ -6048,9 +6048,9 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
                     // Trim trailing whitespace.
                     while (!command_part.empty() && command_part.back() == ' ')
                         command_part.pop_back();
-                    // If the first char is '<', this is a default action — prefix group name.
-                    // e.g. "search <pattern>" instead of just "<pattern>"
-                    if (!command_part.empty() && command_part[0] == '<') {
+                    // Always prefix with group name so help output is copy-pasteable.
+                    // e.g. "bw read-adso <name>" instead of just "read-adso <name>"
+                    if (!command_part.empty()) {
                         command_part = group + " " + command_part;
                     }
                 } else {

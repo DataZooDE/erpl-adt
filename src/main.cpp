@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -121,6 +122,23 @@ int ExitCodeFromError(const erpl_adt::Error& error) {
         return kExitTimeout;
     }
     return kExitInternal;
+}
+
+static std::string_view GetFirstPositionalArg(int argc, const char* const* argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg{argv[i]};
+        if (arg == "-v" || arg == "-vv") continue;
+        if (arg.substr(0, 2) == "--") {
+            auto eq = arg.find('=');
+            if (eq == std::string_view::npos && i + 1 < argc &&
+                std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
+                ++i;
+            }
+            continue;
+        }
+        return arg;
+    }
+    return {};
 }
 
 // Parse the subcommand from argv. Returns the subcommand and the index of the
@@ -538,6 +556,19 @@ int main(int argc, const char* argv[]) {
             return kExitSuccess;
         }
         return router.Dispatch(argc, argv);
+    }
+
+    // Catch unknown command groups before falling through to the legacy deploy path.
+    // e.g. "erpl-adt read-adso FOO" should error, not silently try to deploy.
+    {
+        auto first = GetFirstPositionalArg(argc, argv);
+        static const std::set<std::string_view> kLegacySubcommands = {
+            "deploy", "status", "pull", "activate", "discover"};
+        if (!first.empty() && !kLegacySubcommands.count(first)) {
+            std::cerr << "Error: unknown command '" << first
+                      << "'. Run 'erpl-adt --help' to see all available command groups.\n";
+            return kExitInternal;
+        }
     }
 
     // === Legacy deploy workflow path ===
