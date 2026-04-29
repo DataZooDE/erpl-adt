@@ -257,3 +257,57 @@ TEST_CASE("WriteSource: 423 invalid lock handle hints at stateful session enhanc
     REQUIRE(result.Error().hint.has_value());
     CHECK(result.Error().hint->find("abapfs_extensions") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// WriteSourceOptimistic
+// ---------------------------------------------------------------------------
+TEST_CASE("WriteSourceOptimistic: succeeds on 200 without lock handle", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = WriteSourceOptimistic(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                                        "CLASS zcl_test DEFINITION.", std::nullopt);
+    REQUIRE(result.IsOk());
+    REQUIRE(mock.PutCallCount() == 1);
+    CHECK(mock.PutCalls()[0].path.find("lockHandle") == std::string::npos);
+}
+
+TEST_CASE("WriteSourceOptimistic: succeeds on 204", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({204, {}, ""}));
+
+    auto result = WriteSourceOptimistic(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                                        "CLASS zcl_test DEFINITION.", std::nullopt);
+    REQUIRE(result.IsOk());
+}
+
+TEST_CASE("WriteSourceOptimistic: includes transport in URL", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = WriteSourceOptimistic(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                                        "source", "NPLK900001");
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCalls()[0].path.find("corrNr=NPLK900001") != std::string::npos);
+}
+
+TEST_CASE("WriteSourceOptimistic: returns error on 423 without hint", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok(
+        {423, {}, "Object is locked by another user"}));
+
+    auto result = WriteSourceOptimistic(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                                        "source", std::nullopt);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 423);
+}
+
+TEST_CASE("WriteSourceOptimistic: returns error on 400", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({400, {}, "Lock handle required"}));
+
+    auto result = WriteSourceOptimistic(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                                        "source", std::nullopt);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 400);
+}

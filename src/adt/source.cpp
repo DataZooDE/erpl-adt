@@ -157,6 +157,33 @@ Result<void, Error> WriteSource(
 }
 
 // ---------------------------------------------------------------------------
+// WriteSourceOptimistic
+// ---------------------------------------------------------------------------
+Result<void, Error> WriteSourceOptimistic(
+    IAdtSession& session,
+    const std::string& source_uri,
+    const std::string& source,
+    const std::optional<std::string>& transport_number) {
+    std::string url = source_uri;
+    if (transport_number) {
+        url += "?corrNr=" + *transport_number;
+    }
+
+    auto response = session.Put(url, source, "text/plain; charset=utf-8");
+    if (response.IsErr()) {
+        return Result<void, Error>::Err(std::move(response).Error());
+    }
+
+    const auto& http = response.Value();
+    if (http.status_code != 200 && http.status_code != 204) {
+        return Result<void, Error>::Err(
+            Error::FromHttpStatus("WriteSourceOptimistic", source_uri, http.status_code, http.body));
+    }
+
+    return Result<void, Error>::Ok();
+}
+
+// ---------------------------------------------------------------------------
 // CheckSyntax
 // ---------------------------------------------------------------------------
 Result<std::vector<SyntaxMessage>, Error> CheckSyntax(

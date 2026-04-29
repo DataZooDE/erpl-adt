@@ -36,6 +36,23 @@ namespace erpl_adt {
     const std::optional<std::string>& transport_number = std::nullopt);
 
 // ---------------------------------------------------------------------------
+// WriteSourceOptimistic — attempt a lockless write (no lockHandle).
+//
+// Endpoint: PUT {sourceUri}[?corrNr={transport}]
+// Returns Ok if the server accepts the write without a lock handle.
+// Returns Err (any non-2xx) if the server rejects it — caller should fall
+// back to the standard lock+write flow.
+//
+// Safe to use when the caller is the only writer (agent workflows, single-
+// user dev). No lock is created, so there is no risk of a stuck lock handle.
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<void, Error> WriteSourceOptimistic(
+    IAdtSession& session,
+    const std::string& source_uri,
+    const std::string& source,
+    const std::optional<std::string>& transport_number = std::nullopt);
+
+// ---------------------------------------------------------------------------
 // SyntaxMessage — a single message from a syntax check.
 // ---------------------------------------------------------------------------
 struct SyntaxMessage {

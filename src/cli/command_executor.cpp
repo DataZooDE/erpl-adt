@@ -1591,6 +1591,26 @@ int HandleSourceWrite(const CommandArgs& args) {
         if (slash_pos != std::string::npos) {
             obj_uri_for_activate = source_uri.substr(0, slash_pos);
         }
+    } else if (HasFlag(args, "optimistic")) {
+        // Optimistic mode: try lockless write first; fall back to auto-lock.
+        // Intended for pre-7.51 SAP systems where stateful sessions may not
+        // work, and for single-writer agent workflows where no lock is needed.
+        auto opt_result = WriteSourceOptimistic(*session, source_uri, source, transport);
+        if (opt_result.IsOk()) {
+            auto slash_pos = source_uri.find("/source/");
+            if (slash_pos != std::string::npos) {
+                obj_uri_for_activate = source_uri.substr(0, slash_pos);
+            }
+        } else {
+            // Lockless write rejected — fall back to full lock+write flow.
+            auto write_result = WriteSourceWithAutoLock(*session, source_uri, source, transport);
+            if (write_result.IsErr()) {
+                fmt.PrintError(write_result.Error());
+                PrintTableAnnotationHintIfNeeded(write_result.Error(), source_uri, std::cerr);
+                return write_result.Error().ExitCode();
+            }
+            obj_uri_for_activate = std::move(write_result).Value();
+        }
     } else {
         // Auto-lock mode: derive object URI, lock → write → unlock.
         auto write_result = WriteSourceWithAutoLock(
@@ -6757,12 +6777,14 @@ void RegisterAllCommands(CommandRouter& router) {
             {"transport", "<id>", "Transport request number", false},
             {"session-file", "<path>", "Session file for stateful workflow", false},
             {"activate", "", "Activate the object after writing", false},
+            {"optimistic", "", "Try lockless write first; fall back to auto-lock if rejected. Useful on SAP < 7.51 where stateful sessions may not work.", false},
         };
         help.examples = {
             "erpl-adt source write ZCL_MY_CLASS --file source.abap --activate",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --activate",
             "erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main --file=source.abap --handle=LOCK_HANDLE --transport=NPLK900001",
+            "erpl-adt source write ZCL_MY_CLASS --file source.abap --optimistic",
         };
         router.Register("source", "write", "Write source code",
                          HandleSourceWrite, std::move(help));
