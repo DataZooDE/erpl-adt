@@ -243,3 +243,17 @@ TEST_CASE("WriteSource: 400 Session not found adds actionable hint", "[adt][sour
     REQUIRE(result.Error().hint.has_value());
     CHECK(result.Error().hint->find("--session-file") != std::string::npos);
 }
+
+TEST_CASE("WriteSource: 423 invalid lock handle hints at stateful session enhancement", "[adt][source]") {
+    MockAdtSession mock;
+    auto handle = LockHandle::Create("h").Value();
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok(
+        {423, {}, "Resource CLASS ZCL_TEST is not locked (invalid lock handle: ABCD)"}));
+
+    auto result = WriteSource(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                              "CLASS zcl_test DEFINITION.", handle, std::nullopt);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().http_status == 423);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("abapfs_extensions") != std::string::npos);
+}

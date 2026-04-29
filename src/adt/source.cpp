@@ -139,6 +139,16 @@ Result<void, Error> WriteSource(
                 "For multi-step workflows, use --session-file to persist state.";
             return Result<void, Error>::Err(std::move(err));
         }
+        if (http.status_code == 423 &&
+            http.body.find("invalid lock handle") != std::string::npos) {
+            auto err = Error::FromHttpStatus("WriteSource", source_uri, http.status_code, http.body);
+            err.hint =
+                "Lock handle is invalid or the session context was lost between requests. "
+                "On SAP systems older than 7.51, the server may not maintain stateful sessions. "
+                "Install the stateful session enhancement on your SAP system: "
+                "https://github.com/marcellourbani/abapfs_extensions";
+            return Result<void, Error>::Err(std::move(err));
+        }
         return Result<void, Error>::Err(
             Error::FromHttpStatus("WriteSource", source_uri, http.status_code, http.body));
     }
