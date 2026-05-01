@@ -49,7 +49,9 @@ Result<std::string, Error> FetchObjectXml(
 
     auto response = session.Get(path, headers);
     if (response.IsErr()) {
-        return Result<std::string, Error>::Err(std::move(response).Error());
+        auto error = std::move(response).Error();
+        AddBwHint(error);
+        return Result<std::string, Error>::Err(std::move(error));
     }
 
     const auto& http = response.Value();

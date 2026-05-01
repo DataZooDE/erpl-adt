@@ -146,6 +146,34 @@ TEST_CASE("AddBwHint: 500 on non-search BW endpoint without activation adds no h
 }
 
 // ===========================================================================
+// 403 on BW endpoint -> SICF activation hint
+// ===========================================================================
+
+TEST_CASE("AddBwHint: 403 on BW endpoint adds SICF activation hint", "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "FetchCsrfToken", "/sap/bw/modeling/discovery", 403);
+    AddBwHint(error);
+    REQUIRE(error.hint.has_value());
+    CHECK(error.hint->find("SICF") != std::string::npos);
+    CHECK(error.hint->find("/sap/bw/modeling/") != std::string::npos);
+}
+
+TEST_CASE("AddBwHint: 403 on BW adso endpoint adds SICF hint", "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "BwReadAdso", "/sap/bw/modeling/adso/zdnwa01/a", 403);
+    AddBwHint(error);
+    REQUIRE(error.hint.has_value());
+    CHECK(error.hint->find("SICF") != std::string::npos);
+}
+
+TEST_CASE("AddBwHint: 403 on non-BW endpoint adds no hint", "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "GetObject", "/sap/bc/adt/oo/classes/zcl_test", 403);
+    AddBwHint(error);
+    CHECK_FALSE(error.hint.has_value());
+}
+
+// ===========================================================================
 // Non-HTTP error -> no hint
 // ===========================================================================
 

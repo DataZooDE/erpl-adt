@@ -35,6 +35,13 @@ void AddBwHint(Error& error) {
         return;
     }
 
+    // 403 on any BW endpoint → not activated or not authorized
+    if (error.http_status.has_value() && *error.http_status == 403) {
+        error.hint = "Access denied — activate /sap/bw/modeling/ in transaction SICF "
+                     "and verify user authorizations for BW Modeling services";
+        return;
+    }
+
     // 404 on any BW endpoint → SICF activation needed
     if (error.http_status.has_value() && *error.http_status == 404) {
         error.hint = "Activate the BW Modeling API in transaction SICF "

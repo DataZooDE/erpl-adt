@@ -232,6 +232,20 @@ TEST_CASE("BwReadAdsoDetail: 404 returns NotFound", "[adt][bw][lineage][adso]") 
     CHECK(result.Error().category == ErrorCategory::NotFound);
 }
 
+TEST_CASE("BwReadAdsoDetail: 403 session error carries SICF hint", "[adt][bw][lineage][adso]") {
+    // Simulates the error produced when AdtSession::Get() fails during the
+    // CSRF retry because /sap/bw/modeling/ is not activated in SICF.
+    MockAdtSession mock;
+    auto csrf_403 = Error::FromHttpStatus(
+        "FetchCsrfToken", "/sap/bw/modeling/discovery", 403);
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(csrf_403));
+
+    auto result = BwReadAdsoDetail(mock, "ZDNWA01");
+    REQUIRE(result.IsErr());
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("SICF") != std::string::npos);
+}
+
 // ===========================================================================
 // BwReadDtpDetail
 // ===========================================================================
