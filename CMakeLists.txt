@@ -59,9 +59,14 @@ if(LIB_SOURCES)
     )
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_options(erpl_adt_lib PUBLIC -static-libgcc -static-libstdc++)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_link_libraries(erpl_adt_lib PUBLIC
+            "-framework IOKit"
+            "-framework CoreFoundation")
     elseif(MSVC)
         set_property(TARGET erpl_adt_lib PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_link_libraries(erpl_adt_lib PUBLIC iphlpapi)
     endif()
 else()
     # No source files yet — INTERFACE library so dependents still get includes/deps

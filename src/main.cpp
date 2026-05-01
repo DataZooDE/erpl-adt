@@ -4,6 +4,7 @@
 #include <erpl_adt/cli/command_router.hpp>
 #include <erpl_adt/config/config_loader.hpp>
 #include <erpl_adt/core/log.hpp>
+#include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/terminal.hpp>
 #include <erpl_adt/core/version.hpp>
 #include <erpl_adt/mcp/mcp_server.hpp>
@@ -13,8 +14,10 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -516,6 +519,18 @@ int main(int argc, const char* argv[]) {
     bool use_color = !force_no_color && (force_color || IsStderrTty());
     InitGlobalLogger(std::make_unique<ColorConsoleSink>(use_color), log_level);
 
+    // Telemetry: initialize once, respecting --no-telemetry flag and env vars.
+    {
+        bool no_telemetry = false;
+        for (int i = 1; i < argc; ++i) {
+            if (std::string_view{argv[i]} == "--no-telemetry") {
+                no_telemetry = true;
+                break;
+            }
+        }
+        Telemetry::Initialize(no_telemetry, kVersion);
+    }
+
     // login/logout: special top-level commands.
     auto login_cmd = FindLoginLogout(argc, argv);
     if (login_cmd == "login") {
@@ -555,7 +570,19 @@ int main(int argc, const char* argv[]) {
             PrintBwGroupHelp(router, std::cout, ResolveColorForHelp(argc, argv));
             return kExitSuccess;
         }
-        return router.Dispatch(argc, argv);
+        // Fire telemetry async before dispatch so the HTTP call runs concurrently
+        // with the command. We wait up to 2 seconds after dispatch to let it finish.
+        std::future<void> tel_fut;
+        auto parse_result = CommandRouter::Parse(argc, argv);
+        if (parse_result.IsOk() && Telemetry::IsEnabled()) {
+            const auto& cmd = parse_result.Value();
+            tel_fut = Telemetry::TrackCommand(cmd.group, cmd.action);
+        }
+        int exit_code = router.Dispatch(argc, argv);
+        if (tel_fut.valid()) {
+            tel_fut.wait_for(std::chrono::seconds(2));
+        }
+        return exit_code;
     }
 
     // Catch unknown command groups before falling through to the legacy deploy path.
