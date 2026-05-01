@@ -73,10 +73,18 @@ struct TableInfo {
 // GetTableDefinition — fetch table definition metadata.
 //
 // Endpoint: GET /sap/bc/adt/ddic/tables/{tableName}
+//
+// When resolve_types is true (default), DDL-format table fields (TABL/DT)
+// are enriched with length and description by fetching each referenced data
+// element from /sap/bc/adt/ddic/dataelements/{name}. Built-in abap.* types
+// (e.g. abap.curr(15,2)) have their length/decimals extracted from the type
+// string without any extra request. Pass resolve_types=false to skip this
+// and get a fast, offline-parseable result (field names and types only).
 // ---------------------------------------------------------------------------
 [[nodiscard]] Result<TableInfo, Error> GetTableDefinition(
     IAdtSession& session,
-    const std::string& table_name);
+    const std::string& table_name,
+    bool resolve_types = true);
 
 // ---------------------------------------------------------------------------
 // GetCdsSource — read CDS view source code.

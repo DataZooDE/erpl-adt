@@ -2072,7 +2072,8 @@ int HandleDdicTable(const CommandArgs& args) {
         return 0;
     }
 
-    auto result = GetTableDefinition(*session, args.positional[0]);
+    const bool resolve_types = !HasFlag(args, "no-resolve-types");
+    auto result = GetTableDefinition(*session, args.positional[0], resolve_types);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();

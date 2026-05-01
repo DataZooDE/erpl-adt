@@ -63,30 +63,21 @@ class TestDdic:
         assert "SFLIGHT" in result.stdout.upper()
         assert not result.stdout.strip().startswith("{"), "Output should not be JSON"
 
-    def test_table_no_empty_length_column(self, cli):
-        """ddic table omits Length column when no field has a length value (DDL-format tables)."""
+    def test_table_shows_length_by_default(self, cli):
+        """ddic table shows Length column by default (resolve_types=true fetches data elements)."""
         result = cli.run_no_json("ddic", "table", "sflight")
         if result.returncode != 0:
             pytest.skip("SFLIGHT table not found on this system")
-        # Find the header line (contains "Field" or "Type")
         lines = result.stdout.splitlines()
         header_line = next(
             (l for l in lines if "Field" in l or "Type" in l), ""
         )
-        # If every field has an empty length, the "Length" column should be absent
-        import json
-        data = json.loads(cli.run("ddic", "table", "sflight").stdout)
-        all_lengths_empty = all(
-            "length" not in f or f.get("length") is None
-            for f in data.get("fields", [])
+        assert "Length" in header_line, (
+            "Length column should be present when data elements are resolved (default)"
         )
-        if all_lengths_empty:
-            assert "Length" not in header_line, (
-                "Length column should be hidden when all field lengths are empty"
-            )
 
-    def test_table_no_empty_description_column(self, cli):
-        """ddic table omits Description column when no field has a description (DDL-format tables)."""
+    def test_table_shows_description_by_default(self, cli):
+        """ddic table shows Description column by default (resolve_types=true fetches data elements)."""
         result = cli.run_no_json("ddic", "table", "sflight")
         if result.returncode != 0:
             pytest.skip("SFLIGHT table not found on this system")
@@ -94,16 +85,25 @@ class TestDdic:
         header_line = next(
             (l for l in lines if "Field" in l or "Type" in l), ""
         )
-        import json
-        data = json.loads(cli.run("ddic", "table", "sflight").stdout)
-        all_descs_empty = all(
-            not f.get("description", "")
-            for f in data.get("fields", [])
+        assert "Description" in header_line, (
+            "Description column should be present when data elements are resolved (default)"
         )
-        if all_descs_empty:
-            assert "Description" not in header_line, (
-                "Description column should be hidden when all descriptions are empty"
-            )
+
+    def test_table_no_resolve_types_hides_empty_columns(self, cli):
+        """ddic table --no-resolve-types omits Length/Description when all values are empty."""
+        result = cli.run_no_json("ddic", "table", "sflight", "--no-resolve-types")
+        if result.returncode != 0:
+            pytest.skip("SFLIGHT table not found on this system")
+        lines = result.stdout.splitlines()
+        header_line = next(
+            (l for l in lines if "Field" in l or "Type" in l), ""
+        )
+        assert "Length" not in header_line, (
+            "Length column should be hidden with --no-resolve-types on DDL-format tables"
+        )
+        assert "Description" not in header_line, (
+            "Description column should be hidden with --no-resolve-types on DDL-format tables"
+        )
 
     def test_package_tree(self, cli):
         """package tree recursively lists objects from $TMP."""

@@ -4,6 +4,7 @@
 #include "xml_utils.hpp"
 #include <tinyxml2.h>
 
+#include <map>
 #include <queue>
 #include <regex>
 #include <set>
@@ -192,6 +193,107 @@ Result<TableInfo, Error> ParseTableDefinition(
     return Result<TableInfo, Error>::Ok(std::move(info));
 }
 
+// Extract length/decimals from abap.type_name(length,decimals) syntax.
+// Returns a pair of optionals; empty if the type is not an abap.* built-in
+// with parenthesised parameters.
+std::pair<std::optional<int>, std::optional<int>> ParseAbapBuiltinParams(
+        const std::string& type) {
+    static const std::regex kRe(R"(^abap\.\w+\((\d+)(?:,(\d+))?\)$)",
+                                std::regex::icase);
+    std::smatch m;
+    if (!std::regex_match(type, m, kRe)) {
+        return {std::nullopt, std::nullopt};
+    }
+    std::optional<int> length;
+    std::optional<int> decimals;
+    try { length = std::stoi(m[1].str()); } catch (...) {}
+    if (m[2].matched) {
+        try { decimals = std::stoi(m[2].str()); } catch (...) {}
+    }
+    return {length, decimals};
+}
+
+// Parse a data element XML response and return length, decimals, description.
+struct DataElementInfo {
+    std::optional<int> length;
+    std::optional<int> decimals;
+    std::string description;
+};
+
+DataElementInfo ParseDataElementXml(const std::string& xml) {
+    DataElementInfo info;
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(xml.c_str()) != tinyxml2::XML_SUCCESS) return info;
+    auto* root = doc.RootElement();
+    if (!root) return info;
+
+    info.description = xml_utils::AttrAny(root, "adtcore:description", "description");
+
+    auto* dtel = root->FirstChildElement("dtel:dataElement");
+    if (!dtel) return info;
+
+    auto len_str = GetText(dtel, "dtel:dataTypeLength");
+    if (!len_str.empty()) {
+        try {
+            int v = std::stoi(len_str);
+            if (v > 0) info.length = v;
+        } catch (...) {}
+    }
+    auto dec_str = GetText(dtel, "dtel:dataTypeDecimals");
+    if (!dec_str.empty()) {
+        try {
+            int v = std::stoi(dec_str);
+            if (v > 0) info.decimals = v;
+        } catch (...) {}
+    }
+    return info;
+}
+
+// Enrich fields parsed from DDL source with length, decimals, and description:
+//   - abap.* built-in types: extract params from the type string (no HTTP call)
+//   - data element names: fetch /sap/bc/adt/ddic/dataelements/{name}
+// Failures on individual element fetches are silently ignored so that a
+// missing or unauthorised data element doesn't abort the entire table read.
+void EnrichFieldsFromDataElements(IAdtSession& session,
+                                  std::vector<TableField>& fields) {
+    // Collect unique non-abap type names that need a data element lookup.
+    std::set<std::string> to_fetch;
+    for (const auto& f : fields) {
+        if (f.type.empty()) continue;
+        auto [len, dec] = ParseAbapBuiltinParams(f.type);
+        if (!len.has_value() && f.type.substr(0, 5) != "abap.") {
+            to_fetch.insert(f.type);
+        }
+    }
+
+    // Fetch each unique data element once and cache the result.
+    std::map<std::string, DataElementInfo> cache;
+    for (const auto& type_name : to_fetch) {
+        auto url = "/sap/bc/adt/ddic/dataelements/" + type_name;
+        auto resp = session.Get(url, {});
+        if (resp.IsOk() && resp.Value().status_code == 200) {
+            cache[type_name] = ParseDataElementXml(resp.Value().body);
+        }
+    }
+
+    // Enrich each field.
+    for (auto& f : fields) {
+        if (f.type.empty()) continue;
+        auto [len, dec] = ParseAbapBuiltinParams(f.type);
+        if (len.has_value()) {
+            f.length   = len;
+            f.decimals = dec;
+        } else {
+            auto it = cache.find(f.type);
+            if (it != cache.end()) {
+                f.length      = it->second.length;
+                f.decimals    = it->second.decimals;
+                f.description = it->second.description;
+            }
+        }
+    }
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -279,7 +381,8 @@ Result<std::vector<PackageEntry>, Error> ListPackageTree(
 // ---------------------------------------------------------------------------
 Result<TableInfo, Error> GetTableDefinition(
     IAdtSession& session,
-    const std::string& table_name) {
+    const std::string& table_name,
+    bool resolve_types) {
     auto url = "/sap/bc/adt/ddic/tables/" + table_name;
 
     HttpHeaders headers;
@@ -315,6 +418,9 @@ Result<TableInfo, Error> GetTableDefinition(
         if (src_response.IsOk() && src_response.Value().status_code == 200) {
             auto info = std::move(result).Value();
             info.fields = ParseFieldsFromDdl(src_response.Value().body);
+            if (resolve_types) {
+                EnrichFieldsFromDataElements(session, info.fields);
+            }
             return Result<TableInfo, Error>::Ok(std::move(info));
         }
     }
