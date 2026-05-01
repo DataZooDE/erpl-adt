@@ -6,14 +6,21 @@
 
 | Flag | Description |
 |------|-------------|
-| `--host` | SAP system hostname |
-| `--port` | SAP system port (default: 443) |
-| `--user` | SAP username |
+| `--host` | SAP system hostname (default: localhost) |
+| `--port` | SAP system port (default: 50000) |
+| `--user` | SAP username (default: DEVELOPER) |
 | `--password` | SAP password |
-| `--client` | SAP client number (e.g., `001`) |
-| `--json` | Output in machine-readable JSON |
+| `--password-env <var>` | Read password from env var (default: SAP_PASSWORD) |
+| `--client` | SAP client number (default: 001) |
+| `--https` | Use HTTPS |
 | `--insecure` | Skip TLS certificate verification |
-| `--config` | Path to YAML configuration file |
+| `--json` | Output in machine-readable JSON |
+| `--timeout <sec>` | Request timeout in seconds |
+| `--session-file <path>` | Persist session for lock/write/unlock workflows |
+| `--color` / `--no-color` | Force or disable ANSI color output |
+| `-v` / `-vv` | INFO / DEBUG logging to stderr |
+
+Credential priority: explicit flags > `--password-env` > `.adt.creds` (via `login`) > `SAP_PASSWORD` env var.
 
 ## Command Groups
 
@@ -21,10 +28,10 @@
 
 ```bash
 # Search for classes matching a pattern
-erpl-adt search query "ZCL_*" --type=CLAS --max=50
+erpl-adt search ZCL_MY_* --type CLAS --max 20
 
-# Search for all objects in a namespace
-erpl-adt search query "/NAMESPACE/*"
+# JSON output for scripting
+erpl-adt --json search ZCL_MY_* --type CLAS
 ```
 
 **API:** `SearchObjects(session, options)` -- `GET /sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query=...`
@@ -34,18 +41,22 @@ erpl-adt search query "/NAMESPACE/*"
 ```bash
 # Read object metadata and structure
 erpl-adt object read /sap/bc/adt/oo/classes/ZCL_EXAMPLE
+erpl-adt object read ZCL_EXAMPLE          # name resolution shorthand
 
 # Create a new class
-erpl-adt object create --type=CLAS/OC --name=ZCL_NEW --package=ZTEST --transport=NPLK900001
+erpl-adt object create --type CLAS/OC --name ZCL_NEW --package ZTEST --transport NPLK900001
 
-# Delete an object (requires lock)
-erpl-adt object delete /sap/bc/adt/oo/classes/ZCL_OLD --transport=NPLK900001
+# Delete an object (auto-locks, then deletes)
+erpl-adt object delete /sap/bc/adt/oo/classes/ZCL_OLD --transport NPLK900001
 
 # Lock an object
 erpl-adt object lock /sap/bc/adt/oo/classes/ZCL_EXAMPLE
 
 # Unlock an object
-erpl-adt object unlock /sap/bc/adt/oo/classes/ZCL_EXAMPLE --handle=LOCK_HANDLE
+erpl-adt object unlock /sap/bc/adt/oo/classes/ZCL_EXAMPLE --handle LOCK_HANDLE
+
+# Run an ABAP console class (IF_OO_ADT_CLASSRUN)
+erpl-adt object run ZCL_MY_RUNNER
 ```
 
 **API:**
@@ -59,17 +70,24 @@ erpl-adt object unlock /sap/bc/adt/oo/classes/ZCL_EXAMPLE --handle=LOCK_HANDLE
 
 ```bash
 # Read source code (active version)
+erpl-adt source read ZCL_MY_CLASS
 erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main
 
-# Read inactive version
-erpl-adt source read /sap/bc/adt/oo/classes/zcl_test/source/main --version=inactive
+# Read inactive version or a specific section
+erpl-adt source read ZCL_MY_CLASS --version inactive
+erpl-adt source read ZCL_MY_CLASS --section testclasses
 
-# Write source code (requires lock + transport)
-erpl-adt source write /sap/bc/adt/oo/classes/zcl_test/source/main \
-  --file=source.abap --handle=LOCK_HANDLE --transport=NPLK900001
+# Open source in $EDITOR and write back changes
+erpl-adt source edit ZCL_MY_CLASS --transport NPLK900001
+
+# Write source code from a file (auto-locks, writes, unlocks)
+erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001
+
+# Write and activate in one step
+erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001 --activate
 
 # Run syntax check
-erpl-adt source check /sap/bc/adt/oo/classes/zcl_test/source/main
+erpl-adt source check ZCL_MY_CLASS
 ```
 
 **API:**
@@ -77,41 +95,30 @@ erpl-adt source check /sap/bc/adt/oo/classes/zcl_test/source/main
 - `WriteSource(session, uri, source, handle)` -- `PUT {sourceUri}?lockHandle=...`
 - `CheckSyntax(session, uri)` -- `POST /sap/bc/adt/checkruns?reporters=abapCheckRun`
 
-### test -- ABAP Unit testing
+### test / check -- ABAP Unit and ATC
 
 ```bash
-# Run tests for a class
-erpl-adt test run /sap/bc/adt/oo/classes/ZCL_TEST
+# Run unit tests (by name or URI)
+erpl-adt test ZCL_MY_CLASS
+erpl-adt --json test ZCL_MY_CLASS
 
-# Run tests for a package
-erpl-adt test run /sap/bc/adt/packages/ZTEST_PKG
-
-# Run with JSON output for CI
-erpl-adt test run /sap/bc/adt/oo/classes/ZCL_TEST --json
+# Run ATC quality checks
+erpl-adt check ZCL_MY_CLASS
+erpl-adt check ZCL_MY_CLASS --variant FUNCTIONAL_DB_ADDITION
 ```
 
-**API:** `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
-
-### check -- ATC quality checks
-
-```bash
-# Run ATC checks with default variant
-erpl-adt check run /sap/bc/adt/packages/ZTEST_PKG
-
-# Run with specific check variant
-erpl-adt check run /sap/bc/adt/oo/classes/ZCL_TEST --variant=FUNCTIONAL_DB_ADDITION
-```
-
-**API:** `RunAtcCheck(session, uri, variant)` -- worklist + run + get findings
+**API:**
+- `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
+- `RunAtcCheck(session, uri, variant)` -- worklist + run + get findings
 
 ### transport -- Transport management
 
 ```bash
 # List transports for a user
-erpl-adt transport list --user=DEVELOPER
+erpl-adt transport list --user DEVELOPER
 
 # Create a new transport
-erpl-adt transport create --desc="Feature X implementation" --package=ZTEST_PKG
+erpl-adt transport create --desc "Feature X implementation" --package ZTEST_PKG
 
 # Release a transport
 erpl-adt transport release NPLK900001
@@ -131,8 +138,10 @@ erpl-adt package list ZTEST_PKG
 # Check if package exists
 erpl-adt package exists ZTEST_PKG
 
-# Create a package
-erpl-adt package create --name=ZTEST_PKG --desc="Test package"
+# Recursively list all objects in a package hierarchy
+erpl-adt package tree ZTEST_PKG
+erpl-adt package tree ZTEST_PKG --type CLAS          # filter by object type
+erpl-adt package tree ZTEST_PKG --max-depth 10
 ```
 
 **API:** `ListPackageContents(session, name)` -- `POST /sap/bc/adt/repository/nodestructure`
@@ -140,54 +149,35 @@ erpl-adt package create --name=ZTEST_PKG --desc="Test package"
 ### ddic -- Data Dictionary operations
 
 ```bash
-# Get table definition
+# Get table definition with field lengths and descriptions (default)
 erpl-adt ddic table SFLIGHT
+erpl-adt --json ddic table MARA
+
+# Skip data-element lookup (fast, offline — field names and types only)
+erpl-adt ddic table SFLIGHT --no-resolve-types
+
+# Print raw SAP XML response
+erpl-adt ddic table SFLIGHT --raw
 
 # Read CDS view source
-erpl-adt ddic cds ZCDS_VIEW
+erpl-adt ddic cds I_BUSINESSPARTNER
 ```
+
+By default, `ddic table` resolves field lengths and descriptions by fetching each referenced
+data element from `/sap/bc/adt/ddic/dataelements/{name}`. Built-in `abap.*` types (e.g.
+`abap.curr(15,2)`) have their length/decimals parsed from the type string without an extra
+request. Use `--no-resolve-types` to skip this enrichment.
 
 **API:**
-- `GetTableDefinition(session, name)` -- `GET /sap/bc/adt/ddic/tables/{name}`
+- `GetTableDefinition(session, name, resolve_types)` -- `GET /sap/bc/adt/ddic/tables/{name}`, then `GET /sap/bc/adt/ddic/dataelements/{type}` per unique field type
 - `GetCdsSource(session, name)` -- `GET /sap/bc/adt/ddic/ddl/sources/{name}/source/main`
-
-### git -- abapGit operations
-
-```bash
-# List linked repositories
-erpl-adt git list
-
-# Clone a repository
-erpl-adt git clone --url=https://github.com/org/repo.git \
-  --branch=refs/heads/main --package=ZTEST_PKG
-
-# Pull latest changes
-erpl-adt git pull REPO_KEY
-
-# Check repository status
-erpl-adt git status REPO_KEY
-
-# Unlink a repository
-erpl-adt git unlink REPO_KEY
-```
-
-**API:** `ListRepos`, `CloneRepo`, `PullRepo`, `UnlinkRepo` -- `/sap/bc/adt/abapgit/repos`
-
-### deploy -- Legacy deploy workflow
-
-```bash
-# Deploy from YAML config
-erpl-adt deploy --config=deploy.yaml
-
-# Deploy with inline args
-erpl-adt deploy --host=sap.example.com --user=ADMIN --password-env=SAP_PASSWORD
-```
 
 ### discover -- Service discovery
 
 ```bash
 # Discover available ADT services
-erpl-adt discover
+erpl-adt discover services
+erpl-adt discover services --workspace "Object Repository"
 ```
 
 **API:** `Discover(session)` -- `GET /sap/bc/adt/discovery`
@@ -196,15 +186,25 @@ erpl-adt discover
 
 ```bash
 # Start MCP server (JSON-RPC 2.0 over stdio)
-erpl-adt mcp --host=sap.example.com --user=ADMIN --password=secret
+erpl-adt mcp --host sap.example.com --port 44300 --https
 ```
 
-The MCP server exposes all operations as tools for AI agent consumption via the Model Context Protocol (2024-11-05). Communication is line-delimited JSON-RPC 2.0 over stdin/stdout.
+The MCP server exposes all operations as tools for AI agent consumption via the Model Context
+Protocol (2024-11-05). Communication is line-delimited JSON-RPC 2.0 over stdin/stdout.
 
 **Supported MCP methods:**
 - `initialize` -- handshake and capability negotiation
 - `tools/list` -- enumerate available tools
 - `tools/call` -- execute a tool by name
+
+### deploy -- Legacy deploy workflow
+
+```bash
+# Deploy from YAML config
+erpl-adt deploy -c config.yaml
+```
+
+The deploy workflow is an idempotent state machine: `discover → create package → clone → pull → activate`.
 
 ## Exit Codes
 

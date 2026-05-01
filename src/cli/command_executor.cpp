@@ -6917,14 +6917,16 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt ddic table <name> [--raw]";
+        help.usage = "erpl-adt ddic table <name> [flags]";
         help.args_description = "<name>    Table name";
         help.flags = {
+            {"no-resolve-types", "", "Skip data-element lookup; show field names and types only (fast, offline)", false},
             {"raw", "", "Print raw SAP XML response", false},
         };
         help.examples = {
             "erpl-adt ddic table SFLIGHT",
             "erpl-adt --json ddic table MARA",
+            "erpl-adt ddic table SFLIGHT --no-resolve-types",
             "erpl-adt ddic table SFLIGHT --raw",
         };
         router.Register("ddic", "table", "Get table definition",

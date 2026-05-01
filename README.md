@@ -79,108 +79,74 @@ Alternatively, download the binary for your platform from the [latest release](h
 
 ## Full reference
 
+Run `erpl-adt --help` for the complete command listing. Key commands:
+
 ```
-erpl-adt - CLI for the SAP ADT REST API
-
-  Talks the same HTTP endpoints Eclipse ADT uses. No Eclipse, no RFC SDK, no JVM.
-  All commands accept --json for machine-readable output.
-
-USAGE
-  erpl-adt [global-flags] <command> [args] [flags]
-
 SEARCH — Search for ABAP objects
   search <pattern>                        Search for ABAP objects
       --type <type>                       Object type: CLAS, PROG, TABL, INTF, FUGR
       --max <n>                           Maximum number of results
 
 OBJECT — Read, create, delete, lock/unlock ABAP objects
-  create                                  Create an ABAP object
-      --type <type>                       Object type (e.g., CLAS/OC, PROG/P)  (required)
-      --name <name>                       Object name  (required)
-      --package <pkg>                     Target package  (required)
-      --description <text>                Object description
-      --transport <id>                    Transport request number
-  delete <uri>                            Delete an ABAP object
-      --handle <handle>                   Lock handle (skips auto-lock if provided)
-      --transport <id>                    Transport request number
-  lock <uri>                              Lock an object for editing
-      --session-file <path>               Save session for later unlock
-  read <uri>                              Read object structure
-  unlock <uri>                            Unlock an object
-      --handle <handle>                   Lock handle  (required)
-      --session-file <path>               Session file for stateful workflow
+  object create                           Create an ABAP object
+      --type, --name, --package           (required)
+      --description, --transport
+  object delete <uri>                     Delete an ABAP object
+  object lock <uri>                       Lock an object for editing
+  object read <name-or-uri>               Read object structure
+  object run <class-name-or-uri>          Run an ABAP console class (IF_OO_ADT_CLASSRUN)
+  object unlock <uri>                     Unlock an object
 
 SOURCE — Read, write, and check ABAP source code
-  check <uri>                             Check syntax
-  read <uri>                              Read source code
+  source check <name-or-uri>              Check syntax
+  source edit <name-or-uri>               Open source in $EDITOR and write back
+  source read <name-or-uri>               Read source code
       --version <version>                 active or inactive (default: active)
-  write <uri>                             Write source code
+      --section <section>                 main, localdefinitions, localimplementations, testclasses, all
+      --color / --no-color                ANSI syntax highlighting
+  source write <name-or-uri>              Write source code
       --file <path>                       Path to local source file  (required)
-      --handle <handle>                   Lock handle (skips auto-lock if provided)
-      --transport <id>                    Transport request number
-      --session-file <path>               Session file for stateful workflow
       --activate                          Activate the object after writing
+      --optimistic                        Try lockless write first (pre-7.51 SAP)
 
 ACTIVATE — Activate inactive ABAP objects
-  activate <name-or-uri>                  Activate an ABAP object
+  activate <name-or-uri>
 
-TEST — Run ABAP Unit tests
+TEST / CHECK
   test <name-or-uri>                      Run ABAP unit tests
-
-CHECK — Run ATC quality checks
-  check <name-or-uri>                     Run ATC checks
+  check <name-or-uri>                     Run ATC quality checks
       --variant <name>                    ATC variant (default: DEFAULT)
 
 TRANSPORT — List, create, and release transports
-  create                                  Create a transport
-      --desc <text>                       Transport description  (required)
-      --package <pkg>                     Target package  (required)
-  list                                    List transports
-      --user <user>                       Filter by user (default: DEVELOPER)
-  release <number>                        Release a transport
+  transport create --desc <text> --package <pkg>
+  transport list [--user <user>]
+  transport release <number>
 
 DATA DICTIONARY — Tables and CDS views
-  cds <name>                              Get CDS source
-  table <name>                            Get table definition
+  ddic table <name>                       Get table definition (fetches lengths + descriptions by default)
+      --no-resolve-types                  Skip data-element lookup; show field names and types only
+      --raw                               Print raw SAP XML response
+  ddic cds <name>                         Get CDS view source
 
 PACKAGE — List contents and check package existence
-  exists <name>                           Check if package exists
-  list <name>                             List package contents
-  tree <name>                             List package contents recursively
-      --type <type>                       Filter by object type: CLAS, PROG, TABL, INTF, FUGR
-      --max-depth <n>                     Maximum recursion depth (default: 50)
-
-DISCOVER — Discover available ADT services
-  services                                Discover ADT services
-
-CREDENTIALS
-  login                                     Save connection credentials
-  logout                                    Remove saved credentials
+  package exists <name>
+  package list <name>
+  package tree <name>                     Recursive BFS traversal
+      --type <type>                       Filter: CLAS, PROG, TABL, INTF, FUGR
+      --max-depth <n>                     (default: 50)
 
 GLOBAL FLAGS
-  --host <host>                           SAP hostname (default: localhost)
-  --port <port>                           SAP port (default: 50000)
-  --user <user>                           SAP username (default: DEVELOPER)
-  --password <pass>                       SAP password
-  --password-env <var>                    Read password from env var (default: SAP_PASSWORD)
-  --client <num>                          SAP client (default: 001)
-  --https                                 Use HTTPS
-  --insecure                              Skip TLS verification (with --https)
-  --json                                  JSON output
-  --timeout <sec>                         Request timeout in seconds
+  --host, --port, --user, --password, --client
+  --https, --insecure
+  --json                                  Machine-readable JSON output
+  --color / --no-color
+  --timeout <sec>
   --session-file <path>                   Persist session for lock/write/unlock workflows
-  --color                                 Force colored output
-  --no-color                              Disable colored output
-  -v                                      Verbose logging (INFO level)
-  -vv                                     Debug logging (DEBUG level)
-
-  Credential priority: flags > --password-env > .adt.creds (via login) > SAP_PASSWORD env var
+  -v / -vv                                INFO / DEBUG logging
 
 EXIT CODES
-  0  Success          1  Connection/auth     2  Not found
-  3  Clone error      4  Pull error          5  Activation error
-  6  Lock conflict    7  Test failure        8  ATC check error
-  9  Transport error  10 Timeout             99 Internal error
+  0  Success   1  Connection/auth   2  Not found   5  Activation error
+  6  Lock conflict   7  Test failure   8  ATC check error   99  Internal error
 ```
 
 ## MCP server
