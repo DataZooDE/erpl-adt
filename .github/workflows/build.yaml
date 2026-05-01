@@ -90,6 +90,23 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
           cd build && ctest --output-on-failure
 
+      - name: Smoke test (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ./build/erpl-adt --help
+          ./build/erpl-adt search --help
+          ./build/erpl-adt object --help
+          ./build/erpl-adt source --help
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ./build/erpl-adt.exe --help
+          ./build/erpl-adt.exe search --help
+          ./build/erpl-adt.exe object --help
+          ./build/erpl-adt.exe source --help
+
       - name: Upload binary (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
