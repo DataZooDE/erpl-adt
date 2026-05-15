@@ -85,7 +85,16 @@ class TestAbapUnit:
 
         # Run tests.
         data = cli.run_ok("test", "run", uri)
-        # If tests ran, check for failures.
-        if data.get("total_methods", 0) > 0:
-            assert data["total_failed"] > 0 or not data["all_passed"], \
-                "Expected test failure but all passed"
+        # We just wrote a class with one FOR TESTING method that asserts
+        # 1 == 2. The test runner MUST detect it. A silently-zero
+        # total_methods would mean either the writer didn't activate the
+        # source or the runner is silently skipping the inactive version —
+        # both are #9-style "command succeeded but did nothing" bugs.
+        assert data.get("total_methods", 0) > 0, (
+            "test run returned total_methods=0 after writing a class with "
+            "a FOR TESTING method — runner is likely skipping inactive "
+            f"sources: {data}"
+        )
+        assert data["total_failed"] > 0 or not data["all_passed"], (
+            f"Expected at least one failed test (1 != 2), got: {data}"
+        )
