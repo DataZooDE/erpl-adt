@@ -1,9 +1,14 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<tm:root xmlns:tm="http://www.sap.com/cts/transports">
-  <tm:request tm:number="NPLK900001" tm:desc="Implement feature X"
-    tm:owner="DEVELOPER" tm:status="modifiable" tm:target="NPL"/>
-  <tm:request tm:number="NPLK900002" tm:desc="Bug fix for Z report"
-    tm:owner="DEVELOPER" tm:status="released" tm:target="NPL"/>
-  <tm:request tm:number="NPLK900003" tm:desc="Refactoring"
-    tm:owner="DEVELOPER" tm:status="modifiable" tm:target="NPL"/>
+<?xml version="1.0" encoding="utf-8"?>
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="DEVELOPER">
+  <tm:workbench tm:category="Workbench">
+    <tm:target tm:name="NPL" tm:desc="System NPL">
+      <tm:modifiable tm:status="Modifiable">
+        <tm:request tm:number="NPLK900001" tm:owner="DEVELOPER" tm:desc="Implement feature X" tm:type="K" tm:status="D" tm:target="NPL"/>
+        <tm:request tm:number="NPLK900003" tm:owner="DEVELOPER" tm:desc="Refactoring" tm:type="K" tm:status="D" tm:target="NPL"/>
+      </tm:modifiable>
+      <tm:released tm:status="Released">
+        <tm:request tm:number="NPLK900002" tm:owner="DEVELOPER" tm:desc="Bug fix for Z report" tm:type="K" tm:status="R" tm:target="NPL"/>
+      </tm:released>
+    </tm:target>
+  </tm:workbench>
 </tm:root>
