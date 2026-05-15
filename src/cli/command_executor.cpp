@@ -71,6 +71,24 @@ namespace {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Map a --section value to the ADT URI path segment used by SAP.
+//
+// SAP's ADT exposes the local-include source files (CCDEF/CCIMP/CCAU) at
+// `/oo/classes/<n>/includes/{definitions,implementations,testclasses}`,
+// NOT at `/source/<name>`. Hitting `/source/testclasses` on a class returns
+// HTTP 200 with the MAIN class body — making the failure mode invisible to
+// callers ("section command returned content, must be working").
+//
+// We keep "main" mapped to `source/main` because that *is* the correct URI
+// for the main class body.
+inline std::string SectionUriSegment(const std::string& section) {
+    if (section == "localdefinitions")    return "includes/definitions";
+    if (section == "localimplementations") return "includes/implementations";
+    if (section == "testclasses")          return "includes/testclasses";
+    // "main" (and any future section) keep the source/ prefix.
+    return "source/" + section;
+}
+
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
     "transport", "ddic", "package", "discover"};
@@ -1278,7 +1296,7 @@ int HandleSourceRead(const CommandArgs& args) {
             j["sections"]["main"] = main_source;
             for (const auto& sec : kAllSections) {
                 if (sec == "main") continue;
-                auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
+                auto sec_result = ReadSource(*session, base_uri + "/" + SectionUriSegment(sec), version);
                 if (sec_result.IsErr()) {
                     if (sec_result.Error().category != ErrorCategory::NotFound) {
                         fmt.PrintError(sec_result.Error());
@@ -1309,8 +1327,8 @@ int HandleSourceRead(const CommandArgs& args) {
             if (!main_source.empty() && main_source.back() != '\n') combined << '\n';
             for (const auto& sec : kAllSections) {
                 if (sec == "main") continue;
-                auto sec_result = ReadSource(*session, base_uri + "/source/" + sec, version);
-                combined << "\n*--- source/" << sec << " ---*\n";
+                auto sec_result = ReadSource(*session, base_uri + "/" + SectionUriSegment(sec), version);
+                combined << "\n*--- " << SectionUriSegment(sec) << " ---*\n";
                 if (sec_result.IsErr()) {
                     if (sec_result.Error().category != ErrorCategory::NotFound) {
                         fmt.PrintError(sec_result.Error());
@@ -1346,23 +1364,12 @@ int HandleSourceRead(const CommandArgs& args) {
     // Preserve exact URI when caller passed a full source URI and wants main.
     std::string source_uri = (arg_is_full_source_uri && section == "main")
                              ? arg
-                             : base_uri + "/source/" + section;
+                             : base_uri + "/" + SectionUriSegment(section);
 
     auto result = ReadSource(*session, source_uri, version);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
-    }
-
-    // Warn when a non-main section silently echoes the main source.
-    if (section != "main") {
-        auto main_result = ReadSource(*session, base_uri + "/source/main", version);
-        if (main_result.IsOk() && main_result.Value() == result.Value()) {
-            std::cerr << "Note: source/" << section << " returned the same content as"
-                      << " source/main on this system.\n"
-                      << "      The local class definitions (CCDEF/CCIMP includes) may not\n"
-                      << "      be separately accessible via ADT on this ABAP system.\n";
-        }
     }
 
     if (fmt.IsJsonMode()) {
@@ -1491,7 +1498,7 @@ int HandleSourceEdit(const CommandArgs& args) {
 
     const std::string source_uri = (arg_is_full_source_uri && section == "main")
                                    ? arg
-                                   : base_uri + "/source/" + section;
+                                   : base_uri + "/" + SectionUriSegment(section);
 
     return RunSourceEdit(*session, source_uri, transport, activate, no_write,
                          LaunchEditor, std::cout, std::cerr);
@@ -1547,13 +1554,16 @@ int HandleSourceWrite(const CommandArgs& args) {
     const auto& arg = args.positional[0];
     std::string source_uri;
     if (arg.find("/sap/bc/adt/") == 0) {
-        auto source_pos = arg.find("/source/");
-        if (source_pos != std::string::npos) {
+        // Detect a pre-built section URI (either `/source/...` or `/includes/...`).
+        const bool has_source_segment =
+            arg.find("/source/") != std::string::npos ||
+            arg.find("/includes/") != std::string::npos;
+        if (has_source_segment) {
             // Full source URI given — use as-is.
             source_uri = arg;
         } else {
             // Object URI given — append section.
-            source_uri = arg + "/source/" + section;
+            source_uri = arg + "/" + SectionUriSegment(section);
         }
     } else {
         // Plain name — resolve via search then append section.
@@ -1562,7 +1572,7 @@ int HandleSourceWrite(const CommandArgs& args) {
             fmt.PrintError(resolved.Error());
             return resolved.Error().ExitCode();
         }
-        source_uri = resolved.Value() + "/source/" + section;
+        source_uri = resolved.Value() + "/" + SectionUriSegment(section);
     }
 
     auto handle_str = GetFlag(args, "handle");
