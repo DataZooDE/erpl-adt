@@ -2,6 +2,7 @@
 
 #include "adt_utils.hpp"
 #include "xml_utils.hpp"
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <map>
@@ -316,6 +317,26 @@ Result<std::vector<PackageEntry>, Error> ListPackageContents(
     if (http.status_code != 200) {
         return Result<std::vector<PackageEntry>, Error>::Err(
             Error::FromHttpStatus("ListPackageContents", url, http.status_code, http.body));
+    }
+
+    // SAP's nodestructure endpoint returns HTTP 200 with an empty body for
+    // BOTH "package is empty" and "package does not exist". Disambiguate by
+    // probing the /sap/bc/adt/packages/<n> endpoint when the body is empty
+    // — a 404 there means the package is orphaned (e.g. its TADIR record
+    // was deleted but some objects' package refs were not cleaned up).
+    // Without this check, `package list X` silently returns [] when X is
+    // missing, which is indistinguishable from a real "empty package" — a
+    // #9-class failure mode.
+    if (http.body.empty()) {
+        auto probe = session.Get("/sap/bc/adt/packages/" + UrlEncode(package_name));
+        if (probe.IsOk() && probe.Value().status_code == 404) {
+            return Result<std::vector<PackageEntry>, Error>::Err(Error{
+                "ListPackageContents", url, 404,
+                "Package " + package_name + " does not exist",
+                std::nullopt, ErrorCategory::NotFound});
+        }
+        // Probe failed or returned 200 → assume the package exists but is
+        // genuinely empty; fall through to return the empty vector.
     }
 
     return ParseNodeStructure(http.body);
