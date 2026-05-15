@@ -21,11 +21,34 @@ class TestObject:
         assert "uri" in data
 
     def test_read_object_has_includes(self, cli):
-        """Object structure has includes list."""
+        """Object structure has a non-empty, well-formed includes list.
+
+        A standard SAP class (CL_ABAP_RANDOM) has at least the four canonical
+        includes: definitions, implementations, macros, main. Previously this
+        test only checked that `includes` was a list — an empty list passed
+        while the parser was silently dropping every class:include element
+        because their adtcore:name is empty (identity is in class:includeType).
+        """
         data = cli.run_ok("object", "read",
                           "/sap/bc/adt/oo/classes/cl_abap_random")
         assert "includes" in data
-        assert isinstance(data["includes"], list)
+        includes = data["includes"]
+        assert isinstance(includes, list)
+        assert len(includes) > 0, (
+            "CL_ABAP_RANDOM should expose class:include children "
+            "(definitions/implementations/macros/main); got empty list — "
+            "class:include parser likely regressed."
+        )
+        include_types = {inc.get("include_type") for inc in includes}
+        # Classes always have these four; if any are missing the parser
+        # is silently dropping them.
+        assert {"definitions", "implementations", "main"}.issubset(include_types), (
+            f"Missing canonical class includes; got {include_types}"
+        )
+        # Every entry must populate source_uri (used by source read).
+        for inc in includes:
+            assert inc.get("source_uri"), f"Empty source_uri in {inc}"
+            assert inc.get("include_type"), f"Empty include_type in {inc}"
 
     def test_read_nonexistent_fails(self, cli):
         """Read non-existent class returns non-zero exit code."""

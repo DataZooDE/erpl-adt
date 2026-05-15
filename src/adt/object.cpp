@@ -54,7 +54,11 @@ Result<ObjectStructure, Error> ParseObjectStructure(
         inc.include_type = xml_utils::AttrAny(el, "class:includeType", "includeType");
         inc.source_uri = xml_utils::AttrAny(el, "abapsource:sourceUri", "sourceUri");
 
-        if (!inc.name.empty()) {
+        // Class includes (<class:include>) carry their identity in
+        // class:includeType (e.g. "definitions", "implementations", "macros",
+        // "main") and leave adtcore:name empty. Program/FUGR includes use
+        // adtcore:name. Keep the element if either is set.
+        if (!inc.name.empty() || !inc.include_type.empty()) {
             structure.includes.push_back(std::move(inc));
         }
     }
