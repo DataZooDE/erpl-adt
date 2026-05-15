@@ -312,8 +312,11 @@ TEST_CASE("adt_run_atc: missing uri param", "[mcp][handlers][checks]") {
 
 TEST_CASE("adt_list_transports: happy path", "[mcp][handlers][transport]") {
     MockAdtSession mock;
-    auto xml = LoadFixture("transport/transport_list.xml");
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    // ListTransports performs two GETs: search-configurations, then the tree.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/search_configurations.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_list.xml")}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_list_transports",
@@ -328,17 +331,19 @@ TEST_CASE("adt_list_transports: happy path", "[mcp][handlers][transport]") {
 
 TEST_CASE("adt_list_transports: with user param", "[mcp][handlers][transport]") {
     MockAdtSession mock;
-    auto xml = LoadFixture("transport/transport_list.xml");
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    // No saved configuration → fallback to legacy ?user=USER query.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/search_configurations_empty.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_list.xml")}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_list_transports",
                            {{"user", "ADMIN"}});
     auto j = ParseContent(result);
     CHECK(j.is_array());
-    // Verify the user param was passed to the session.
-    REQUIRE(mock.GetCallCount() == 1);
-    CHECK(mock.GetCalls()[0].path.find("ADMIN") != std::string::npos);
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[1].path.find("ADMIN") != std::string::npos);
 }
 
 // ===========================================================================

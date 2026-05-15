@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configurations:configurations xmlns:configurations="http://www.sap.com/adt/configurations">
+  <configuration:configuration createdBy="DEVELOPER" createdAt="2024-03-20T20:54:51Z" changedBy="DEVELOPER" changedAt="2024-03-20T20:54:51Z" client="001" xmlns:configuration="http://www.sap.com/adt/configuration">
+    <atom:link href="/sap/bc/adt/cts/transportrequests/searchconfiguration/configurations/12FF92D6B4CF1EEEB9DF8310F2FAC2D2" rel="http://www.sap.com/adt/categories/configurations" type="application/vnd.sap.adt.configuration.v1+xml" etag="20240320205451" xmlns:atom="http://www.w3.org/2005/Atom"/>
+  </configuration:configuration>
+</configurations:configurations>

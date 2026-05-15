@@ -28,16 +28,27 @@ std::string LoadFixture(const std::string& filename) {
     return ss.str();
 }
 
+// ListTransports does two GETs: (1) search-configurations, (2) transport tree.
+// This helper enqueues both responses on the mock in that order.
+void EnqueueListTransportsResponses(MockAdtSession& mock,
+                                    const std::string& configs_xml,
+                                    const std::string& transports_xml) {
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, configs_xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, transports_xml}));
+}
+
 } // anonymous namespace
 
 // ===========================================================================
 // ListTransports
 // ===========================================================================
 
-TEST_CASE("ListTransports: parses transport list", "[adt][transport]") {
+TEST_CASE("ListTransports: parses nested transport tree", "[adt][transport]") {
     MockAdtSession mock;
-    auto xml = LoadFixture("transport/transport_list.xml");
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    EnqueueListTransportsResponses(
+        mock,
+        LoadFixture("transport/search_configurations.xml"),
+        LoadFixture("transport/transport_list.xml"));
 
     auto result = ListTransports(mock, "DEVELOPER");
     REQUIRE(result.IsOk());
@@ -45,30 +56,85 @@ TEST_CASE("ListTransports: parses transport list", "[adt][transport]") {
     auto& transports = result.Value();
     REQUIRE(transports.size() == 3);
 
+    // Order is iteration order of the tree (modifiable first, then released).
     CHECK(transports[0].number == "NPLK900001");
     CHECK(transports[0].description == "Implement feature X");
     CHECK(transports[0].owner == "DEVELOPER");
     CHECK(transports[0].status == "modifiable");
     CHECK(transports[0].target == "NPL");
 
-    CHECK(transports[1].number == "NPLK900002");
-    CHECK(transports[1].status == "released");
+    CHECK(transports[1].number == "NPLK900003");
+    CHECK(transports[1].status == "modifiable");
+
+    CHECK(transports[2].number == "NPLK900002");
+    CHECK(transports[2].status == "released");
 }
 
-TEST_CASE("ListTransports: sends GET with user parameter", "[adt][transport]") {
+TEST_CASE("ListTransports: queries configUri when configuration exists", "[adt][transport]") {
     MockAdtSession mock;
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
-        {200, {}, "<tm:root xmlns:tm=\"http://www.sap.com/cts/transports\"/>"}));
+    EnqueueListTransportsResponses(
+        mock,
+        LoadFixture("transport/search_configurations.xml"),
+        LoadFixture("transport/transport_list.xml"));
+
+    auto result = ListTransports(mock, "DEVELOPER");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[0].path ==
+          "/sap/bc/adt/cts/transportrequests/searchconfiguration/configurations");
+    CHECK(mock.GetCalls()[1].path.find("configUri=") != std::string::npos);
+    CHECK(mock.GetCalls()[1].path.find("targets=true") != std::string::npos);
+}
+
+TEST_CASE("ListTransports: filters by owner when using configUri", "[adt][transport]") {
+    MockAdtSession mock;
+    // Real response has DEVELOPER as owner. We pass a different user.
+    EnqueueListTransportsResponses(
+        mock,
+        LoadFixture("transport/search_configurations.xml"),
+        LoadFixture("transport/transport_list.xml"));
+
+    auto result = ListTransports(mock, "ADMIN");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().empty());
+}
+
+TEST_CASE("ListTransports: falls back to user=USER when no configuration exists",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    EnqueueListTransportsResponses(
+        mock,
+        LoadFixture("transport/search_configurations_empty.xml"),
+        LoadFixture("transport/transport_list.xml"));
 
     auto result = ListTransports(mock, "ADMIN");
     REQUIRE(result.IsOk());
 
-    REQUIRE(mock.GetCallCount() == 1);
-    CHECK(mock.GetCalls()[0].path.find("user=ADMIN") != std::string::npos);
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[1].path.find("user=ADMIN") != std::string::npos);
+    CHECK(mock.GetCalls()[1].path.find("configUri=") == std::string::npos);
+    // No owner filter applied in fallback mode — all 3 entries pass through.
+    CHECK(result.Value().size() == 3);
 }
 
-TEST_CASE("ListTransports: HTTP error propagated", "[adt][transport]") {
+TEST_CASE("ListTransports: tolerates failing search-config lookup", "[adt][transport]") {
     MockAdtSession mock;
+    // Search-config call fails — fall back to legacy ?user= query.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "", std::nullopt, "timeout", std::nullopt}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_list.xml")}));
+
+    auto result = ListTransports(mock, "DEVELOPER");
+    REQUIRE(result.IsOk());
+    CHECK(mock.GetCalls()[1].path.find("user=DEVELOPER") != std::string::npos);
+}
+
+TEST_CASE("ListTransports: HTTP error on tree fetch propagated", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/search_configurations.xml")}));
     mock.EnqueueGet(Result<HttpResponse, Error>::Err(
         Error{"Get", "", std::nullopt, "timeout", std::nullopt}));
 
