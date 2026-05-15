@@ -5,6 +5,13 @@ import subprocess
 import sys
 
 
+# Default subprocess timeout for a single CLI invocation. 5 minutes covers
+# wide-fanout BW commands like `bw export-area 0BCT_CB` against a freshly
+# warmed BW system; the previous 120 s ceiling was too tight for the SAP
+# BI Content infoareas (hundreds of IOBJs + xref + provenance enrichment).
+DEFAULT_TIMEOUT_SEC = 300
+
+
 def _mask_password(cmd):
     """Replace --password value with *** for safe logging."""
     masked = list(cmd)
@@ -30,7 +37,7 @@ class CliRunner:
             "--json=true",
         ]
 
-    def run(self, *args, session_file=None, timeout=120, extra_flags=None):
+    def run(self, *args, session_file=None, timeout=DEFAULT_TIMEOUT_SEC, extra_flags=None):
         """Run a CLI command and return CompletedProcess."""
         cmd = [self.binary] + self.base_args
         if session_file:
@@ -49,7 +56,7 @@ class CliRunner:
             print(f"  -> exit {result.returncode}", file=sys.stderr)
         return result
 
-    def run_raw(self, *args, timeout=120, env=None):
+    def run_raw(self, *args, timeout=DEFAULT_TIMEOUT_SEC, env=None):
         """Run the binary without --json=true and without base connection args.
 
         Useful for testing --version, --help, and --password-env.
@@ -65,7 +72,7 @@ class CliRunner:
             print(f"  -> exit {result.returncode}", file=sys.stderr)
         return result
 
-    def run_no_json(self, *args, session_file=None, timeout=120):
+    def run_no_json(self, *args, session_file=None, timeout=DEFAULT_TIMEOUT_SEC):
         """Run a CLI command without --json=true (human-readable output)."""
         cmd = [self.binary]
         # Add base args but skip --json=true
