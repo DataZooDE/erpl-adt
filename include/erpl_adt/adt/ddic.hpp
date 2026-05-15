@@ -53,6 +53,8 @@ struct PackageTreeOptions {
 struct TableField {
     std::string name;
     std::string type;          // data element or built-in type
+    std::string abap_type;     // ABAP primitive: CHAR, CLNT, NUMC, DATS, CURR, CUKY, INT4…
+    std::string check_table;   // FK target table, e.g. "T000", "SCARR" (empty if none)
     std::string description;
     bool key_field = false;
     std::optional<int> length;    // field length (chars/bytes depending on type)

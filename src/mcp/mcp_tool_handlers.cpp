@@ -352,8 +352,10 @@ ToolResult HandleReadTable(IAdtSession& session,
                              {"type", f.type},
                              {"description", f.description},
                              {"key_field", f.key_field}};
-        if (f.length.has_value()) fj["length"] = *f.length;
-        if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
+        if (f.length.has_value())   fj["length"]      = *f.length;
+        if (f.decimals.has_value()) fj["decimals"]    = *f.decimals;
+        if (!f.abap_type.empty())   fj["abap_type"]   = f.abap_type;
+        if (!f.check_table.empty()) fj["check_table"] = f.check_table;
         fields.push_back(std::move(fj));
     }
     j["fields"] = fields;

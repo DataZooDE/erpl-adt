@@ -469,15 +469,20 @@ namespace {
 std::string MakeDataElementXml(const std::string& name,
                                 const std::string& description,
                                 int length,
-                                int decimals = 0) {
+                                int decimals = 0,
+                                const std::string& abap_type = "") {
+    std::string dtel_body =
+        "<dtel:dataTypeLength>" + std::to_string(length) + "</dtel:dataTypeLength>"
+        "<dtel:dataTypeDecimals>" + std::to_string(decimals) + "</dtel:dataTypeDecimals>";
+    if (!abap_type.empty())
+        dtel_body += "<dtel:dataType>" + abap_type + "</dtel:dataType>";
     return "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
            "<blue:wbobj adtcore:name=\"" + name + "\""
            " adtcore:description=\"" + description + "\""
            " xmlns:blue=\"http://www.sap.com/wbobj/dictionary/dtel\""
            " xmlns:adtcore=\"http://www.sap.com/adt/core\">"
            "<dtel:dataElement xmlns:dtel=\"http://www.sap.com/adt/dictionary/dataelements\">"
-           "<dtel:dataTypeLength>" + std::to_string(length) + "</dtel:dataTypeLength>"
-           "<dtel:dataTypeDecimals>" + std::to_string(decimals) + "</dtel:dataTypeDecimals>"
+           + dtel_body +
            "</dtel:dataElement>"
            "</blue:wbobj>";
 }
@@ -675,4 +680,86 @@ TEST_CASE("GetTableDefinition: blueSource DDL with abap built-in dotted types", 
 
     CHECK(fields[4].name == "counter");
     CHECK(fields[4].type == "abap.int4");
+}
+
+TEST_CASE("GetTableDefinition: blueSource delivery_class parsed from DDL annotation",
+          "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    auto ddl = LoadFixture("ddic/table_sflight_source.abap");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+
+    auto result = GetTableDefinition(mock, "SFLIGHT", /*resolve_types=*/false);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().delivery_class == "A");
+}
+
+TEST_CASE("GetTableDefinition: blueSource DDL without deliveryClass leaves it empty",
+          "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    std::string ddl =
+        "define table ztest {\n"
+        "  key mandt : s_mandt not null;\n"
+        "}\n";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+
+    auto result = GetTableDefinition(mock, "ZTEST", /*resolve_types=*/false);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().delivery_class.empty());
+}
+
+TEST_CASE("GetTableDefinition: blueSource DDL source parses check_table from FK clause",
+          "[adt][ddic]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    auto ddl = LoadFixture("ddic/table_sflight_source.abap");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+
+    auto result = GetTableDefinition(mock, "SFLIGHT", /*resolve_types=*/false);
+    REQUIRE(result.IsOk());
+    const auto& fields = result.Value().fields;
+    REQUIRE(fields.size() == 14);
+
+    CHECK(fields[0].name == "mandt");
+    CHECK(fields[0].check_table == "T000");   // with foreign key [0..*,1] t000
+
+    CHECK(fields[1].name == "carrid");
+    CHECK(fields[1].check_table == "SCARR");  // with foreign key scarr (no brackets)
+
+    CHECK(fields[2].name == "connid");
+    CHECK(fields[2].check_table == "SPFLI");
+
+    CHECK(fields[3].name == "fldate");
+    CHECK(fields[3].check_table.empty());     // no FK
+
+    CHECK(fields[5].name == "currency");
+    CHECK(fields[5].check_table == "SCURX");
+
+    CHECK(fields[6].name == "planetype");
+    CHECK(fields[6].check_table == "SAPLANE");
+}
+
+TEST_CASE("GetTableDefinition: resolve_types extracts abap_type from data element",
+          "[adt][ddic][resolve]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    std::string ddl =
+        "define table ztest {\n"
+        "  key carrid : s_carr_id not null;\n"
+        "}\n";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, MakeDataElementXml("S_CARR_ID", "Airline code", 3, 0, "CHAR")}));
+
+    auto result = GetTableDefinition(mock, "ZTEST", /*resolve_types=*/true);
+    REQUIRE(result.IsOk());
+    const auto& fields = result.Value().fields;
+    REQUIRE(fields.size() == 1);
+    CHECK(fields[0].abap_type == "CHAR");
+    CHECK(fields[0].description == "Airline code");
 }

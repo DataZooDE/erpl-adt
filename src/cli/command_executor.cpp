@@ -2101,39 +2101,57 @@ int HandleDdicTable(const CommandArgs& args) {
                                  {"type", f.type},
                                  {"description", f.description},
                                  {"key_field", f.key_field}};
-            if (f.length.has_value()) fj["length"] = *f.length;
-            if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
+            if (f.length.has_value())    fj["length"]      = *f.length;
+            if (f.decimals.has_value())  fj["decimals"]    = *f.decimals;
+            if (!f.abap_type.empty())    fj["abap_type"]   = f.abap_type;
+            if (!f.check_table.empty())  fj["check_table"] = f.check_table;
             fields.push_back(std::move(fj));
         }
         j["fields"] = fields;
         fmt.PrintJson(j.dump());
     } else {
-        std::cout << table.name << " - " << table.description << "\n";
+        if (!table.delivery_class.empty())
+            std::cout << table.name << " [" << table.delivery_class << "] - " << table.description << "\n";
+        else
+            std::cout << table.name << " - " << table.description << "\n";
+
+        // Row columns: 0=Field 1=DataElem 2=AbapType 3=Key 4=Length 5=Description 6=CheckTable
         std::vector<std::vector<std::string>> rows;
         for (const auto& f : table.fields) {
             std::string len_str;
             if (f.length.has_value()) {
                 len_str = std::to_string(*f.length);
-                if (f.decimals.has_value()) {
+                if (f.decimals.has_value())
                     len_str += "," + std::to_string(*f.decimals);
-                }
             }
-            rows.push_back({f.name, f.type, f.key_field ? "Y" : "", len_str, f.description});
+            rows.push_back({f.name, f.type, f.abap_type,
+                            f.key_field ? "Y" : "", len_str,
+                            f.description, f.check_table});
         }
-        bool has_length = std::any_of(rows.begin(), rows.end(),
-            [](const auto& r) { return r.size() > 3 && !r[3].empty(); });
-        bool has_desc = std::any_of(rows.begin(), rows.end(),
-            [](const auto& r) { return r.size() > 4 && !r[4].empty(); });
-        std::vector<size_t> keep = {0, 1, 2};
-        if (has_length) keep.push_back(3);
-        if (has_desc)   keep.push_back(4);
-        std::vector<std::string> all_headers = {"Field", "Type", "Key", "Length", "Description"};
+        bool has_abap_type   = std::any_of(rows.begin(), rows.end(),
+            [](const auto& r) { return !r[2].empty(); });
+        bool has_length      = std::any_of(rows.begin(), rows.end(),
+            [](const auto& r) { return !r[4].empty(); });
+        bool has_desc        = std::any_of(rows.begin(), rows.end(),
+            [](const auto& r) { return !r[5].empty(); });
+        bool has_check_table = std::any_of(rows.begin(), rows.end(),
+            [](const auto& r) { return !r[6].empty(); });
+
+        std::vector<size_t> keep = {0, 1};
+        if (has_abap_type)   keep.push_back(2);
+        keep.push_back(3);  // Key always shown
+        if (has_length)      keep.push_back(4);
+        if (has_desc)        keep.push_back(5);
+        if (has_check_table) keep.push_back(6);
+
+        std::vector<std::string> all_headers = {
+            "Field", "DataElem", "AbapType", "Key", "Length", "Description", "CheckTable"};
         std::vector<std::string> eff_headers;
-        for (auto i : keep) eff_headers.push_back(all_headers[i]);
+        for (auto idx : keep) eff_headers.push_back(all_headers[idx]);
         std::vector<std::vector<std::string>> eff_rows;
         for (const auto& row : rows) {
             std::vector<std::string> r;
-            for (auto i : keep) r.push_back(row[i]);
+            for (auto idx : keep) r.push_back(row[idx]);
             eff_rows.push_back(std::move(r));
         }
         fmt.PrintTable(eff_headers, eff_rows);
