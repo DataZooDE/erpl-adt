@@ -53,19 +53,31 @@ class TestQualityGate:
 
     @pytest.mark.order(2)
     def test_step2_verify_transport_list(self, e2e_context):
-        """Step 2: Verify transport list command works and transport format is valid."""
+        """Step 2: transport list must surface the transport created in step 1.
+
+        Previously this test only checked `isinstance(data, list)` and
+        commented "may be empty on trial systems" — but step 1 had just
+        created a transport, so the list MUST contain it. The lenient
+        assertion is what allowed issue #9 to ship undetected.
+        """
         ctx = e2e_context
         assert ctx.get("transport"), "Step 1 must run first"
-        # Verify the created transport has a valid format
         assert TRANSPORT_PATTERN.match(ctx["transport"])
-        # Verify transport list command succeeds (may be empty on trial systems)
+
         data = ctx["cli"].run_ok("transport", "list", "--user", "DEVELOPER")
         assert isinstance(data, list)
-        # If the list has entries, verify structure
-        if data:
-            t = data[0]
-            assert "number" in t
-            assert "owner" in t
+        assert len(data) > 0, (
+            "transport list is empty even though step 1 created "
+            f"transport {ctx['transport']} — likely an issue-#9 regression."
+        )
+        numbers = [t.get("number") for t in data]
+        assert ctx["transport"] in numbers, (
+            f"Created transport {ctx['transport']} not in list. "
+            f"Got: {numbers}"
+        )
+        entry = next(t for t in data if t.get("number") == ctx["transport"])
+        assert entry.get("owner") == "DEVELOPER"
+        assert entry.get("status"), f"Empty status: {entry}"
 
     @pytest.mark.order(3)
     def test_step3_create_class_with_source(self, e2e_context):
