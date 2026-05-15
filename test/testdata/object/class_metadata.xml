@@ -11,13 +11,16 @@
   class:visibility="public" class:category="">
   <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source"
     type="text/plain" etag="202601151030001"/>
-  <class:include adtcore:name="CLAS/OC" class:includeType="main"
-    adtcore:type="CLAS/OC" abapsource:sourceUri="source/main">
+  <!-- Real SAP class:include elements carry an EMPTY adtcore:name —
+       their identity is in class:includeType. The previous fixture used
+       a non-empty name and masked an "empty includes" bug. -->
+  <class:include adtcore:name="" class:includeType="main"
+    adtcore:type="CLAS/I" abapsource:sourceUri="source/main">
     <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source"
       type="text/plain"/>
   </class:include>
-  <class:include adtcore:name="CLAS/OCI" class:includeType="definitions"
-    adtcore:type="CLAS/OCI" abapsource:sourceUri="includes/definitions">
+  <class:include adtcore:name="" class:includeType="definitions"
+    adtcore:type="CLAS/I" abapsource:sourceUri="includes/definitions">
     <atom:link href="includes/definitions" rel="http://www.sap.com/adt/relations/source"
       type="text/plain"/>
   </class:include>
