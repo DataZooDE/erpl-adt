@@ -75,6 +75,48 @@ TEST_CASE("ListPackageContents: sends POST with correct params", "[adt][ddic]") 
     CHECK(call.path.find("withShortDescriptions=true") != std::string::npos);
 }
 
+TEST_CASE("ListPackageContents: empty-body + 404 on package probe = NotFound",
+          "[adt][ddic]") {
+    // SAP's nodestructure returns HTTP 200 with an empty body for BOTH
+    // "package empty" and "package missing". When empty, we probe
+    // /sap/bc/adt/packages/<n>; a 404 there means the package is missing.
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+
+    auto result = ListPackageContents(mock, "ZGHOST_PKG");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(result.Error().message.find("does not exist") != std::string::npos);
+    CHECK(result.Error().message.find("ZGHOST_PKG") != std::string::npos);
+}
+
+TEST_CASE("ListPackageContents: empty-body + 200 on package probe = empty list",
+          "[adt][ddic]") {
+    // Genuinely empty but existing package — must still return [].
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<package/>"}));
+
+    auto result = ListPackageContents(mock, "ZEMPTY_PKG");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().empty());
+}
+
+TEST_CASE("ListPackageContents: empty-body + probe error = best-effort empty list",
+          "[adt][ddic]") {
+    // If the probe fails (transient network), don't pretend the package is
+    // missing — fall through and return the empty list we already parsed.
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "", std::nullopt, "transient", std::nullopt}));
+
+    auto result = ListPackageContents(mock, "ZSOME_PKG");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().empty());
+}
+
 TEST_CASE("ListPackageContents: HTTP error propagated", "[adt][ddic]") {
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
