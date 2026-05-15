@@ -4,12 +4,15 @@
 #include "xml_utils.hpp"
 #include <tinyxml2.h>
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <queue>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace erpl_adt {
 
@@ -90,7 +93,8 @@ bool IsBlueSource(std::string_view xml) {
 // Handles lines of the form:
 //   key fieldname : TypeName [not null] ...
 //       fieldname : TypeName [not null] ...
-// Skips annotations (@...), define/}, and foreign key continuation lines.
+// Also captures "with foreign key [cardinality] TABLE" lines that immediately
+// follow a field declaration (possibly separated by annotation lines).
 std::vector<TableField> ParseFieldsFromDdl(const std::string& ddl) {
     std::vector<TableField> fields;
     // Matches: optional "key " prefix, field name, colon, type name.
@@ -99,11 +103,21 @@ std::vector<TableField> ParseFieldsFromDdl(const std::string& ddl) {
     static const std::regex kFieldRe(
         R"(^\s*(key\s+)?([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\([^)]*\))?))",
         std::regex::icase);
+    // Matches: "with foreign key [optional-cardinality] TABLE_NAME"
+    static const std::regex kFkRe(
+        R"(^\s*with\s+foreign\s+key\s+(?:\[[^\]]*\]\s+)?([a-zA-Z_]\w*))",
+        std::regex::icase);
 
-    std::istringstream stream(ddl);
-    std::string line;
-    while (std::getline(stream, line)) {
-        // Skip annotation lines and lines that clearly aren't field declarations
+    // Collect lines to allow look-ahead.
+    std::vector<std::string> lines;
+    {
+        std::istringstream stream(ddl);
+        std::string line;
+        while (std::getline(stream, line)) lines.push_back(std::move(line));
+    }
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const auto& line = lines[i];
         if (line.empty()) continue;
         auto first = line.find_first_not_of(" \t");
         if (first == std::string::npos) continue;
@@ -123,6 +137,24 @@ std::vector<TableField> ParseFieldsFromDdl(const std::string& ddl) {
         field.name = name;
         field.type = m[3].str();
         field.key_field = m[1].matched;  // "key " prefix present
+
+        // Look-ahead for a "with foreign key TABLE" clause, skipping annotations.
+        for (size_t j = i + 1; j < lines.size(); ++j) {
+            const auto& next = lines[j];
+            if (next.empty()) continue;
+            auto nfirst = next.find_first_not_of(" \t");
+            if (nfirst == std::string::npos) continue;
+            if (next[nfirst] == '@') continue;  // skip annotations between field and FK line
+            std::smatch fm;
+            if (std::regex_search(next, fm, kFkRe)) {
+                std::string tbl = fm[1].str();
+                std::transform(tbl.begin(), tbl.end(), tbl.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                field.check_table = std::move(tbl);
+            }
+            break;  // first non-blank non-annotation line decides
+        }
+
         fields.push_back(std::move(field));
     }
     return fields;
@@ -213,11 +245,12 @@ std::pair<std::optional<int>, std::optional<int>> ParseAbapBuiltinParams(
     return {length, decimals};
 }
 
-// Parse a data element XML response and return length, decimals, description.
+// Parse a data element XML response and return length, decimals, description, abap_type.
 struct DataElementInfo {
     std::optional<int> length;
     std::optional<int> decimals;
     std::string description;
+    std::string abap_type;
 };
 
 DataElementInfo ParseDataElementXml(const std::string& xml) {
@@ -246,6 +279,8 @@ DataElementInfo ParseDataElementXml(const std::string& xml) {
             if (v > 0) info.decimals = v;
         } catch (...) {}
     }
+    auto type_str = GetText(dtel, "dtel:dataType");
+    if (!type_str.empty()) info.abap_type = type_str;
     return info;
 }
 
@@ -289,9 +324,24 @@ void EnrichFieldsFromDataElements(IAdtSession& session,
                 f.length      = it->second.length;
                 f.decimals    = it->second.decimals;
                 f.description = it->second.description;
+                f.abap_type   = it->second.abap_type;
             }
         }
     }
+}
+
+// Extract the single-letter delivery class from @AbapCatalog.deliveryClass : #X.
+std::string ParseDeliveryClassFromDdl(const std::string& ddl) {
+    static const std::regex kRe(
+        R"(@AbapCatalog\.deliveryClass\s*:\s*#([A-Za-z]))", std::regex::icase);
+    std::smatch m;
+    if (std::regex_search(ddl, m, kRe)) {
+        std::string s = m[1].str();
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return s;
+    }
+    return "";
 }
 
 } // anonymous namespace
@@ -418,6 +468,9 @@ Result<TableInfo, Error> GetTableDefinition(
         if (src_response.IsOk() && src_response.Value().status_code == 200) {
             auto info = std::move(result).Value();
             info.fields = ParseFieldsFromDdl(src_response.Value().body);
+            if (info.delivery_class.empty()) {
+                info.delivery_class = ParseDeliveryClassFromDdl(src_response.Value().body);
+            }
             if (resolve_types) {
                 EnrichFieldsFromDataElements(session, info.fields);
             }
