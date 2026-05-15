@@ -17,12 +17,21 @@ class TestSource:
         assert "CLASS" in data["source"].upper() or "class" in data["source"]
 
     def test_read_source_inactive(self, test_class, cli):
-        """source read with --version inactive succeeds or returns error."""
+        """source read with --version inactive returns 0 or a proper not-found error.
+
+        Previously asserted `isinstance(result.returncode, int)` which is
+        always true — degenerate. We now require either success (an inactive
+        version is present) or one of the known non-success codes; an internal
+        error (99) or signal-kill (negative) is not acceptable.
+        """
         uri = test_class["uri"] + "/source/main"
         result = cli.run("source", "read", uri, "--version", "inactive")
-        # 0 = inactive version found, non-zero = no inactive version.
-        # Both outcomes are valid; we just verify the command doesn't crash.
-        assert isinstance(result.returncode, int)
+        # 0 = inactive version present; 2 = no inactive version (not found).
+        # Anything else (especially 99 = internal) is a regression.
+        assert result.returncode in (0, 2), (
+            f"Unexpected exit code {result.returncode}; "
+            f"stderr: {result.stderr[:300]}"
+        )
 
     def test_read_nonexistent_fails(self, cli):
         """source read of non-existent object returns error."""
@@ -58,11 +67,17 @@ class TestSource:
         finally:
             os.unlink(src_file)
 
-        # Verify: read back.
+        # Verify: read back. The source key MUST be present and contain
+        # the method we just wrote — a missing "source" key would mean
+        # the read silently returned an empty payload.
         read_data = cli.run_ok("source", "read", source_uri,
                                "--version", "inactive")
-        if "source" in read_data:
-            assert "get_value" in read_data["source"].lower()
+        assert "source" in read_data, (
+            f"source read returned no 'source' key: {read_data}"
+        )
+        assert "get_value" in read_data["source"].lower(), (
+            f"Written method missing from source read-back: {read_data['source'][:300]}"
+        )
 
     def test_syntax_check(self, test_class, cli):
         """source check returns syntax check results."""
