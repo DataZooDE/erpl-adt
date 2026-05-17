@@ -7,9 +7,13 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <future>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <utility>
 
 #ifdef __linux__
 #include <dirent.h>
@@ -200,7 +204,17 @@ std::future<void> Telemetry::TrackCommand(const std::string& group,
     if (!g_enabled.load()) {
         return {};
     }
-    return std::async(std::launch::async, SendToPostHog, group, action);
+    // Detached worker, not std::async: a future returned by std::async with
+    // launch::async has a special destructor that blocks until the task
+    // completes, which would defeat the wait_for(2s) in main() and stretch
+    // CLI exit to the full HTTP timeout on slow/unreachable endpoints.
+    auto promise = std::make_shared<std::promise<void>>();
+    auto future = promise->get_future();
+    std::thread([promise = std::move(promise), group, action]() {
+        SendToPostHog(group, action);
+        promise->set_value();
+    }).detach();
+    return future;
 }
 
 // static
