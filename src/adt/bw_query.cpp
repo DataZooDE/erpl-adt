@@ -49,12 +49,13 @@ bool IsQueryFamilyType(const std::string& type) {
     return kAllowed.count(type) > 0;
 }
 
-std::string BuildObjectPath(const std::string& component_type,
+std::string BuildObjectPath(const std::string& /*component_type*/,
                             const std::string& name,
                             const std::string& version) {
-    // Query-family objects are hosted on the query endpoint.
-    const auto endpoint = (component_type == "QUERY") ? "query" : "query";
-    return std::string(kBwModelingBase) + endpoint + "/" + ToLower(name) + "/" + version;
+    // Every query-family component (QUERY, VARIABLE, RKF, CKF, FILTER,
+    // STRUCTURE) is hosted on the same /query/ endpoint; only the Accept
+    // media type differs per type (see AcceptCandidates).
+    return std::string(kBwModelingBase) + "query/" + ToLower(name) + "/" + version;
 }
 
 std::string DefaultAccept(const std::string& component_type) {
