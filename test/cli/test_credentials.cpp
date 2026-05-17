@@ -255,3 +255,53 @@ TEST_CASE("IsNewStyleCommand: logout is NOT a new-style command",
     const char* argv[] = {"erpl-adt", "logout"};
     CHECK_FALSE(IsNewStyleCommand(2, argv));
 }
+
+// ===========================================================================
+// CredentialsFileHasLooseMode — POSIX permission audit
+// ===========================================================================
+
+#ifndef _WIN32
+#include <sys/stat.h>
+
+TEST_CASE("CredentialsFileHasLooseMode: chmod 600 is tight", "[cli][credentials]") {
+    auto tmp = MakeTempDir();
+    auto path = (tmp / "creds_600.json").string();
+    {
+        std::ofstream ofs(path);
+        ofs << "{}";
+    }
+    chmod(path.c_str(), S_IRUSR | S_IWUSR);
+    CHECK_FALSE(CredentialsFileHasLooseMode(path));
+    std::remove(path.c_str());
+}
+
+TEST_CASE("CredentialsFileHasLooseMode: chmod 644 is loose", "[cli][credentials]") {
+    auto tmp = MakeTempDir();
+    auto path = (tmp / "creds_644.json").string();
+    {
+        std::ofstream ofs(path);
+        ofs << "{}";
+    }
+    chmod(path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    CHECK(CredentialsFileHasLooseMode(path));
+    std::remove(path.c_str());
+}
+
+TEST_CASE("CredentialsFileHasLooseMode: chmod 640 group-readable is loose",
+          "[cli][credentials]") {
+    auto tmp = MakeTempDir();
+    auto path = (tmp / "creds_640.json").string();
+    {
+        std::ofstream ofs(path);
+        ofs << "{}";
+    }
+    chmod(path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP);
+    CHECK(CredentialsFileHasLooseMode(path));
+    std::remove(path.c_str());
+}
+
+TEST_CASE("CredentialsFileHasLooseMode: nonexistent file returns false",
+          "[cli][credentials]") {
+    CHECK_FALSE(CredentialsFileHasLooseMode("/tmp/erpl_adt_does_not_exist_xyz"));
+}
+#endif

@@ -73,6 +73,14 @@ int HandleLogin(int argc, const char* const* argv);
 // Handle `erpl-adt logout` — delete .adt.creds.
 int HandleLogout();
 
+// Returns true if the file at `path` has group- or other-readable permissions
+// on POSIX (.adt.creds is supposed to be chmod 600). Always returns false on
+// Windows (no equivalent POSIX permission model).
+//
+// Exposed for unit testing; production callers use it to emit a warning when
+// loading a creds file with weak permissions.
+[[nodiscard]] bool CredentialsFileHasLooseMode(const std::string& path);
+
 // ---------------------------------------------------------------------------
 // Outcome reporters — pure logic extracted for direct unit-testing.
 //

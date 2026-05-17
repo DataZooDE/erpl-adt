@@ -183,6 +183,11 @@ bool SaveCredentials(const SavedCredentials& creds) {
 }
 
 std::optional<SavedCredentials> LoadCredentials() {
+    if (CredentialsFileHasLooseMode(kCredsFile)) {
+        std::cerr << "Warning: " << kCredsFile
+                  << " is readable by group or other; run "
+                  << "'chmod 600 " << kCredsFile << "' to secure it.\n";
+    }
     std::ifstream ifs(kCredsFile);
     if (!ifs) {
         return std::nullopt;
@@ -205,6 +210,26 @@ std::optional<SavedCredentials> LoadCredentials() {
 bool DeleteCredentials() {
     return std::remove(kCredsFile) == 0;
 }
+
+}  // close anonymous namespace temporarily to define the exported helper.
+
+bool CredentialsFileHasLooseMode(const std::string& path) {
+#ifdef _WIN32
+    (void)path;
+    return false;
+#else
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) {
+        return false;  // file doesn't exist (or unreadable) — caller decides.
+    }
+    // Loose if any group/other read or write bit is set. Owner-only writes
+    // imply chmod 600/700 family which is fine.
+    const mode_t loose_bits = S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+    return (st.st_mode & loose_bits) != 0;
+#endif
+}
+
+namespace {  // re-open anonymous namespace for the rest of the file.
 
 std::string GetFlag(const CommandArgs& args, const std::string& key,
                     const std::string& default_val = "") {
