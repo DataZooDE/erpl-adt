@@ -27,7 +27,18 @@ void McpServer::Run() {
             continue;
         }
 
-        auto response = HandleMessage(message);
+        std::optional<nlohmann::json> response;
+        try {
+            response = HandleMessage(message);
+        } catch (const nlohmann::json::exception& e) {
+            // Defense in depth: any unguarded json type-error from a handler
+            // must not terminate the long-running server.
+            auto id = (message.is_object() && message.contains("id"))
+                          ? message["id"]
+                          : nlohmann::json(nullptr);
+            response = MakeError(id, -32603,
+                                 std::string("Internal error: ") + e.what());
+        }
         if (response) {
             out_ << response->dump() << "\n";
             out_.flush();
@@ -37,20 +48,43 @@ void McpServer::Run() {
 
 std::optional<nlohmann::json> McpServer::HandleMessage(
     const nlohmann::json& message) {
-    // Check for JSON-RPC 2.0.
-    if (!message.contains("jsonrpc") || message["jsonrpc"] != "2.0") {
-        if (message.contains("id")) {
-            return MakeError(message["id"], -32600, "Invalid JSON-RPC version");
-        }
-        return std::nullopt;
+    // Reject anything that is not a JSON object — top-level batches not supported.
+    if (!message.is_object()) {
+        return MakeError(nullptr, -32600,
+                         "Invalid request: message must be an object");
     }
 
-    // Notifications have no "id".
+    // "id" must be present and either string/number/null for requests;
+    // missing "id" denotes a notification.
     bool is_notification = !message.contains("id");
-    auto method = message.value("method", "");
-    auto params = message.value("params", nlohmann::json::object());
 
-    // Handle notifications (no response).
+    // jsonrpc must be the literal string "2.0".
+    if (!message.contains("jsonrpc") || !message["jsonrpc"].is_string() ||
+        message["jsonrpc"].get<std::string>() != "2.0") {
+        if (is_notification) return std::nullopt;
+        return MakeError(message["id"], -32600, "Invalid JSON-RPC version");
+    }
+
+    // method must be a string.
+    if (!message.contains("method") || !message["method"].is_string()) {
+        if (is_notification) return std::nullopt;
+        return MakeError(message["id"], -32600,
+                         "Invalid request: 'method' must be a string");
+    }
+    auto method = message["method"].get<std::string>();
+
+    // params is optional; if present it must be an object (we don't accept
+    // positional params).
+    nlohmann::json params = nlohmann::json::object();
+    if (message.contains("params")) {
+        if (!message["params"].is_object()) {
+            if (is_notification) return std::nullopt;
+            return MakeError(message["id"], -32602,
+                             "Invalid params: 'params' must be an object");
+        }
+        params = message["params"];
+    }
+
     if (is_notification) {
         // notifications/initialized — acknowledge, no response.
         return std::nullopt;
@@ -105,12 +139,24 @@ nlohmann::json McpServer::HandleToolsCall(
     if (!params.contains("name")) {
         return MakeError(id, -32602, "Missing 'name' parameter");
     }
+    if (!params["name"].is_string()) {
+        return MakeError(id, -32602, "'name' parameter must be a string");
+    }
 
     auto tool_name = params["name"].get<std::string>();
-    auto arguments = params.value("arguments", nlohmann::json::object());
+    nlohmann::json arguments = nlohmann::json::object();
+    if (params.contains("arguments")) {
+        if (!params["arguments"].is_object()) {
+            return MakeError(id, -32602,
+                             "'arguments' parameter must be an object");
+        }
+        arguments = params["arguments"];
+    }
 
     if (!registry_.HasTool(tool_name)) {
-        return MakeError(id, -32602, "Unknown tool: " + tool_name);
+        // JSON-RPC 2.0: -32601 is Method not found. An unknown tool is the
+        // tool-namespace equivalent of an unknown method.
+        return MakeError(id, -32601, "Unknown tool: " + tool_name);
     }
 
     auto result = registry_.Execute(tool_name, arguments);
