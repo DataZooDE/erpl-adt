@@ -46,7 +46,7 @@ TEST_CASE("BuildPackageCreateXml: produces valid XML with correct structure", "[
     auto pkg = PackageName::Create("ZTEST_PKG");
     REQUIRE(pkg.IsOk());
 
-    auto result = codec.BuildPackageCreateXml(pkg.Value(), "Test Package for erpl-adt", "LOCAL");
+    auto result = codec.BuildPackageCreateXml(pkg.Value(), "Test Package for erpl-adt", "LOCAL", "DEVELOPER");
     REQUIRE(result.IsOk());
 
     const auto& xml = result.Value();
@@ -75,7 +75,7 @@ TEST_CASE("BuildPackageCreateXml: uses custom software component", "[xml][build]
     auto pkg = PackageName::Create("ZTEST_PKG");
     REQUIRE(pkg.IsOk());
 
-    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "CUSTOM_COMP");
+    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "CUSTOM_COMP", "DEVELOPER");
     REQUIRE(result.IsOk());
 
     CHECK(result.Value().find("pak:name=\"CUSTOM_COMP\"") != std::string::npos);
@@ -87,10 +87,40 @@ TEST_CASE("BuildPackageCreateXml: empty software component defaults to LOCAL", "
     auto pkg = PackageName::Create("ZTEST_PKG");
     REQUIRE(pkg.IsOk());
 
-    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "");
+    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "", "DEVELOPER");
     REQUIRE(result.IsOk());
 
     CHECK(result.Value().find("pak:name=\"LOCAL\"") != std::string::npos);
+}
+
+TEST_CASE("BuildPackageCreateXml: responsible user is taken from parameter, not hardcoded",
+          "[xml][build]") {
+    XmlCodec codec;
+
+    auto pkg = PackageName::Create("ZTEST_PKG");
+    REQUIRE(pkg.IsOk());
+
+    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "LOCAL", "ALICE");
+    REQUIRE(result.IsOk());
+
+    const auto& xml = result.Value();
+    CHECK(xml.find("adtcore:responsible=\"ALICE\"") != std::string::npos);
+    CHECK(xml.find("adtcore:responsible=\"DEVELOPER\"") == std::string::npos);
+}
+
+TEST_CASE("BuildPackageCreateXml: empty responsible falls back to DEVELOPER",
+          "[xml][build]") {
+    XmlCodec codec;
+
+    auto pkg = PackageName::Create("ZTEST_PKG");
+    REQUIRE(pkg.IsOk());
+
+    auto result = codec.BuildPackageCreateXml(pkg.Value(), "desc", "LOCAL", "");
+    REQUIRE(result.IsOk());
+
+    // Empty responsible parameter falls back to DEVELOPER (preserves prior
+    // behavior for callers that don't yet pass a user).
+    CHECK(result.Value().find("adtcore:responsible=\"DEVELOPER\"") != std::string::npos);
 }
 
 // ===========================================================================
@@ -421,7 +451,7 @@ TEST_CASE("Round-trip: BuildPackageCreateXml -> ParsePackageResponse", "[xml][ro
     REQUIRE(pkg.IsOk());
 
     auto build_result = codec.BuildPackageCreateXml(
-        pkg.Value(), "Round-trip test", "LOCAL");
+        pkg.Value(), "Round-trip test", "LOCAL", "DEVELOPER");
     REQUIRE(build_result.IsOk());
 
     auto parse_result = codec.ParsePackageResponse(build_result.Value());

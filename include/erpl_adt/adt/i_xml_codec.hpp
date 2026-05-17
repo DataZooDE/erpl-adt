@@ -132,10 +132,13 @@ public:
 
     // -- Build XML request payloads ------------------------------------------
 
+    // `responsible` is written to adtcore:responsible. When empty, defaults
+    // to "DEVELOPER" for backwards compatibility with the SAP trial system.
     [[nodiscard]] virtual Result<std::string, Error> BuildPackageCreateXml(
         const PackageName& package_name,
         std::string_view description,
-        std::string_view software_component) const = 0;
+        std::string_view software_component,
+        std::string_view responsible) const = 0;
 
     [[nodiscard]] virtual Result<std::string, Error> BuildRepoCloneXml(
         const RepoUrl& repo_url,

@@ -93,7 +93,7 @@ TEST_CASE("CreatePackage: succeeds with 201", "[adt][packages]") {
     codec.SetParsePackageResponse(
         Result<PackageInfo, Error>::Ok(expected));
 
-    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "Test package", "LOCAL");
+    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "Test package", "LOCAL", "ALICE");
 
     REQUIRE(result.IsOk());
     CHECK(result.Value().name == "ZTEST");
@@ -104,6 +104,13 @@ TEST_CASE("CreatePackage: succeeds with 201", "[adt][packages]") {
     CHECK(session.PostCalls()[0].body == "<create-xml/>");
     CHECK(session.PostCalls()[0].headers.at("x-csrf-token") == "token-123");
     CHECK(session.CsrfCallCount() == 1);
+
+    // Verify the responsible user was forwarded to the codec.
+    REQUIRE(codec.Calls().size() >= 1);
+    const auto& call = codec.Calls()[0];
+    REQUIRE(call.method == "BuildPackageCreateXml");
+    REQUIRE(call.args.size() == 4);
+    CHECK(call.args[3] == "ALICE");
 }
 
 TEST_CASE("CreatePackage: propagates CSRF error", "[adt][packages]") {
@@ -113,7 +120,7 @@ TEST_CASE("CreatePackage: propagates CSRF error", "[adt][packages]") {
     session.EnqueueCsrfToken(Result<std::string, Error>::Err(
         Error{"FetchCsrfToken", "", std::nullopt, "csrf failed", std::nullopt}));
 
-    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL");
+    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL", "ALICE");
 
     REQUIRE(result.IsErr());
     CHECK(result.Error().message == "csrf failed");
@@ -129,7 +136,7 @@ TEST_CASE("CreatePackage: propagates XML build error", "[adt][packages]") {
             Error{"BuildPackageCreateXml", "", std::nullopt,
                   "xml build failed", std::nullopt}));
 
-    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL");
+    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL", "ALICE");
 
     REQUIRE(result.IsErr());
     CHECK(result.Error().message == "xml build failed");
@@ -145,7 +152,7 @@ TEST_CASE("CreatePackage: returns error on unexpected status", "[adt][packages]"
     session.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {409, {}, "Conflict"}));
 
-    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL");
+    auto result = CreatePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL", "ALICE");
 
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status.value() == 409);
@@ -170,7 +177,7 @@ TEST_CASE("EnsurePackage: skips create when package exists", "[adt][packages]") 
     codec.SetParsePackageResponse(
         Result<PackageInfo, Error>::Ok(existing));
 
-    auto result = EnsurePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL");
+    auto result = EnsurePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL", "ALICE");
 
     REQUIRE(result.IsOk());
     CHECK(result.Value().name == "ZTEST");
@@ -200,7 +207,7 @@ TEST_CASE("EnsurePackage: creates when package does not exist", "[adt][packages]
     codec.SetParsePackageResponse(
         Result<PackageInfo, Error>::Ok(created));
 
-    auto result = EnsurePackage(session, codec, MakePackage("ZNEW"), "New package", "LOCAL");
+    auto result = EnsurePackage(session, codec, MakePackage("ZNEW"), "New package", "LOCAL", "ALICE");
 
     REQUIRE(result.IsOk());
     CHECK(result.Value().name == "ZNEW");
@@ -214,7 +221,7 @@ TEST_CASE("EnsurePackage: propagates exists check error", "[adt][packages]") {
     session.EnqueueGet(Result<HttpResponse, Error>::Err(
         Error{"Get", "", std::nullopt, "network error", std::nullopt}));
 
-    auto result = EnsurePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL");
+    auto result = EnsurePackage(session, codec, MakePackage("ZTEST"), "desc", "LOCAL", "ALICE");
 
     REQUIRE(result.IsErr());
     CHECK(result.Error().message == "network error");

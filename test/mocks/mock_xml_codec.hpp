@@ -87,11 +87,13 @@ public:
     Result<std::string, Error> BuildPackageCreateXml(
         const PackageName& package_name,
         std::string_view description,
-        std::string_view software_component) const override {
+        std::string_view software_component,
+        std::string_view responsible) const override {
         calls_.push_back({"BuildPackageCreateXml",
                           {package_name.Value(),
                            std::string(description),
-                           std::string(software_component)}});
+                           std::string(software_component),
+                           std::string(responsible)}});
         return build_package_create_response_;
     }
 

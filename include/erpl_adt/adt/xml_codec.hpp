@@ -24,7 +24,8 @@ public:
     [[nodiscard]] Result<std::string, Error> BuildPackageCreateXml(
         const PackageName& package_name,
         std::string_view description,
-        std::string_view software_component) const override;
+        std::string_view software_component,
+        std::string_view responsible) const override;
 
     [[nodiscard]] Result<std::string, Error> BuildRepoCloneXml(
         const RepoUrl& repo_url,

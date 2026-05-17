@@ -92,7 +92,8 @@ XmlCodec::~XmlCodec() = default;
 Result<std::string, Error> XmlCodec::BuildPackageCreateXml(
     const PackageName& package_name,
     std::string_view description,
-    std::string_view software_component) const {
+    std::string_view software_component,
+    std::string_view responsible) const {
 
     tinyxml2::XMLDocument doc;
     doc.InsertFirstChild(doc.NewDeclaration());
@@ -100,11 +101,14 @@ Result<std::string, Error> XmlCodec::BuildPackageCreateXml(
     auto* root = doc.NewElement("pak:package");
     root->SetAttribute("xmlns:pak", kNsPackages);
     root->SetAttribute("xmlns:adtcore", kNsAdtCore);
-    root->SetAttribute("adtcore:description", std::string(description).c_str());
+    const std::string description_str(description);
+    root->SetAttribute("adtcore:description", description_str.c_str());
     root->SetAttribute("adtcore:name", package_name.Value().c_str());
     root->SetAttribute("adtcore:type", "DEVC/K");
     root->SetAttribute("adtcore:version", "active");
-    root->SetAttribute("adtcore:responsible", "DEVELOPER");
+    const std::string responsible_str =
+        responsible.empty() ? "DEVELOPER" : std::string(responsible);
+    root->SetAttribute("adtcore:responsible", responsible_str.c_str());
     doc.InsertEndChild(root);
 
     auto* pkg_ref = doc.NewElement("adtcore:packageRef");
@@ -123,8 +127,9 @@ Result<std::string, Error> XmlCodec::BuildPackageCreateXml(
 
     auto* transport = doc.NewElement("pak:transport");
     auto* sw_comp = doc.NewElement("pak:softwareComponent");
-    sw_comp->SetAttribute("pak:name",
-        software_component.empty() ? "LOCAL" : std::string(software_component).c_str());
+    const std::string software_component_str =
+        software_component.empty() ? "LOCAL" : std::string(software_component);
+    sw_comp->SetAttribute("pak:name", software_component_str.c_str());
     transport->InsertEndChild(sw_comp);
     auto* layer = doc.NewElement("pak:transportLayer");
     layer->SetAttribute("pak:name", "");

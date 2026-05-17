@@ -197,7 +197,8 @@ StepResult DeployWorkflow::RunPackageStep(const RepoConfig& repo) {
     auto start = Clock::now();
 
     auto ensure = EnsurePackage(session_, codec_, repo.package,
-                                repo.name, "LOCAL");
+                                repo.name, "LOCAL",
+                                config_.connection.user);
     if (ensure.IsErr()) {
         return StepResult{"package", StepOutcome::Failed,
                           ensure.Error().ToString(), Elapsed(start)};

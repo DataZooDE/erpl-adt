@@ -45,14 +45,16 @@ Result<PackageInfo, Error> CreatePackage(
     const IXmlCodec& codec,
     const PackageName& package_name,
     std::string_view description,
-    std::string_view software_component) {
+    std::string_view software_component,
+    std::string_view responsible) {
 
     auto csrf = session.FetchCsrfToken();
     if (csrf.IsErr()) {
         return Result<PackageInfo, Error>::Err(std::move(csrf).Error());
     }
 
-    auto xml = codec.BuildPackageCreateXml(package_name, description, software_component);
+    auto xml = codec.BuildPackageCreateXml(package_name, description,
+                                            software_component, responsible);
     if (xml.IsErr()) {
         return Result<PackageInfo, Error>::Err(std::move(xml).Error());
     }
@@ -77,7 +79,8 @@ Result<PackageInfo, Error> EnsurePackage(
     const IXmlCodec& codec,
     const PackageName& package_name,
     std::string_view description,
-    std::string_view software_component) {
+    std::string_view software_component,
+    std::string_view responsible) {
 
     auto exists = PackageExists(session, codec, package_name);
     if (exists.IsErr()) {
@@ -94,7 +97,8 @@ Result<PackageInfo, Error> EnsurePackage(
         return codec.ParsePackageResponse(response.Value().body);
     }
 
-    return CreatePackage(session, codec, package_name, description, software_component);
+    return CreatePackage(session, codec, package_name, description,
+                          software_component, responsible);
 }
 
 } // namespace erpl_adt

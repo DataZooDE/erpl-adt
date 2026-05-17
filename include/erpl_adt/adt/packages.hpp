@@ -26,13 +26,15 @@ namespace erpl_adt {
     const IXmlCodec& codec,
     const PackageName& package_name,
     std::string_view description,
-    std::string_view software_component);
+    std::string_view software_component,
+    std::string_view responsible);
 
 [[nodiscard]] Result<PackageInfo, Error> EnsurePackage(
     IAdtSession& session,
     const IXmlCodec& codec,
     const PackageName& package_name,
     std::string_view description,
-    std::string_view software_component);
+    std::string_view software_component,
+    std::string_view responsible);
 
 } // namespace erpl_adt
