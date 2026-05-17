@@ -16,6 +16,38 @@ Part of the [Datazoo](https://datazoo.de) ERPL family.
 
 Every command accepts `--json` for machine-readable output.
 
+## In action
+
+Find ABAP objects by name pattern:
+
+![search demo](docs/demos/search.gif)
+
+Read a data-dictionary table, with field types and check tables resolved:
+
+![ddic demo](docs/demos/ddic.gif)
+
+Read ABAP source code with built-in syntax highlighting:
+
+![source demo](docs/demos/source.gif)
+
+Browse a package recursively to enumerate everything it contains:
+
+![package demo](docs/demos/package.gif)
+
+### BW/4HANA Modeling
+
+Search the BW catalog across ADSOs, composite providers, DTPs, transformations, and queries:
+
+![bw search demo](docs/demos/bw-search.gif)
+
+Inspect an ADSO's field structure, complete with the InfoObject each field maps to:
+
+![bw adso demo](docs/demos/bw-adso.gif)
+
+Export an InfoProvider's dataflow as Mermaid — pipe it straight into a renderer or commit it next to the model:
+
+![bw mermaid demo](docs/demos/bw-mermaid.gif)
+
 ## Quick examples
 
 ```bash

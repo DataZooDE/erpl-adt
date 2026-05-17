@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Demo wrapper for erpl-adt
+# Used by docs/demos/tapes/*.tape to record reproducible terminal sessions
+# without depending on a live SAP system. Plays back canned output that
+# matches what the real binary produces against an SAP ABAP Cloud / BW/4HANA system.
+
+set -e
+DEMO_DATA="${DEMO_DATA:-$(dirname "$0")/../data}"
+
+delay() {
+  sleep "${1:-0.45}"
+}
+
+case "$1" in
+  search)
+    delay 0.55
+    cat "$DEMO_DATA/search.txt"
+    ;;
+  source)
+    case "$2" in
+      read)
+        delay 0.40
+        cat "$DEMO_DATA/source-read.txt"
+        ;;
+      *) echo "demo: source $2 not staged" >&2 ; exit 99 ;;
+    esac
+    ;;
+  ddic)
+    case "$2" in
+      table)
+        delay 0.60
+        cat "$DEMO_DATA/ddic-table.txt"
+        ;;
+      *) echo "demo: ddic $2 not staged" >&2 ; exit 99 ;;
+    esac
+    ;;
+  package)
+    case "$2" in
+      tree)
+        delay 0.70
+        cat "$DEMO_DATA/package-tree.txt"
+        ;;
+      *) echo "demo: package $2 not staged" >&2 ; exit 99 ;;
+    esac
+    ;;
+  test)
+    delay 0.80
+    cat "$DEMO_DATA/test.txt"
+    ;;
+  bw)
+    case "$2" in
+      search)
+        delay 0.65
+        cat "$DEMO_DATA/bw-search.txt"
+        ;;
+      read-adso)
+        delay 0.50
+        cat "$DEMO_DATA/bw-read-adso.txt"
+        ;;
+      read-dtp)
+        delay 0.55
+        cat "$DEMO_DATA/bw-read-dtp.txt"
+        ;;
+      export-cube)
+        delay 1.10
+        cat "$DEMO_DATA/bw-export-cube.txt"
+        ;;
+      *) echo "demo: bw $2 not staged" >&2 ; exit 99 ;;
+    esac
+    ;;
+  --version)
+    echo "erpl-adt 2026.05.16"
+    ;;
+  *)
+    echo "demo: command '$1' not staged" >&2
+    exit 99
+    ;;
+esac

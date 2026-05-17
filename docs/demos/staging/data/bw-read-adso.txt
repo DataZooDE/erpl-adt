@@ -1,0 +1,17 @@
+ADSO: ZSD_SALES_ORDER
+  Description: Sales Order DSO
+  Package:     ZBW_SD_DEMO
+
+[1mField                 [22m│[1mType    [22m│[1mLength  [22m│[1mKey  [22m│[1mInfoObject              [22m
+──────────────────────┴────────┴────────┴─────┴────────────────────────
+CALMONTH               NUMC     6        X     0CALMONTH
+SOLD_TO_PARTY          CHAR     10       X     0SOLD_TO
+MATERIAL               CHAR     40       X     0MATERIAL
+SALES_ORG              CHAR     4        X     0SALESORG
+DISTR_CHAN             CHAR     2        X     0DISTR_CHAN
+DIVISION               CHAR     2        X     0DIVISION
+CURRENCY               CUKY     5              0CURRENCY
+NETVAL_INV             CURR     17,2           0NETVAL_INV
+QUANTITY_B             QUAN     17,3           0QUANT_B
+BASE_UNIT              UNIT     3              0BASE_UOM
+REC_TYPE               CHAR     1              0RECORDTYPE

@@ -1,0 +1,22 @@
+DTP: DTP_SD_O_TO_C
+  Description: DTP: ZSD_SALES_ORDER → ZC_SD_SALES_CUBE
+  Type:        Standard
+  Source:      ZSD_SALES_ORDER (ADSO)
+  Target:      ZC_SD_SALES_CUBE (HCPR)
+  Mode:        [36mdelta[0m (request-based)
+  Source System: BWQ100
+
+  [1mExtraction[22m
+    Package size: 50,000
+    Parallel processes: 3
+    Filter: CALMONTH ≥ 202501
+
+  [1mExecution[22m
+    Selection mode: byRequest
+    Get data by request: yes
+    Error handling: stopOnError
+
+  [1mRuntime[22m
+    Last successful run: 2026-05-15 02:00
+    Avg duration:        00:04:32
+    Avg records:         842,108

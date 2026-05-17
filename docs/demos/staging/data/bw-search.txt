@@ -1,0 +1,10 @@
+[1mName                  [22m│[1mType  [22m│[1mStatus [22m│[1mDescription                           [22m│[1mChanged     [22m
+──────────────────────┴──────┴───────┴──────────────────────────────────────┴────────────
+ZSD_SALES_ORDER        ADSO   ACT     Sales Order DSO                        2026-04-12
+ZSD_SALES_ITEM         ADSO   ACT     Sales Order Items                      2026-04-12
+ZSD_SALES_HIST         ADSO   ACT     Sales History (Snapshot)               2026-03-28
+ZC_SD_SALES_CUBE       HCPR   ACT     Sales — Composite Provider             2026-04-12
+DTP_SD_O_TO_C          DTPA   ACT     DTP: O_SALES_ORDER → C_SD_SALES_CUBE   2026-04-12
+TRFN_SD_O_TO_C         TRFN   ACT     Transformation O_SALES → C_SALES       2026-04-12
+RSDS_SD_S4HANA         RSDS   ACT     DataSource: SD orders from S/4HANA     2026-02-10
+ZQ_SD_TOP_PRODUCTS     QUERY  INA     Top products by revenue (draft)        2026-05-10

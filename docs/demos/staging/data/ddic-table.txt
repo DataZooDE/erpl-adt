@@ -1,0 +1,17 @@
+SFLIGHT [A] - Flight
+[1mField        [22m│[1mDataElem    [22m│[1mAbapType[22m│[1mKey[22m│[1mLength[22m│[1mDescription                        [22m│[1mCheckTable [22m
+─────────────┴────────────┴────────┴───┴──────┴───────────────────────────────────┴───────────
+mandt         s_mandt      CLNT     Y   3      Client                              T000
+carrid        s_carr_id    CHAR     Y   3      Airline Code                        SCARR
+connid        s_conn_id    NUMC     Y   4      Flight Connection Number            SPFLI
+fldate        s_date       DATS     Y   8      Flight date
+price         s_price      CURR         15,2   Airfare
+currency      s_currcod    CUKY         5      Local currency of airline           SCURX
+planetype     s_planety    CHAR         10     Aircraft Type                       SAPLANE
+seatsmax      s_seatsmax   INT4         10     Maximum capacity in economy class
+seatsocc      s_seatsocc   INT4         10     Occupied seats in economy class
+paymentsum    s_sum        CURR         17,2   Total of current bookings
+seatsmax_b    s_smax_b     INT4         10     Maximum capacity in business class
+seatsocc_b    s_socc_b     INT4         10     Occupied seats in business class
+seatsmax_f    s_smax_f     INT4         10     Maximum capacity in first class
+seatsocc_f    s_socc_f     INT4         10     Occupied seats in first class

@@ -1,0 +1,29 @@
+%%{init: {'flowchart': {'curve': 'basis'}}}%%
+graph LR
+
+  subgraph Sources
+    RSDS_SD_S4HANA["RSDS_SD_S4HANA<br/>DataSource: SD orders from S/4HANA"]
+  end
+
+  subgraph Staging[ZBW_SD_DEMO]
+    ZSD_SALES_ORDER["ZSD_SALES_ORDER<br/>Sales Order DSO"]
+    ZSD_SALES_ITEM["ZSD_SALES_ITEM<br/>Sales Order Items"]
+    ZSD_SALES_HIST["ZSD_SALES_HIST<br/>Sales History (Snapshot)"]
+  end
+
+  subgraph InfoCubes
+    ZC_SD_SALES_CUBE["ZC_SD_SALES_CUBE<br/>Sales — Composite Provider"]
+  end
+
+  subgraph Queries
+    ZQ_SD_TOP_PRODUCTS["ZQ_SD_TOP_PRODUCTS<br/>Top products by revenue"]
+    ZQ_SD_REVENUE_TR["ZQ_SD_REVENUE_TR<br/>Revenue Trend (12m)"]
+  end
+
+  RSDS_SD_S4HANA --> ZSD_SALES_ORDER
+  RSDS_SD_S4HANA --> ZSD_SALES_ITEM
+  ZSD_SALES_ORDER --> ZSD_SALES_HIST
+  ZSD_SALES_ORDER --> ZC_SD_SALES_CUBE
+  ZSD_SALES_ITEM --> ZC_SD_SALES_CUBE
+  ZC_SD_SALES_CUBE --> ZQ_SD_TOP_PRODUCTS
+  ZC_SD_SALES_CUBE --> ZQ_SD_REVENUE_TR

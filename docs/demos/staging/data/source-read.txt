@@ -1,0 +1,22 @@
+[36mclass[0m CL_DEMO_OUTPUT definition [36mpublic[0m [36mfinal[0m [36mcreate[0m [36mprivate[0m .
+
+[36mpublic[0m [36msection[0m.
+
+  [36minterfaces[0m IF_DEMO_OUTPUT_FORMATS .
+  [36minterfaces[0m IF_DEMO_OUTPUT .
+
+  [36mconstants[0m HTML_MODE [36mtype[0m STRING [36mvalue[0m [1;32m'HTML'[0m ##NO_TEXT.
+  [36mconstants[0m TEXT_MODE [36mtype[0m STRING [36mvalue[0m [1;32m'TEXT'[0m ##NO_TEXT.
+  [36mconstants[0m JSON_MODE [36mtype[0m STRING [36mvalue[0m [1;32m'JSON'[0m ##NO_TEXT.
+
+  [36mclass-methods[0m DISPLAY
+    [36mimporting[0m
+      ![36mDATA[0m    [36mtype[0m ANY    [36moptional[0m
+      !NAME    [36mtype[0m STRING [36moptional[0m
+    preferred parameter [36mDATA[0m .
+
+  [36mclass-methods[0m WRITE
+    [36mimporting[0m ![36mDATA[0m [36mtype[0m ANY [36moptional[0m
+    preferred parameter [36mDATA[0m .
+
+[90m* ... (35 more methods)[0m

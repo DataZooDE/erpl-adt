@@ -1,0 +1,10 @@
+[1mName                          [22m│[1mType    [22m│[1mPackage                    [22m│[1mDescription                             [22m
+──────────────────────────────┴────────┴───────────────────────────┴────────────────────────────────────────
+CL_DEMO_ABAP_DAEMON            CLAS/OC  SABAPDEMOS                  ABAP Daemon Demo
+CL_DEMO_ABAP_DAEMON_BROKER     CLAS/OC  SABAPDEMOS                  ABAP Daemon Demo broker
+CL_DEMO_ABAP_OBJECTS           CLAS/OC  SABAP_DEMOS_NOT_FOR_CLOUD   Demo for ABAP Keyword Documentation
+CL_DEMO_AMDP_METHODS           CLAS/OC  SABAPDEMOS                  AMDP demo
+CL_DEMO_OUTPUT                 CLAS/OC  SABAP_DEMOS_OUTPUT_STREAM   Formatted Output of Example Data
+CL_DEMO_OUTPUT_HTML            CLAS/OC  SABAP_DEMOS_OUTPUT_STREAM   Converts demo output stream to HTML
+CL_DEMO_RAP_FLIGHT_M_TRAVEL    CLAS/OC  SABAP_DEMOS_RAP_FLIGHT      Behavior for Managed Travel
+CL_DEMO_RAP_LOGGING            CLAS/OC  SABAP_DEMOS_RAP_GENERIC     RAP logging demo helper
