@@ -30,10 +30,19 @@ Error MakeSessionError(const std::string& operation,
 // Check if a 403 response body contains a SAP application error (XML).
 // BW lock conflicts return 403 with <exc:message> — these should NOT trigger
 // CSRF retry because they are real application errors, not token expiry.
-// Genuine CSRF expiry returns bare 403 with no XML error detail.
+// Genuine CSRF expiry returns bare 403 with no XML error detail (often plain
+// text).
+//
+// The body must look like XML (start with '<' after optional whitespace) AND
+// contain a <message> or <exc:message> opening tag. The leading-'<' guard
+// prevents false positives on plain-text 403 bodies that incidentally mention
+// the literal text "<message>".
 bool HasSapErrorInBody(const std::string& body) {
     if (body.empty()) return false;
-    // Match <exc:message>, <message>, or <message lang="..."> (attributes).
+    const auto first = body.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || body[first] != '<') {
+        return false;
+    }
     return body.find("<exc:message") != std::string::npos ||
            body.find("<message") != std::string::npos;
 }

@@ -468,6 +468,56 @@ TEST_CASE("AdtSession: POST 403 with SAP error body does NOT retry", "[adt][sess
     CHECK(post_count.load() == 1);
 }
 
+// Regression: a plain-text 403 (genuine CSRF expiry) that incidentally mentions
+// the literal text "<message>" must still trigger a CSRF retry. The prior
+// substring-only test classified any body containing "<message" as a SAP app
+// error, which would block CSRF retries in this case.
+TEST_CASE("AdtSession: POST 403 with plain-text body mentioning <message> still retries",
+          "[adt][session][live][hardening]") {
+    httplib::Server svr;
+
+    std::atomic<int> discovery_count{0};
+    std::atomic<int> post_count{0};
+
+    svr.Get("/sap/bc/adt/discovery", [&](const httplib::Request&,
+                                          httplib::Response& res) {
+        int count = ++discovery_count;
+        std::string token = (count == 1) ? "old-tok" : "new-tok";
+        res.set_header("x-csrf-token", token);
+        res.set_content("<discovery/>", "text/xml");
+    });
+
+    svr.Post("/sap/bc/adt/packages", [&](const httplib::Request& req,
+                                          httplib::Response& res) {
+        int count = ++post_count;
+        if (count == 1) {
+            res.status = 403;
+            // Plain-text body that *mentions* "<message>" — must not be
+            // mistaken for an XML <exc:message> SAP application error.
+            res.set_content(
+                "CSRF token validation failed — see the <message> element "
+                "in /sap/bc/adt/discovery for a fresh token.",
+                "text/plain");
+        } else {
+            // Verify the retry carried the refreshed token.
+            REQUIRE(req.has_header("x-csrf-token"));
+            CHECK(req.get_header_value("x-csrf-token") == "new-tok");
+            res.status = 201;
+            res.set_content("<created/>", "text/xml");
+        }
+    });
+
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    auto result = session->Post("/sap/bc/adt/packages", "<xml/>",
+                                  "application/xml");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().status_code == 201);
+    CHECK(discovery_count.load() == 2);  // initial + re-fetch
+    CHECK(post_count.load() == 2);        // failed + retry
+}
+
 TEST_CASE("AdtSession: GET 403 with SAP error body does NOT retry", "[adt][session][live]") {
     httplib::Server svr;
 
