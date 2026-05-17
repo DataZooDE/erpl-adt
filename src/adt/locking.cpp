@@ -159,9 +159,15 @@ Result<LockGuard, Error> LockGuard::Acquire(
 
 LockGuard::~LockGuard() {
     if (acquired_ && !released_ && session_) {
-        // Best-effort unlock; ignore errors in destructor.
-        (void)UnlockObject(*session_, uri_, result_.handle);
-        session_->SetStateful(false);
+        // Best-effort unlock. If the unlock RPC fails, the SAP server still
+        // considers the lock held — keep the session marked stateful so the
+        // caller sees the truth and can retry. Clearing stateful mode would
+        // drop the sap-contextid and surface as a confusing 423 on the next
+        // write request.
+        auto unlock_result = UnlockObject(*session_, uri_, result_.handle);
+        if (unlock_result.IsOk()) {
+            session_->SetStateful(false);
+        }
     }
 }
 
@@ -179,8 +185,12 @@ LockGuard::LockGuard(LockGuard&& other) noexcept
 LockGuard& LockGuard::operator=(LockGuard&& other) noexcept {
     if (this != &other) {
         if (acquired_ && !released_ && session_) {
-            (void)UnlockObject(*session_, uri_, result_.handle);
-            session_->SetStateful(false);
+            // Same semantics as the destructor: only clear stateful if the
+            // unlock actually succeeded.
+            auto unlock_result = UnlockObject(*session_, uri_, result_.handle);
+            if (unlock_result.IsOk()) {
+                session_->SetStateful(false);
+            }
         }
         session_ = other.session_;
         uri_ = std::move(other.uri_);

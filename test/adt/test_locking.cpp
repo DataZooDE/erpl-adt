@@ -217,3 +217,44 @@ TEST_CASE("LockGuard: acquire failure leaves zero unlocks", "[adt][locking]") {
     CHECK(mock.PostCallCount() == 1); // lock attempt only
     CHECK_FALSE(mock.IsStateful());
 }
+
+// Regression: when the unlock RPC fails, the server still considers the lock
+// held. Clearing stateful mode would lie about session state — subsequent
+// requests would lose the sap-contextid and the held lock would surface as
+// a confusing 423 on the next write. Keep stateful mode set so the caller
+// sees an honest state and can retry.
+TEST_CASE("LockGuard: failed unlock keeps session stateful", "[adt][locking]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("object/lock_response.xml");
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_TEST").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    // Unlock fails (network blip / session expired):
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, "server error"}));
+
+    {
+        auto r = LockGuard::Acquire(mock, uri);
+        REQUIRE(r.IsOk());
+        REQUIRE(mock.IsStateful());
+        auto guard = std::move(r).Value();
+        // guard destructor runs here.
+    }
+    REQUIRE(mock.PostCallCount() == 2);  // lock + failed unlock
+    // Unlock failed → session must remain stateful so caller sees real state.
+    CHECK(mock.IsStateful());
+}
+
+TEST_CASE("LockGuard: successful unlock clears stateful mode", "[adt][locking]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("object/lock_response.xml");
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_TEST").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock OK
+
+    {
+        auto r = LockGuard::Acquire(mock, uri);
+        REQUIRE(r.IsOk());
+        auto guard = std::move(r).Value();
+    }
+    CHECK(mock.PostCallCount() == 2);
+    CHECK_FALSE(mock.IsStateful());
+}
