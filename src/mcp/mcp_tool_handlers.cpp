@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <utility>
 
 namespace erpl_adt {
 
@@ -109,11 +110,17 @@ nlohmann::json IntProp(const std::string& desc) {
     return {{"type", "integer"}, {"description", desc}};
 }
 
-nlohmann::json MakeSchema(const nlohmann::json& properties,
-                           const nlohmann::json& required) {
+nlohmann::json MakeSchema(nlohmann::json properties,
+                          nlohmann::json required) {
+    if (properties.is_null()) {
+        properties = nlohmann::json::object();
+    }
+    if (required.is_null()) {
+        required = nlohmann::json::array();
+    }
     return {{"type", "object"},
-            {"properties", properties},
-            {"required", required}};
+            {"properties", std::move(properties)},
+            {"required", std::move(required)}};
 }
 
 // ---------------------------------------------------------------------------
