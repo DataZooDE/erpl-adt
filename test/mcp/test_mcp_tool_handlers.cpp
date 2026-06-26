@@ -66,11 +66,34 @@ TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
+    const std::set<std::string> no_arg_tools = {
+        "bw_discover",
+        "bw_dbinfo",
+        "bw_sysinfo",
+        "bw_changeability"
+    };
+
     for (const auto& tool : registry.Tools()) {
+        INFO("tool: " << tool.name);
         CHECK_FALSE(tool.name.empty());
         CHECK_FALSE(tool.description.empty());
         CHECK(tool.input_schema.contains("type"));
         CHECK(tool.input_schema["type"] == "object");
+        REQUIRE(tool.input_schema.contains("properties"));
+        REQUIRE(tool.input_schema.contains("required"));
+        CHECK(tool.input_schema["properties"].is_object());
+        CHECK(tool.input_schema["required"].is_array());
+
+        for (const auto& required : tool.input_schema["required"]) {
+            REQUIRE(required.is_string());
+            CHECK(tool.input_schema["properties"].contains(
+                required.get<std::string>()));
+        }
+
+        if (no_arg_tools.count(tool.name) == 1) {
+            CHECK(tool.input_schema["properties"].empty());
+            CHECK(tool.input_schema["required"].empty());
+        }
     }
 }
 
@@ -1073,6 +1096,11 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     std::set<std::string> names;
     for (const auto& t : tools) {
         names.insert(t["name"].get<std::string>());
+        INFO("tool: " << t["name"].get<std::string>());
+        REQUIRE(t.contains("inputSchema"));
+        const auto& schema = t["inputSchema"];
+        CHECK(schema["properties"].is_object());
+        CHECK(schema["required"].is_array());
     }
     CHECK(names.count("adt_search") == 1);
     CHECK(names.count("adt_read_source") == 1);
