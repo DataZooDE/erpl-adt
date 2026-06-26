@@ -12,6 +12,9 @@ vcpkg_installed/
 CMakeUserPresets.json
 compile_commands.json
 
+# Codex delegation data (AI review responses)
+.codex-delegate/
+
 # SQLite (beads)
 *.db
 *.db-shm

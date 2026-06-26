@@ -51,6 +51,37 @@ nlohmann::json ParseContent(const ToolResult& result) {
     return nlohmann::json::parse(result.content[0]["text"].get<std::string>());
 }
 
+// Helper: recursively assert that no JSON null appears anywhere in a schema
+// tree. A null member (e.g. `properties: null` from the `MakeSchema({}, {})`
+// nlohmann trap) is exactly what strict MCP clients like OpenCode reject, so
+// this guards against the bug reappearing nested anywhere — not just at the
+// top-level properties/required keys.
+void CheckNoNullMembers(const nlohmann::json& node, const std::string& path) {
+    INFO("null json member at: " << path);
+    CHECK_FALSE(node.is_null());
+    if (node.is_object()) {
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            CheckNoNullMembers(it.value(), path + "/" + it.key());
+        }
+    } else if (node.is_array()) {
+        for (std::size_t i = 0; i < node.size(); ++i) {
+            CheckNoNullMembers(node[i], path + "/" + std::to_string(i));
+        }
+    }
+}
+
+// Every tool registered with MakeSchema({}, {}) — i.e. takes no arguments and
+// must expose empty (but non-null) properties/required. Kept complete so the
+// empty-schema assertion actually pins each no-arg tool.
+const std::set<std::string>& NoArgTools() {
+    static const std::set<std::string> tools = {
+        "bw_adturi",          "bw_changeability",   "bw_clear_favorites",
+        "bw_dbinfo",          "bw_discover",        "bw_list_favorites",
+        "bw_move_requests",   "bw_query_properties", "bw_search_metadata",
+        "bw_sysinfo"};
+    return tools;
+}
+
 } // anonymous namespace
 
 // ===========================================================================
@@ -66,12 +97,6 @@ TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    const std::set<std::string> no_arg_tools = {
-        "bw_discover",
-        "bw_dbinfo",
-        "bw_sysinfo",
-        "bw_changeability"
-    };
 
     for (const auto& tool : registry.Tools()) {
         INFO("tool: " << tool.name);
@@ -84,13 +109,16 @@ TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
         CHECK(tool.input_schema["properties"].is_object());
         CHECK(tool.input_schema["required"].is_array());
 
+        // No null anywhere in the schema tree (the strict-client bug class).
+        CheckNoNullMembers(tool.input_schema, tool.name);
+
         for (const auto& required : tool.input_schema["required"]) {
             REQUIRE(required.is_string());
             CHECK(tool.input_schema["properties"].contains(
                 required.get<std::string>()));
         }
 
-        if (no_arg_tools.count(tool.name) == 1) {
+        if (NoArgTools().count(tool.name) == 1) {
             CHECK(tool.input_schema["properties"].empty());
             CHECK(tool.input_schema["required"].empty());
         }
@@ -1101,6 +1129,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
         const auto& schema = t["inputSchema"];
         CHECK(schema["properties"].is_object());
         CHECK(schema["required"].is_array());
+        CheckNoNullMembers(schema, t["name"].get<std::string>());
     }
     CHECK(names.count("adt_search") == 1);
     CHECK(names.count("adt_read_source") == 1);

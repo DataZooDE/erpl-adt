@@ -23,7 +23,10 @@ struct ToolSchema {
 // ---------------------------------------------------------------------------
 struct ToolResult {
     bool is_error = false;
-    nlohmann::json content;  // array of content blocks
+    // Default to an empty array, not a default-constructed (null) value: the
+    // MCP wire contract requires `content` to be an array of content blocks,
+    // and a stray null would be rejected by strict clients.
+    nlohmann::json content = nlohmann::json::array();
 };
 
 // A tool handler takes a JSON params object and returns a ToolResult.
