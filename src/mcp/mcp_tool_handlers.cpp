@@ -572,14 +572,13 @@ ToolResult HandleWriteSource(IAdtSession& session,
         if (result.IsErr()) return MakeErrorResult(result.Error());
     } else {
         // Auto-lock mode: derive object URI, lock -> write -> unlock.
-        auto slash_pos = uri->find("/source/");
-        if (slash_pos == std::string::npos) {
+        auto obj_uri_str = DeriveObjectUriFromSourceUri(*uri);
+        if (!obj_uri_str) {
             return MakeParamError(
                 "Cannot derive object URI from source URI "
-                "(expected /source/ segment): " + *uri);
+                "(expected /source/ or /includes/ segment): " + *uri);
         }
-        auto obj_uri_str = uri->substr(0, slash_pos);
-        auto obj_uri = ObjectUri::Create(obj_uri_str);
+        auto obj_uri = ObjectUri::Create(*obj_uri_str);
         if (obj_uri.IsErr()) {
             return MakeParamError("Invalid object URI: " + obj_uri.Error());
         }

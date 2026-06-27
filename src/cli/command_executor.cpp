@@ -1250,10 +1250,11 @@ int HandleSourceRead(const CommandArgs& args) {
     bool arg_is_full_source_uri = false;
 
     if (arg.find("/sap/bc/adt/") == 0) {
-        auto source_pos = arg.find("/source/");
-        if (source_pos != std::string::npos) {
+        // A full section URI (.../source/main or .../includes/testclasses)
+        // carries its own section; strip it to recover the base object URI.
+        if (auto obj = DeriveObjectUriFromSourceUri(arg)) {
             arg_is_full_source_uri = true;
-            base_uri = arg.substr(0, source_pos);
+            base_uri = *obj;
         } else {
             base_uri = arg;
         }
@@ -1473,10 +1474,11 @@ int HandleSourceEdit(const CommandArgs& args) {
 
     // URI resolution — identical logic to HandleSourceRead.
     if (arg.find("/sap/bc/adt/") == 0) {
-        auto source_pos = arg.find("/source/");
-        if (source_pos != std::string::npos) {
+        // A full section URI (.../source/main or .../includes/testclasses)
+        // carries its own section; strip it to recover the base object URI.
+        if (auto obj = DeriveObjectUriFromSourceUri(arg)) {
             arg_is_full_source_uri = true;
-            base_uri = arg.substr(0, source_pos);
+            base_uri = *obj;
         } else {
             base_uri = arg;
         }
@@ -1622,9 +1624,8 @@ int HandleSourceWrite(const CommandArgs& args) {
         MaybeSaveSession(*session, args);
 
         // Try to derive object URI from source URI for activation.
-        auto slash_pos = source_uri.find("/source/");
-        if (slash_pos != std::string::npos) {
-            obj_uri_for_activate = source_uri.substr(0, slash_pos);
+        if (auto obj = DeriveObjectUriFromSourceUri(source_uri)) {
+            obj_uri_for_activate = *obj;
         }
     } else if (HasFlag(args, "optimistic")) {
         // Optimistic mode: try lockless write first; fall back to auto-lock.
@@ -1632,9 +1633,8 @@ int HandleSourceWrite(const CommandArgs& args) {
         // work, and for single-writer agent workflows where no lock is needed.
         auto opt_result = WriteSourceOptimistic(*session, source_uri, source, transport);
         if (opt_result.IsOk()) {
-            auto slash_pos = source_uri.find("/source/");
-            if (slash_pos != std::string::npos) {
-                obj_uri_for_activate = source_uri.substr(0, slash_pos);
+            if (auto obj = DeriveObjectUriFromSourceUri(source_uri)) {
+                obj_uri_for_activate = *obj;
             }
         } else {
             // Lockless write rejected — fall back to full lock+write flow.

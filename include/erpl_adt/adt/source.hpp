@@ -6,9 +6,29 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace erpl_adt {
+
+// ---------------------------------------------------------------------------
+// DeriveObjectUriFromSourceUri — derive the owning object URI from a source
+// (section) URI by stripping the trailing section segment.
+//
+// Recognizes both section forms used by ADT:
+//   .../source/main          (most objects: classes, programs, function modules)
+//   .../includes/testclasses (class includes: definitions, implementations,
+//                             macros, testclasses)
+//
+// `/source/` is preferred over `/includes/` so that program-include source
+// URIs (e.g. /sap/bc/adt/programs/includes/zincl/source/main), where
+// `/includes/` is part of the object path rather than the section, still strip
+// at the correct `/source/` boundary.
+//
+// Returns std::nullopt when no recognizable section segment is present.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::optional<std::string> DeriveObjectUriFromSourceUri(
+    std::string_view source_uri);
 
 // ---------------------------------------------------------------------------
 // ReadSource — read the source code of an ABAP object.

@@ -311,3 +311,53 @@ TEST_CASE("WriteSourceOptimistic: returns error on 400", "[adt][source]") {
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status == 400);
 }
+
+// ===========================================================================
+// DeriveObjectUriFromSourceUri — pure helper, no session/mock needed.
+//
+// Regression coverage for issue #18: writing a class test-include (a
+// `/includes/...` section URI) must derive the owning object URI so the
+// auto-lock flow can lock the class. The original logic only recognized a
+// `/source/` segment and rejected `/includes/...` URIs outright.
+// ===========================================================================
+
+TEST_CASE("DeriveObjectUriFromSourceUri: strips /source/ segment", "[adt][source][uri]") {
+    auto obj = DeriveObjectUriFromSourceUri(
+        "/sap/bc/adt/oo/classes/zcl_test/source/main");
+    REQUIRE(obj.has_value());
+    CHECK(*obj == "/sap/bc/adt/oo/classes/zcl_test");
+}
+
+TEST_CASE("DeriveObjectUriFromSourceUri: strips /includes/ segment (class test include)",
+          "[adt][source][uri]") {
+    auto obj = DeriveObjectUriFromSourceUri(
+        "/sap/bc/adt/oo/classes/zcl_test_class/includes/testclasses");
+    REQUIRE(obj.has_value());
+    CHECK(*obj == "/sap/bc/adt/oo/classes/zcl_test_class");
+}
+
+TEST_CASE("DeriveObjectUriFromSourceUri: other class includes (definitions/implementations/macros)",
+          "[adt][source][uri]") {
+    for (const auto* section : {"definitions", "implementations", "macros"}) {
+        auto obj = DeriveObjectUriFromSourceUri(
+            std::string("/sap/bc/adt/oo/classes/zcl_x/includes/") + section);
+        REQUIRE(obj.has_value());
+        CHECK(*obj == "/sap/bc/adt/oo/classes/zcl_x");
+    }
+}
+
+TEST_CASE("DeriveObjectUriFromSourceUri: program include prefers /source/ over /includes/",
+          "[adt][source][uri]") {
+    // For program includes the `/includes/` token is part of the object path
+    // and `/source/main` is the section — stripping must happen at /source/.
+    auto obj = DeriveObjectUriFromSourceUri(
+        "/sap/bc/adt/programs/includes/zincl_test/source/main");
+    REQUIRE(obj.has_value());
+    CHECK(*obj == "/sap/bc/adt/programs/includes/zincl_test");
+}
+
+TEST_CASE("DeriveObjectUriFromSourceUri: returns nullopt without a section segment",
+          "[adt][source][uri]") {
+    auto obj = DeriveObjectUriFromSourceUri("/sap/bc/adt/oo/classes/zcl_test");
+    CHECK_FALSE(obj.has_value());
+}

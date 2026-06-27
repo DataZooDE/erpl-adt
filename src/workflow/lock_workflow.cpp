@@ -11,17 +11,18 @@ namespace erpl_adt {
 namespace {
 
 Result<ObjectUri, Error> ObjectUriFromSourceUri(std::string_view source_uri) {
-    const auto slash_pos = source_uri.find("/source/");
-    if (slash_pos == std::string_view::npos) {
+    auto derived = DeriveObjectUriFromSourceUri(source_uri);
+    if (!derived) {
         return Result<ObjectUri, Error>::Err(Error{
             "WriteSourceWithAutoLock",
             std::string(source_uri),
             std::nullopt,
-            "Cannot derive object URI from source URI (expected /source/ segment)",
+            "Cannot derive object URI from source URI "
+            "(expected /source/ or /includes/ segment)",
             std::nullopt});
     }
 
-    const std::string object_uri(source_uri.substr(0, slash_pos));
+    const std::string& object_uri = *derived;
     auto uri = ObjectUri::Create(object_uri);
     if (uri.IsErr()) {
         return Result<ObjectUri, Error>::Err(Error{

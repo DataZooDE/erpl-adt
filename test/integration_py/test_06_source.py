@@ -135,3 +135,42 @@ class TestSource:
         name = test_class["name"]
         data = cli.run_ok("source", "check", name)
         assert isinstance(data, list)
+
+    def test_write_class_test_include(self, test_class, cli, tmp_path):
+        """Write a class test include (/includes/testclasses) — regression for #18.
+
+        Two bugs were fixed here:
+        1. The auto-lock flow only recognized a `/source/` segment, so a
+           `/includes/testclasses` URI failed with "Cannot derive object URI
+           from source URI". The object URI is now derived from /includes/ too.
+        2. Writing a test include that does not exist yet returned HTTP 500
+           "<include> does not have any inactive version"; the include is now
+           auto-created (POST .../includes) before the source PUT, mirroring
+           Eclipse ADT.
+        """
+        include_uri = test_class["uri"] + "/includes/testclasses"
+        source = (
+            "CLASS ltcl_issue18 DEFINITION FOR TESTING "
+            "DURATION SHORT RISK LEVEL HARMLESS.\n"
+            "  PRIVATE SECTION.\n"
+            "    METHODS smoke FOR TESTING.\n"
+            "ENDCLASS.\n\n"
+            "CLASS ltcl_issue18 IMPLEMENTATION.\n"
+            "  METHOD smoke.\n"
+            "    cl_abap_unit_assert=>assert_true( abap_true ).\n"
+            "  ENDMETHOD.\n"
+            "ENDCLASS.\n"
+        )
+        src_file = tmp_path / "testclasses.abap"
+        src_file.write_text(source)
+
+        # Auto-lock mode: locks the owning class, auto-creates the include,
+        # writes the source, unlocks — all without an explicit handle.
+        cli.run_ok("source", "write", include_uri, "--file", str(src_file))
+
+        # Read the include back (inactive version, as it was just written).
+        read = cli.run_ok("source", "read", include_uri, "--version", "inactive")
+        assert "source" in read, f"read returned no 'source' key: {read}"
+        assert "ltcl_issue18" in read["source"].lower(), (
+            f"Test class missing from include read-back: {read['source'][:300]}"
+        )
