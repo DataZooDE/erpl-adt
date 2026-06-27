@@ -1,0 +1,5231 @@
+openapi: 3.0.3
+info:
+  title: SAP BW/4HANA Modeling REST API
+  version: 1.0.0
+  description: 'OpenAPI definition for the SAP BW/4HANA Modeling REST protocol
+
+    (`/sap/bw/modeling`), the HTTP API used by the BW Modeling Tools in Eclipse.
+
+    Reverse-engineered from the BW Modeling Tools, captured live traffic against
+
+    an a4h BW system, and the erpl-adt client implementation (`src/adt/bw_*`).
+
+
+    Companion to the ADT spec at `docs/openapi/adt-openapi.yaml`; the BW Modeling
+
+    API reuses the ADT conventions (CSRF, stateful sessions, async 202+Location).
+
+
+    ## Authentication
+
+    HTTP Basic Auth. CSRF token required on every mutating request: fetch via a
+
+    GET with `x-csrf-token: fetch`; on 403 with `x-csrf-token: Required`, re-fetch
+
+    and retry once.
+
+
+    ## Versions
+
+    BW object versions use single-letter codes: `a` (active), `m` (modified /
+
+    inactive), `d` (delivery / content).
+
+
+    ## Async Operations
+
+    Activation, transport collection and other long-running operations return
+
+    202 Accepted with a `Location` header pointing at a job under `/jobs/{guid}`;
+
+    poll its `/status` until `completed` or `failed`.
+
+
+    ## Media Types
+
+    Bodies are XML with SAP BW vendor namespaces (e.g.
+
+    `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`). This spec uses
+
+    `application/xml` generically; the concrete vendor type for each object type
+
+    is listed by `GET /discovery`.
+
+    '
+  contact:
+    name: Datazoo ERPL
+  license:
+    name: MIT
+servers:
+- url: https://{host}:{port}/sap/bw/modeling
+  description: SAP BW Modeling base URL
+  variables:
+    host:
+      default: localhost
+      description: SAP system hostname
+    port:
+      default: '44300'
+      description: SAP ICM HTTPS port
+security:
+- basicAuth: []
+tags:
+- name: discovery
+  description: Service discovery, system & DB info, changeability, value sets
+- name: search
+  description: BW object search, metadata search, tree navigation, favorites
+- name: objects
+  description: Read BW modeling objects (ADSO, IOBJ, TRFN, DTPA, RSDS, generic tlogo)
+- name: query
+  description: Query-family components, query properties, reporting, value help
+- name: lifecycle
+  description: Create, lock/unlock, save, delete, activate, validate
+- name: transport
+  description: Transport collection (CTO) and request movement
+- name: jobs
+  description: Async job status, messages, progress, steps, lifecycle
+- name: lineage
+  description: Cross-references, lineage, application log, change info, export
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Authentication over HTTPS
+  parameters:
+    sapClient:
+      name: sap-client
+      in: query
+      description: SAP client number (e.g. 001)
+      schema:
+        type: string
+    sapLanguage:
+      name: sap-language
+      in: query
+      description: SAP language key (e.g. EN)
+      schema:
+        type: string
+    csrfToken:
+      name: x-csrf-token
+      in: header
+      description: 'CSRF token obtained via GET with x-csrf-token: fetch'
+      required: true
+      schema:
+        type: string
+    csrfTokenFetch:
+      name: x-csrf-token
+      in: header
+      description: Set to `fetch` to obtain a CSRF token
+      schema:
+        type: string
+        enum:
+        - fetch
+    bwObjectName:
+      name: name
+      in: path
+      required: true
+      description: BW object technical name (e.g. ZADSO001), lowercased in the URI
+      schema:
+        type: string
+    bwVersion:
+      name: version
+      in: path
+      required: true
+      description: 'Object version: a (active), m (modified/inactive), d (delivery)'
+      schema:
+        type: string
+        enum:
+        - a
+        - m
+        - d
+  responses:
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/xml:
+          schema:
+            $ref: '#/components/schemas/Exception'
+    Forbidden:
+      description: 'Forbidden. If response header `x-csrf-token` is `Required`, the token
+
+        expired -- re-fetch via GET with `x-csrf-token: fetch` and retry once.
+
+        Also returned ("Service cannot be reached") when the `/sap/bw/modeling`
+
+        ICF node is not activated.
+
+        '
+      headers:
+        x-csrf-token:
+          description: Value `Required` indicates token expiry
+          schema:
+            type: string
+      content:
+        application/xml:
+          schema:
+            $ref: '#/components/schemas/Exception'
+    NotFound:
+      description: Object does not exist
+      content:
+        application/xml:
+          schema:
+            $ref: '#/components/schemas/Exception'
+    AsyncAccepted:
+      description: 'Async operation started. Poll the URL in the `Location` header
+
+        (a `/jobs/{guid}` resource) until status is `completed` or `failed`.
+
+        '
+      headers:
+        Location:
+          description: Polling URL for the async job
+          required: true
+          schema:
+            type: string
+    Error:
+      description: Error response
+      content:
+        application/xml:
+          schema:
+            $ref: '#/components/schemas/Exception'
+  schemas:
+    Exception:
+      type: object
+      description: 'SAP exception payload (com.sap.adt / BW communication framework).
+
+        Returned on 4xx/5xx with an `exc:exception` or `messages` root.
+
+        '
+      properties:
+        namespace:
+          type: string
+        type:
+          type: string
+        message:
+          type: string
+        localizedMessage:
+          type: string
+    AtomLink:
+      type: object
+      description: Atom link element used in discovery/collection payloads.
+      properties:
+        href:
+          type: string
+        rel:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+    ObjectReference:
+      type: object
+      description: A reference to a BW modeling object.
+      properties:
+        uri:
+          type: string
+          description: Object URI relative to /sap/bw/modeling
+        type:
+          type: string
+          description: BW TLOGO type code (e.g. ADSO, IOBJ, TRFN)
+        name:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+          enum:
+          - a
+          - m
+          - d
+    AsyncJobReference:
+      type: object
+      description: Reference to an async job started by a 202 response.
+      properties:
+        guid:
+          type: string
+        location:
+          type: string
+        status:
+          type: string
+          enum:
+          - running
+          - completed
+          - failed
+    BwDiscoveryService:
+      type: object
+      description: 'Atom Publishing Protocol service document (`<app:service>`) describing the
+
+        BW modeling object collections. Reuses shared `AtomLink` for links.
+
+        '
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwDiscoveryWorkspace'
+    BwDiscoveryWorkspace:
+      type: object
+      description: An `<app:workspace>` grouping one or more collections.
+      properties:
+        title:
+          type: string
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwDiscoveryCollection'
+    BwDiscoveryCollection:
+      type: object
+      description: 'An `<app:collection>` for one BW object type. Flattened by the client into
+
+        one BwServiceEntry per template link, each carrying scheme/term/href/type.
+
+        '
+      properties:
+        href:
+          type: string
+          description: Base collection URI (e.g. /sap/bw/modeling/adso).
+        title:
+          type: string
+        accept:
+          type: string
+          description: 'Versioned vendor media type from `<app:accept>`, e.g.
+
+            `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`.
+
+            '
+        scheme:
+          type: string
+          description: Category scheme, e.g. http://www.sap.com/bw/modeling/adso
+        term:
+          type: string
+          description: TLOGO term (object type), e.g. adso, iobj, trfn
+        templateLinks:
+          type: array
+          description: '`<adtcomp:templateLink>` entries (rel/template/type).'
+          items:
+            $ref: '#/components/schemas/BwTemplateLink'
+    BwTemplateLink:
+      type: object
+      description: 'An `<adtcomp:templateLink>` (namespace
+
+        http://www.sap.com/adt/compatibility): a relation with a URI template.
+
+        '
+      properties:
+        rel:
+          type: string
+          description: 'Relation, e.g. `self`, `latest-version`, `version-history`,
+
+            `http://www.sap.com/bw/modeling/relations:lock`.
+
+            '
+        template:
+          type: string
+          description: RFC 6570 URI template, e.g. /sap/bw/modeling/adso/{adsonm}/{version}
+        type:
+          type: string
+          description: Media type for this relation (when set).
+        title:
+          type: string
+    BwDbInfoFeed:
+      type: object
+      description: Atom feed wrapping a single dbInfo entry.
+      properties:
+        title:
+          type: string
+        updated:
+          type: string
+          format: date-time
+        dbInfo:
+          $ref: '#/components/schemas/BwDbInfo'
+    BwDbInfo:
+      type: object
+      description: '`<dbInfo:dbInfo>` content (namespace http://www.sap.com/bw/modeling/DBInfo).
+
+        Maps to client struct BwDbInfo.
+
+        '
+      properties:
+        name:
+          type: string
+          description: Database name from `<dbInfo:name>` (e.g. HDB).
+        databaseType:
+          type: string
+          description: Database type from `<dbInfo:type>` (e.g. HDB).
+        version:
+          type: string
+          description: Server version from `<dbInfo:version @server>`.
+        patchlevel:
+          type: string
+          description: Patch level from `<dbInfo:patchlevel>`.
+        host:
+          type: string
+          description: Host from `<dbInfo:connect @host>` (e.g. vhcala4hci).
+        instance:
+          type: string
+          description: Instance number from `<dbInfo:connect @instance>` (e.g. 02).
+        port:
+          type: string
+          description: SQL port from `<dbInfo:connect @port>` (e.g. 30215).
+        user:
+          type: string
+          description: DB user from `<dbInfo:connect @user>` (e.g. SAPA4H).
+        schema:
+          type: string
+          description: DB schema from `<dbInfo:schema>` (e.g. SAPA4H).
+    BwSystemInfoFeed:
+      type: object
+      description: 'BW system capabilities Atom feed. Carries one entry per capability block;
+
+        the client extracts only the system properties.
+
+        '
+      properties:
+        title:
+          type: string
+        updated:
+          type: string
+          format: date-time
+        dbInfo:
+          $ref: '#/components/schemas/BwDbInfo'
+        properties:
+          type: array
+          description: '`<sysInfo:property name= value=>` rows.'
+          items:
+            $ref: '#/components/schemas/BwSystemProperty'
+        resourceProperties:
+          type: array
+          description: '`<resource:property name= value=>` capability flags.'
+          items:
+            $ref: '#/components/schemas/BwSystemProperty'
+        changeability:
+          $ref: '#/components/schemas/BwChangeability'
+        adtUriReferences:
+          $ref: '#/components/schemas/BwAdtUriReferences'
+    BwSystemProperty:
+      type: object
+      description: 'A single `<sysInfo:property>` / `<resource:property>` key-value pair.
+
+        Maps to client struct BwSystemProperty.
+
+        '
+      properties:
+        key:
+          type: string
+          description: Property name (e.g. system.logsys, bw.planning_supported).
+        value:
+          type: string
+          description: Property value (e.g. A4HCLNT001, X).
+        description:
+          type: string
+          description: Optional human-readable description (rarely populated).
+    BwChangeability:
+      type: object
+      description: 'System-wide changeability flags from `<chgInfo:changeability>` in the
+
+        systeminfo feed.
+
+        '
+      properties:
+        bwChangeable:
+          type: string
+          description: '"true"/"false" — BW objects changeable in this system.'
+        basisChangeable:
+          type: string
+          description: '"true"/"false" — Basis/repository objects changeable.'
+    BwChangeabilityFeed:
+      type: object
+      description: 'Atom feed of per-TLOGO changeability entries as parsed by
+
+        BwGetChangeability. (The dedicated endpoint is absent on a4h; shape derived
+
+        from the parser.)
+
+        '
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwChangeabilityEntry'
+    BwChangeabilityEntry:
+      type: object
+      description: Per-TLOGO changeability setting. Maps to client struct BwChangeabilityEntry.
+      properties:
+        objectType:
+          type: string
+          description: TLOGO code (e.g. ADSO, IOBJ).
+        changeable:
+          type: string
+          description: Changeability status.
+        transportable:
+          type: string
+          description: '"X" or "" — whether the object type is transportable.'
+        description:
+          type: string
+    BwAdtUriReferences:
+      type: object
+      description: '`<adtUri:references>` element from the systeminfo feed: ADT resource base
+
+        URIs for cross-protocol navigation.
+
+        '
+      properties:
+        adtTableDefinitionUri:
+          type: string
+          description: e.g. /sap/bc/adt/ddic/tables/
+        adtDataElementDefinitionUri:
+          type: string
+          description: e.g. /sap/bc/adt/ddic/dataelements/
+    BwAdtUriMappingFeed:
+      type: object
+      description: 'Atom feed of BW-to-ADT URI mappings as parsed by BwGetAdtUriMappings.
+
+        (Dedicated endpoint absent on a4h; shape derived from the parser.)
+
+        '
+      properties:
+        mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwAdtUriMapping'
+    BwAdtUriMapping:
+      type: object
+      description: A BW-to-ADT URI mapping entry. Maps to client struct BwAdtUriMapping.
+      properties:
+        bwType:
+          type: string
+          description: BW object type code.
+        adtType:
+          type: string
+          description: Corresponding ADT object type.
+        bwUriTemplate:
+          type: string
+          description: BW URI template.
+        adtUriTemplate:
+          type: string
+          description: ADT URI template.
+    BwDataVolumeRows:
+      type: object
+      description: 'Generic-row representation of the data volumes payload. The client
+
+        (ParseGenericRows) flattens every leaf XML element into a row of its
+
+        attributes; reserved keys `_element` (local element name) and `_text`
+
+        (element text content) are added. Concrete field names depend on the
+
+        server payload (endpoint absent on the captured a4h system).
+
+        '
+      properties:
+        rows:
+          type: array
+          items:
+            type: object
+            description: One flattened row; arbitrary string-keyed fields.
+            additionalProperties:
+              type: string
+    JobInfo:
+      type: object
+      description: 'Summary/result resource of a BW background job. Parsed from the root
+
+        `<job>` element''s attributes by `BwGetJobResult`.
+
+        '
+      properties:
+        guid:
+          type: string
+          description: Job GUID (from `guid` or `id` attribute)
+        status:
+          type: string
+          description: 'Status code: N (new), R (running), E (error), W (warning), S (success)'
+        jobType:
+          type: string
+          description: Job type, e.g. TLOGO_ACTIVATION
+        description:
+          type: string
+    JobList:
+      type: object
+      description: 'Collection of BW background jobs. Returned by `GET /jobs`. The parser
+
+        accepts either a single `<job>` root or a wrapper element with `<job>`
+
+        children.
+
+        '
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobInfo'
+    JobStatus:
+      type: object
+      description: 'Status of a BW background job, parsed by `BwGetJobStatus` from the
+
+        `status`/`value` attribute (or element text).
+
+        '
+      properties:
+        guid:
+          type: string
+        status:
+          type: string
+          description: N (new), R (running), E (error), W (warning), S (success)
+        jobType:
+          type: string
+          description: Job type, e.g. TLOGO_ACTIVATION
+        description:
+          type: string
+    JobProgress:
+      type: object
+      description: 'Progress of a BW background job, parsed by `BwGetJobProgress`.
+
+        '
+      properties:
+        guid:
+          type: string
+        percentage:
+          type: integer
+          description: Completion percentage (from `percentage`/`value` attribute or text)
+        status:
+          type: string
+        description:
+          type: string
+    JobStep:
+      type: object
+      description: 'One step of a BW background job, parsed by `BwGetJobStep` /
+
+        `BwGetJobSteps`.
+
+        '
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+        description:
+          type: string
+    JobStepList:
+      type: object
+      description: 'List of steps belonging to a BW background job. Each child element of
+
+        the root is parsed into a step.
+
+        '
+      properties:
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobStep'
+    JobMessage:
+      type: object
+      description: 'A single BAL (application-log) message from a BW background job, parsed
+
+        by `BwGetJobMessages`.
+
+        '
+      properties:
+        severity:
+          type: string
+          description: 'Severity (from `severity`/`type`): E error, W warning, I info, S success'
+        objectName:
+          type: string
+          description: Affected object name (from `objectName` attribute)
+        text:
+          type: string
+          description: Message text (from `text` attribute or element text)
+    JobMessageList:
+      type: object
+      description: 'List of application-log messages for a BW background job.
+
+        '
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobMessage'
+    BwCreateResult:
+      type: object
+      description: 'Result of a BW object create. The created object URI comes from the
+
+        `Location` response header (or is reconstructed from type/name); the
+
+        HTTP status (200/201/202/204) is also captured.
+
+        '
+      properties:
+        uri:
+          type: string
+          description: URI of the created object
+        httpStatus:
+          type: integer
+          description: HTTP status code of the create call
+    BwLockResult:
+      type: object
+      description: 'Parsed BW lock response. The body is flat XML elements without a root
+
+        wrapper; the client wraps them synthetically before parsing. Transport
+
+        fields are populated when the object is under change control.
+
+        '
+      properties:
+        lockHandle:
+          type: string
+          description: LOCK_HANDLE -- required for save/delete
+        transportNumber:
+          type: string
+          description: CORRNR
+        transportText:
+          type: string
+          description: CORRTEXT
+        transportOwner:
+          type: string
+          description: CORRUSER
+        isLocal:
+          type: boolean
+          description: IS_LOCAL == 'X'
+        timestamp:
+          type: string
+          description: Server timestamp (response header)
+        packageName:
+          type: string
+          description: Development-Class response header
+        foreignObjectLocks:
+          type: string
+          description: Foreign-Object-Locks response header
+    BwActivationObject:
+      type: object
+      description: One object entry inside a mass-activation request.
+      properties:
+        objectName:
+          type: string
+        objectType:
+          type: string
+          description: TLOGO type code
+        objectVersion:
+          type: string
+          description: Source version (e.g. M)
+        objectSubtype:
+          type: string
+        objectDesc:
+          type: string
+        objectStatus:
+          type: string
+          description: e.g. INA
+        corrnum:
+          type: string
+          description: Transport (CORRNR)
+        package:
+          type: string
+        href:
+          type: string
+          description: Object URI
+    BwActivationRequest:
+      type: object
+      description: 'Mass-activation worklist (`bwActivation:objects`,
+
+        namespace http://www.sap.com/bw/massact). Top-level flags map to the
+
+        `forceAct`, `execChk`, `withCTO` attributes plus `bwChangeable` /
+
+        `basisChangeable`.
+
+        '
+      properties:
+        forceAct:
+          type: boolean
+          description: Force activation through warnings
+        execChk:
+          type: boolean
+          description: Execute checks during activation
+        withCTO:
+          type: boolean
+          description: Include CTO (transport) handling
+        objects:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwActivationObject'
+    BwActivationMessage:
+      type: object
+      description: A single message from an activation/validation result.
+      properties:
+        severity:
+          type: string
+          description: E error, W warning, I info, S success
+        objectName:
+          type: string
+        objectType:
+          type: string
+        text:
+          type: string
+    BwActivationResult:
+      type: object
+      description: 'Outcome of an activation or validation. `success` is false if any
+
+        message has severity E. For background jobs, `jobGuid` holds the GUID
+
+        parsed from the `Location` header (`/jobs/{guid}`).
+
+        '
+      properties:
+        success:
+          type: boolean
+        jobGuid:
+          type: string
+          description: Set for background (asjob) activations
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwActivationMessage'
+    BwValidationMessage:
+      type: object
+      description: A validation message parsed from an Atom entry.
+      properties:
+        severity:
+          type: string
+        code:
+          type: string
+        text:
+          type: string
+        objectType:
+          type: string
+        objectName:
+          type: string
+    BwValidationFeed:
+      type: object
+      description: 'Atom feed of validation messages. Each `<entry>` yields a
+
+        BwValidationMessage (title -> text; properties -> severity/code/object).
+
+        '
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwValidationMessage'
+    BwLockEntry:
+      type: object
+      description: 'One lock from the lock monitoring container (`<lock>` element under
+
+        `bwLocks:dataContainer`). Owner/argument fields are base64-encoded.
+
+        '
+      properties:
+        client:
+          type: string
+        user:
+          type: string
+        mode:
+          type: string
+          description: Lock mode, e.g. E (exclusive)
+        tableName:
+          type: string
+          description: e.g. RSBWOBJ_ENQUEUE
+        tableDesc:
+          type: string
+        object:
+          type: string
+          description: Locked object name
+        arg:
+          type: string
+          description: Base64-encoded lock argument
+        owner1:
+          type: string
+          description: Base64-encoded owner 1
+        owner2:
+          type: string
+          description: Base64-encoded owner 2
+        timestamp:
+          type: string
+          description: YYYYMMDDHHMMSS
+        updCount:
+          type: integer
+        diaCount:
+          type: integer
+    BwLockList:
+      type: object
+      description: 'Lock monitoring container `bwLocks:dataContainer`
+
+        (namespace http://www.sap.com/bw/locks). Live empty result:
+
+        `<bwLocks:dataContainer apiVersion="2" size="0"/>`.
+
+        '
+      properties:
+        apiVersion:
+          type: string
+        size:
+          type: integer
+          description: Number of locks in the container
+        locks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwLockEntry'
+    XrefFeed:
+      type: object
+      description: 'Atom feed (`atom:feed`) returned by `/repo/is/xref`. Captured live for a
+
+        TRFN where-used query against the a4h system.
+
+        '
+      properties:
+        title:
+          type: string
+          description: e.g. 'Where-Used List for BW Objects'
+        updated:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/XrefEntry'
+    XrefEntry:
+      type: object
+      description: 'One `<atom:entry>`. The referenced object lives in
+
+        `atom:content/bwModel:object`; `atom:title` carries a lineage hint.
+
+        '
+      properties:
+        name:
+          type: string
+          description: bwModel:objectName (technicalObjectName) of the referenced object
+        type:
+          type: string
+          description: bwModel:objectType TLOGO code (e.g. DTPA, TRFN, ELEM)
+        version:
+          type: string
+          description: bwModel:objectVersion
+        status:
+          type: string
+          description: bwModel:objectStatus (e.g. active)
+        description:
+          type: string
+          description: atom:title or bwModel:objectDesc — human-readable lineage label
+        uri:
+          type: string
+          description: atom:id / self link href
+        associationType:
+          type: string
+          description: Association code 001..006
+        associationLabel:
+          type: string
+          description: Resolved label (Used by, Uses, Depends on, Required by, Part of, Contains)
+    ApplicationLogFeed:
+      type: object
+      description: Atom feed returned by `/repo/is/applicationlog`.
+      properties:
+        title:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApplicationLogEntry'
+    ApplicationLogEntry:
+      type: object
+      description: One application-log header entry (BwApplicationLogEntry).
+      properties:
+        identifier:
+          type: string
+          description: Log identifier (identifier/id/logId); feeds the message endpoint
+        user:
+          type: string
+          description: username / createdBy
+        timestamp:
+          type: string
+          description: timestamp / starttimestamp / createdAt
+        severity:
+          type: string
+          description: severity / textype / type
+        text:
+          type: string
+          description: atom:title or text/message/description
+    MessageText:
+      type: object
+      description: 'Resolved message text from `/repo/is/message/{identifier}/{textType}`.
+
+        Mirrors BwMessageTextResult; for plain-text responses `text` equals the raw body.
+
+        '
+      properties:
+        identifier:
+          type: string
+        textType:
+          type: string
+        text:
+          type: string
+          description: Parsed text/message/value attribute or child, else the raw body
+        rawResponse:
+          type: string
+          description: Verbatim HTTP response body
+    LineageExport:
+      type: object
+      description: 'Composite lineage/export catalog assembled client-side by the export
+
+        operations (`erpl-adt bw export-area|export-query|export-cube`). It is NOT
+
+        a single SAP endpoint: the CLI performs a BFS over the infoarea node tree
+
+        and composes object reads (adso/trfn/dtpa/rsds/query/dmod) with
+
+        `/repo/is/xref` cross-references to derive a dataflow graph, then renders it
+
+        as a JSON catalog, OpenMetadata JSON, or a Mermaid diagram. Documented here
+
+        for completeness; the underlying HTTP calls are the object-read endpoints
+
+        plus `/repo/is/xref` above. Shape mirrors BwInfoareaExport.
+
+        '
+      properties:
+        schemaVersion:
+          type: string
+        contract:
+          type: string
+          description: e.g. bw.query.export, bw.cube.export
+        infoarea:
+          type: string
+        exportedAt:
+          type: string
+          format: date-time
+        objects:
+          type: array
+          description: Exported BW objects with per-type detail (fields, source/target, lineage).
+          items:
+            $ref: '#/components/schemas/LineageExportObject'
+        dataflow:
+          type: object
+          description: Merged dataflow graph derived from DTP lineage and xref edges.
+          properties:
+            nodes:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  type:
+                    type: string
+                  name:
+                    type: string
+                  role:
+                    type: string
+            edges:
+              type: array
+              items:
+                $ref: '#/components/schemas/LineageEdge'
+        warnings:
+          type: array
+          items:
+            type: string
+        provenance:
+          type: array
+          description: Per-call audit trail (operation, endpoint, status).
+          items:
+            type: object
+            properties:
+              operation:
+                type: string
+              endpoint:
+                type: string
+              status:
+                type: string
+                description: ok | skipped | error
+    LineageExportObject:
+      type: object
+      description: A single object in the export catalog.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: TLOGO code (ADSO, RSDS, TRFN, DTPA, ELEM, ...)
+        subtype:
+          type: string
+        status:
+          type: string
+        description:
+          type: string
+        packageName:
+          type: string
+        uri:
+          type: string
+        fields:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              dataType:
+                type: string
+              infoObject:
+                type: string
+              segmentId:
+                type: string
+              length:
+                type: integer
+              decimals:
+                type: integer
+              key:
+                type: boolean
+        iobjRefs:
+          type: array
+          description: InfoObjects referenced by a query (role = dimension/filter/variable/key_figure).
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              role:
+                type: string
+    LineageEdge:
+      type: object
+      description: A directed dataflow edge (from -> to) in the export graph.
+      properties:
+        id:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        type:
+          type: string
+          description: 'Edge origin: xref | elem-provider | dtp'
+    BwTlogoProperties:
+      type: object
+      description: 'Common `tlogoProperties` block (adtcore namespace) present on most BW
+
+        object reads. Captured from live IOBJ traffic.
+
+        '
+      properties:
+        responsible:
+          type: string
+          description: adtcore:responsible
+        name:
+          type: string
+          description: adtcore:name
+        type:
+          type: string
+          description: adtcore:type (TLOGO)
+        createdAt:
+          type: string
+          format: date-time
+        changedAt:
+          type: string
+          format: date-time
+        changedBy:
+          type: string
+        language:
+          type: string
+        description:
+          type: string
+        infoArea:
+          type: string
+        objectVersion:
+          type: string
+          description: A / M / D
+        objectStatus:
+          type: string
+          description: active / inactive
+        contentState:
+          type: string
+          description: ACT / INA / MOD
+    BwObjectDefinition:
+      type: object
+      description: 'Generic BW object read result as parsed by `BwReadObject`
+
+        (`src/adt/bw_object.cpp`). Field availability depends on the TLOGO; common
+
+        identity/metadata is normalized from root attributes and `tlogoProperties`.
+
+        '
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: TLOGO type code
+        subType:
+          type: string
+          description: xsi:type, e.g. iobj:Package
+        description:
+          type: string
+        shortDescription:
+          type: string
+        longDescription:
+          type: string
+        version:
+          type: string
+          enum:
+          - a
+          - m
+          - d
+        status:
+          type: string
+          description: 'objectStatus: active / inactive'
+        contentState:
+          type: string
+          description: ACT / INA / MOD
+        infoArea:
+          type: string
+        responsible:
+          type: string
+        createdAt:
+          type: string
+        packageName:
+          type: string
+        lastChangedBy:
+          type: string
+        lastChangedAt:
+          type: string
+        language:
+          type: string
+        properties:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Type-specific root attributes and key child elements (e.g.
+
+            infoObjectType, dataType, aggregationType, compounding).
+
+            '
+        tlogoProperties:
+          $ref: '#/components/schemas/BwTlogoProperties'
+    IobjDefinition:
+      type: object
+      description: 'InfoObject definition. Root element `iobj:infoObject`. Captured live from
+
+        IOBJ `0ACTUALDATA`.
+
+        '
+      properties:
+        name:
+          type: string
+        subType:
+          type: string
+          description: xsi:type, e.g. iobj:Package, iobj:TimeCharacteristic
+        attributeOnly:
+          type: boolean
+        technicalInfoObject:
+          type: boolean
+        fieldName:
+          type: string
+        objectSpecificDataType:
+          type: string
+        infoObjectType:
+          type: string
+          description: e.g. DPA, CHA, KYF
+        dataType:
+          type: string
+          description: e.g. NUMC, CHAR, DEC
+        length:
+          type: integer
+        shortDescription:
+          type: string
+        longDescription:
+          type: string
+        texts:
+          type: array
+          description: Per-language short/long texts
+          items:
+            type: object
+            properties:
+              language:
+                type: string
+              shortText:
+                type: string
+              longText:
+                type: string
+        tlogoProperties:
+          $ref: '#/components/schemas/BwTlogoProperties'
+    AdsoField:
+      type: object
+      description: A single ADSO field, parsed from `<fields>/<field>`.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        infoObject:
+          type: string
+          description: Referenced InfoObject
+        dataType:
+          type: string
+          description: from the `type` attribute
+        length:
+          type: integer
+        decimals:
+          type: integer
+        key:
+          type: boolean
+          description: from keyFlag == X
+    AdsoDefinition:
+      type: object
+      description: 'Advanced DataStore Object. Shape from `BwReadAdsoDetail`
+
+        (`src/adt/bw_lineage.cpp`). Not captured live (no ADSO content on the
+
+        reference system).
+
+        '
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        packageName:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdsoField'
+    TrfnField:
+      type: object
+      description: A transformation source or target field.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: from the intType attribute
+        aggregation:
+          type: string
+        key:
+          type: boolean
+    TrfnRule:
+      type: object
+      description: A transformation mapping rule (group/rule tree).
+      properties:
+        id:
+          type: string
+        groupId:
+          type: string
+        groupDescription:
+          type: string
+        groupType:
+          type: string
+        sourceField:
+          type: string
+        targetField:
+          type: string
+        ruleType:
+          type: string
+          description: StepDirect, StepFormula, StepConstant, ...
+        formula:
+          type: string
+          description: for StepFormula
+        constant:
+          type: string
+          description: for StepConstant
+        sourceFields:
+          type: array
+          items:
+            type: string
+        targetFields:
+          type: array
+          items:
+            type: string
+    TrfnDefinition:
+      type: object
+      description: 'Transformation. Shape from `BwReadTransformationDetail`
+
+        (`src/adt/bw_lineage.cpp`). Not captured live (no TRFN content on the
+
+        reference system).
+
+        '
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        sourceName:
+          type: string
+        sourceType:
+          type: string
+        targetName:
+          type: string
+        targetType:
+          type: string
+        startRoutine:
+          type: string
+        endRoutine:
+          type: string
+        expertRoutine:
+          type: string
+        hanaRuntime:
+          type: boolean
+        sourceFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrfnField'
+        targetFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrfnField'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrfnRule'
+    DtpFilterField:
+      type: object
+      description: A DTP filter field with its selection ranges.
+      properties:
+        name:
+          type: string
+        field:
+          type: string
+        selected:
+          type: boolean
+        selectionType:
+          type: string
+        selections:
+          type: array
+          items:
+            type: object
+            properties:
+              low:
+                type: string
+              high:
+                type: string
+              op:
+                type: string
+              excluding:
+                type: boolean
+    DtpProgramFlowNode:
+      type: object
+      description: A node in the DTP program-flow graph.
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+        next:
+          type: string
+    DtpDefinition:
+      type: object
+      description: 'Data Transfer Process. Shape from `BwReadDtpDetail`
+
+        (`src/adt/bw_lineage.cpp`). Not captured live (DTPA name truncation on the
+
+        reference system).
+
+        '
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        sourceName:
+          type: string
+        sourceType:
+          type: string
+          description: e.g. RSDS, ADSO
+        sourceSystem:
+          type: string
+          description: for RSDS sources
+        targetName:
+          type: string
+        targetType:
+          type: string
+          description: e.g. ADSO, DEST
+        requestSelectionMode:
+          type: string
+        extractionSettings:
+          type: object
+          additionalProperties:
+            type: string
+        executionSettings:
+          type: object
+          additionalProperties:
+            type: string
+        runtimeProperties:
+          type: object
+          additionalProperties:
+            type: string
+        errorHandling:
+          type: object
+          additionalProperties:
+            type: string
+        dtpExecution:
+          type: object
+          additionalProperties:
+            type: string
+        semanticGroupFields:
+          type: array
+          items:
+            type: string
+        filterFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/DtpFilterField'
+        programFlow:
+          type: array
+          items:
+            $ref: '#/components/schemas/DtpProgramFlowNode'
+    DmodNode:
+      type: object
+      description: A node in a BW data-flow (DMOD) topology.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+    DmodConnection:
+      type: object
+      description: A directed connection between two DMOD nodes.
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        type:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+    DmodDefinition:
+      type: object
+      description: 'Data Flow / Data Model topology. Shape from `BwReadDataFlow`
+
+        (`src/adt/bw_dataflow.cpp`). Not captured live (no DMOD content on the
+
+        reference system).
+
+        '
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DmodNode'
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/DmodConnection'
+    RsdsField:
+      type: object
+      description: A DataSource field (within a segment).
+      properties:
+        segmentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        dataType:
+          type: string
+          description: from intType/type attribute
+        length:
+          type: integer
+        decimals:
+          type: integer
+        key:
+          type: boolean
+    RsdsDefinition:
+      type: object
+      description: 'DataSource (RSDS). Shape from `BwReadRsdsDetail` (`src/adt/bw_rsds.cpp`).
+
+        Not captured live (no RSDS content on the reference system).
+
+        '
+      properties:
+        name:
+          type: string
+        sourceSystem:
+          type: string
+        description:
+          type: string
+        packageName:
+          type: string
+        fields:
+          type: array
+          description: Flattened across all segments
+          items:
+            $ref: '#/components/schemas/RsdsField'
+    QueryResource:
+      type: object
+      description: 'Root `Qry:queryResource` (namespace http://www.sap.com/bw/Query.ecore)
+
+        for a query-family component. Contains one mainComponent and zero or
+
+        more reusable subComponents. Captured live from query 0D_FC_NW_C01_Q0007.
+
+        '
+      properties:
+        schemaVersion:
+          type: string
+          description: Qry:schemaVersion, e.g. 1.0
+        mainComponent:
+          $ref: '#/components/schemas/QueryComponent'
+        subComponents:
+          type: array
+          description: Reusable referenced components (variables, RKF, CKF, etc.)
+          items:
+            $ref: '#/components/schemas/QueryComponent'
+    QueryComponent:
+      type: object
+      description: 'A query-family component node (`Qry:mainComponent` or
+
+        `Qry:subComponents`). The concrete shape is selected by the `xsi:type`
+
+        attribute (e.g. Qry:Query, Qry:Variable, Qry:RKF). Carries entity
+
+        properties (adtCore:*) and, for queries, rows/columns/free dimensions,
+
+        filter selections and member hints (extracted by the client into a
+
+        dependency graph).
+
+        '
+      properties:
+        xsiType:
+          type: string
+          description: xsi:type discriminator (Qry:Query, Qry:Variable, ...)
+        id:
+          type: string
+          description: Component GUID
+        technicalName:
+          type: string
+        componentVersion:
+          type: string
+        providerName:
+          type: string
+          description: InfoProvider name (queries)
+        reusable:
+          type: boolean
+        description:
+          type: object
+          description: Qry:description element
+          properties:
+            value:
+              type: string
+            default:
+              type: boolean
+        entityProperties:
+          $ref: '#/components/schemas/QueryEntityProperties'
+        references:
+          type: array
+          description: 'Derived references the client extracts (DIMENSION on rows/columns/
+
+            free, FILTER_FIELD on selections, KEY_FIGURE on keyFigure tokens,
+
+            MEMBER on member default hints, subcomponents).
+
+            '
+          items:
+            $ref: '#/components/schemas/QueryComponentRef'
+    QueryEntityProperties:
+      type: object
+      description: Qry:entityProperties block with adtCore:* attributes and status links.
+      properties:
+        name:
+          type: string
+          description: adtCore:name
+        description:
+          type: string
+          description: adtCore:description
+        masterLanguage:
+          type: string
+        responsible:
+          type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        changedBy:
+          type: string
+        changedAt:
+          type: string
+          format: date-time
+        packageRef:
+          type: string
+          description: adtCore:packageRef/@adtCore:name
+        infoArea:
+          type: string
+        objectStatus:
+          type: string
+          description: e.g. active
+        links:
+          type: array
+          description: Atom self/edit links to the component sub-resource
+          items:
+            $ref: '#/components/schemas/AtomLink'
+    QueryComponentRef:
+      type: object
+      description: 'A reference the client extracts from a query component (used to build
+
+        the dependency / lineage graph). type is a normalized token such as
+
+        QUERY, VARIABLE, DIMENSION, FILTER_FIELD, KEY_FIGURE, MEMBER.
+
+        '
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        role:
+          type: string
+          description: rows | columns | free | filter | key_figure | member | subcomponent | ...
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+    QueryReportingRecordList:
+      type: object
+      description: 'Generic parse result used by reporting metadata (BICS) and qprops:
+
+        a flat list of records, one per XML element that has at least one
+
+        attribute or text. Field `_element` holds the element local name,
+
+        `_text` (if present) holds element text; all attributes are mapped
+
+        verbatim. Schema is intentionally untyped because the underlying
+
+        payloads vary by content type and component.
+
+        '
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryReportingRecord'
+    QueryReportingRecord:
+      type: object
+      description: One generically parsed XML element.
+      properties:
+        _element:
+          type: string
+          description: Element local name
+        _text:
+          type: string
+          description: Element text content, if any
+      additionalProperties:
+        type: string
+    QueryValueHelp:
+      type: object
+      description: 'Root `valueHelp` (namespace http://www.sap.com/bw/modeling) returned by
+
+        /is/values/{domain}. Captured live from /is/values/infoareas. Contains
+
+        a meta-information header, a column catalog and value rows.
+
+        '
+      properties:
+        valueHelpMetaInformation:
+          type: object
+          properties:
+            entityname:
+              type: string
+            valueHelpLines:
+              type: string
+              description: Row count (string, may have trailing space)
+        valueHelpCatalog:
+          type: array
+          description: Column definitions; row values are positional w.r.t. this list
+          items:
+            type: object
+            properties:
+              columnname:
+                type: string
+              title:
+                type: string
+        valueHelpValues:
+          type: array
+          description: Result rows; each row is an ordered list of column values
+          items:
+            $ref: '#/components/schemas/QueryValueHelpRow'
+    QueryValueHelpRow:
+      type: object
+      description: One value-help row; `value` entries align positionally to the catalog columns.
+      properties:
+        value:
+          type: array
+          items:
+            type: string
+    BwSearchFeed:
+      type: object
+      description: 'Atom feed (`atom:feed`, namespaces `atom`=http://www.w3.org/2005/Atom and
+
+        `bwModel`=http://www.sap.com/bw/modeling) returned by BW object search. A root
+
+        attribute `bwModel:feedIncomplete=true` indicates the result set was truncated.
+
+        '
+      properties:
+        title:
+          type: string
+          description: Feed title, e.g. 'Search BW Objects'.
+        updated:
+          type: string
+          format: date-time
+        feedIncomplete:
+          type: boolean
+          description: True when the result set exceeded maxSize and was truncated.
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwSearchEntry'
+    BwSearchEntry:
+      type: object
+      description: 'One search hit. Built from `atom:title` (description), `atom:id` (object URI),
+
+        the `self` link, and the `bwModel:object` element inside `atom:content`.
+
+        '
+      properties:
+        name:
+          type: string
+          description: objectName attribute (technical name).
+        type:
+          type: string
+          description: objectType TLOGO code (e.g. IOBJ, ADSO).
+        subtype:
+          type: string
+          description: objectSubtype attribute, if present.
+        description:
+          type: string
+          description: atom:title / objectDesc.
+        version:
+          type: string
+          description: objectVersion (A/M/N).
+        status:
+          type: string
+          description: objectStatus (e.g. active, ACT, INA).
+        technicalName:
+          type: string
+          description: technicalObjectName attribute.
+        lastChanged:
+          type: string
+          description: lastChangedAt attribute, if present.
+        uri:
+          type: string
+          description: Object URI from atom:id or the self link (e.g. /sap/bw/modeling/iobj/0actualdata/m).
+        selfType:
+          type: string
+          description: Concrete vendor media type from the self link's type attr (e.g. application/vnd.sap-bw-modeling.infoobject+xml).
+    BwSearchMetadataFeed:
+      type: object
+      description: 'Atom feed of BW search metadata descriptors (facets / search field value sets).
+
+        Element and attribute names vary by system; the client probes several candidate
+
+        names per logical field.
+
+        '
+      properties:
+        title:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwSearchMetadataEntry'
+    BwSearchMetadataEntry:
+      type: object
+      description: A single search-metadata descriptor.
+      properties:
+        name:
+          type: string
+          description: Field/facet key (from name|field|key|id attribute or child).
+        value:
+          type: string
+          description: Value/code (from value|code|defaultValue).
+        description:
+          type: string
+          description: Label (atom:title or description|text|label).
+        category:
+          type: string
+          description: Grouping (from category|group|scope).
+    BwNodeFeed:
+      type: object
+      description: 'Atom feed of repository tree child nodes, shared by InfoProvider and DataSource
+
+        node-structure endpoints. Each entry carries a `bwModel:object`, a `children`
+
+        link for drill-down, and a `self` link to the modeling object.
+
+        '
+      properties:
+        title:
+          type: string
+          description: e.g. 'Node Structure'.
+        updated:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwNodeEntry'
+    BwNodeEntry:
+      type: object
+      description: One child node of a BW repository tree position.
+      properties:
+        name:
+          type: string
+          description: objectName attribute.
+        type:
+          type: string
+          description: objectType attribute (e.g. AREA, ADSO, semanticalFolder).
+        subtype:
+          type: string
+          description: objectSubtype attribute, if present.
+        description:
+          type: string
+          description: atom:title / objectDesc.
+        version:
+          type: string
+          description: objectVersion attribute, if present.
+        status:
+          type: string
+          description: objectStatus attribute, if present.
+        uri:
+          type: string
+          description: Node URI from atom:id or self link (e.g. /sap/bw/modeling/repo/infoproviderstructure/area/0bct_cb).
+    BwNodePathFeed:
+      type: object
+      description: 'Atom feed describing an object''s path (ancestor chain) in the repository tree.
+
+        The client traverses the tree recursively, extracting name/type/uri from every
+
+        node element it encounters.
+
+        '
+      properties:
+        title:
+          type: string
+          description: e.g. 'Nodepath'.
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwNodePathEntry'
+    BwNodePathEntry:
+      type: object
+      description: One node in the resolved path (breadcrumb segment).
+      properties:
+        name:
+          type: string
+          description: From name|objectName|displayName|nodeName.
+        type:
+          type: string
+          description: From type|objectType|nodeType (e.g. AREA, semanticalFolder).
+        uri:
+          type: string
+          description: From uri|objectUri|id (the atom:id node URI).
+    BwFavoritesFeed:
+      type: object
+      description: 'Atom feed of server-side BW favorites. The feed envelope includes a
+
+        `relations:root` link to `/repo/infoproviderstructure`; entries (when present)
+
+        each describe one favorited object.
+
+        '
+      properties:
+        title:
+          type: string
+          description: e.g. 'Back End Favorites'.
+        updated:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BwFavoriteEntry'
+    BwFavoriteEntry:
+      type: object
+      description: A single backend favorite.
+      properties:
+        name:
+          type: string
+          description: From objectName|name|favoriteName.
+        type:
+          type: string
+          description: From objectType|type.
+        description:
+          type: string
+          description: atom:title or objectDesc|description.
+        uri:
+          type: string
+          description: atom:id favorite object URI.
+    BwGenericRowSet:
+      type: object
+      description: 'Generic flattened representation of an XML document where the schema is not
+
+        fixed (used for virtual folders). The client emits one row per leaf element,
+
+        each row being a map of `_element` (local element name), `_text` (element text,
+
+        if any), and every XML attribute as a key/value string pair.
+
+        '
+      properties:
+        rows:
+          type: array
+          items:
+            type: object
+            description: Map of field name -> value; includes synthetic keys _element and _text.
+            additionalProperties:
+              type: string
+    TransportChangeability:
+      type: object
+      description: Changeability setting for one BW TLOGO type.
+      properties:
+        tlogo:
+          type: string
+          description: TLOGO type code (from tlogo or name attr)
+        transportable:
+          type: boolean
+          description: True when transportable='true'
+        changeable:
+          type: boolean
+          description: True when changeable='X' or 'true'
+    TransportTask:
+      type: object
+      description: A task belonging to a transport request.
+      properties:
+        number:
+          type: string
+        functionType:
+          type: string
+          description: From functionType attribute
+        status:
+          type: string
+        owner:
+          type: string
+    TransportRequest:
+      type: object
+      description: An open transport request with its tasks.
+      properties:
+        number:
+          type: string
+        functionType:
+          type: string
+        status:
+          type: string
+        description:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportTask'
+    TransportObjectEntry:
+      type: object
+      description: A BW object as seen in the transport state.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: BW TLOGO type code
+        operation:
+          type: string
+          description: Pending operation (e.g. insert/update)
+        uri:
+          type: string
+        lock_request:
+          type: string
+          description: Transport request number from lock/request@number sub-element
+        tadir_status:
+          type: string
+          description: Status from tadir@status sub-element
+    TransportCheckResult:
+      type: object
+      description: 'Parsed result of `GET /cto`. Maps the `changeability`, `requests`,
+
+        `objects`, and `messages` sections of the CTO response.
+
+        `writingEnabled` mirrors the `Writing-Enabled` response header.
+
+        '
+      properties:
+        writingEnabled:
+          type: boolean
+        changeability:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportChangeability'
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportRequest'
+        objects:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportObjectEntry'
+        messages:
+          type: array
+          items:
+            type: string
+    TransportRequestBody:
+      type: object
+      description: 'Request body for `POST /cto` (write and collect). Root element
+
+        `bwCTO:transport` in namespace `http://www.sap.com/bw/cto`, containing an
+
+        `objects` wrapper with one or more `object` elements carrying `name` and
+
+        `type` attributes.
+
+        '
+      properties:
+        objects:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: BW object technical name
+              type:
+                type: string
+                description: BW TLOGO type code
+    TransportCollectObject:
+      type: object
+      description: An object returned in the collect `details` section.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: BW TLOGO type code
+        description:
+          type: string
+        status:
+          type: string
+        uri:
+          type: string
+        lastChangedBy:
+          type: string
+          description: From lastChangedBy attribute
+        lastChangedAt:
+          type: string
+          description: From lastChangedAt attribute
+    TransportCollectDependency:
+      type: object
+      description: A dependency returned in the collect `dependencies` section.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: BW TLOGO type code
+        version:
+          type: string
+          enum:
+          - a
+          - m
+          - d
+        author:
+          type: string
+        packageName:
+          type: string
+        associationType:
+          type: string
+        associatedName:
+          type: string
+        associatedType:
+          type: string
+    TransportCollectResult:
+      type: object
+      description: 'Parsed result of `POST /cto?collect=true` (and write messages). Maps the
+
+        `details`, `dependencies`, and `messages` sections of the collect response.
+
+        '
+      properties:
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportCollectObject'
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportCollectDependency'
+        messages:
+          type: array
+          items:
+            type: string
+    MoveRequestEntry:
+      type: object
+      description: 'One movable transport request parsed from a `move_requests` Atom entry.
+
+        Fields are read from atom:title and the atom entry properties
+
+        (request/corrNr, owner/username, status/state, description/text).
+
+        '
+      properties:
+        request:
+          type: string
+          description: Transport request number (request or corrNr)
+        owner:
+          type: string
+          description: Owner (owner or username)
+        status:
+          type: string
+          description: Status (status or state)
+        description:
+          type: string
+          description: Description (atom:title or description/text)
+    MoveRequestFeed:
+      type: object
+      description: Atom feed of movable transport requests.
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MoveRequestEntry'
+paths:
+  /discovery:
+    get:
+      operationId: bwDiscover
+      tags:
+      - discovery
+      summary: BW Modeling service discovery (Atom service document)
+      description: 'Returns the BW Modeling Atom Publishing Protocol service document listing
+
+        every modeling object collection (ADSO, IOBJ, TRFN, DEST, FBP, CTRT, ...)
+
+        together with its base URI, URI templates and the concrete versioned SAP
+
+        vendor media type to use for that object type.
+
+
+        Response media type `application/atomsvc+xml`. Per-collection the document
+
+        carries an `<app:accept>` element (the versioned content type, e.g.
+
+        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`), an `<atom:category>`
+
+        with `scheme`/`term` (the TLOGO), and an `<adtcomp:templateLinks>` block of
+
+        `<adtcomp:templateLink rel=... template=... type=...>` entries (self,
+
+        latest-version, version-history, lock, configuration, value-help, ...).
+
+
+        The client uses this to resolve, per TLOGO, both the request URI and the
+
+        Accept type. Source CLI command: `erpl-adt bw discover`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: Accept
+        in: header
+        description: Request media type; the client sends `application/atomsvc+xml`.
+        schema:
+          type: string
+          default: application/atomsvc+xml
+      - name: bwmt-level
+        in: header
+        description: BW Modeling Tools protocol level sent by the client (e.g. 50).
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Atom service document of BW modeling collections.
+          content:
+            application/atomsvc+xml:
+              schema:
+                $ref: '#/components/schemas/BwDiscoveryService'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/dbinfo:
+    get:
+      operationId: bwGetDbInfo
+      tags:
+      - discovery
+      summary: HANA database connection information
+      description: 'Returns the backing HANA database connection details (name, type, version,
+
+        patch level, host, instance, port, user, schema) as an Atom feed with a
+
+        single `<atom:entry>` whose content is a `<dbInfo:dbInfo>` element
+
+        (namespace `http://www.sap.com/bw/modeling/DBInfo`).
+
+
+        Response media type `application/atom+xml`. Source CLI command:
+
+        `erpl-adt bw dbinfo`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - name: Accept
+        in: header
+        description: Request media type; the client sends `application/atom+xml`.
+        schema:
+          type: string
+          default: application/atom+xml
+      responses:
+        '200':
+          description: Atom feed carrying a single dbInfo entry.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwDbInfoFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/systeminfo:
+    get:
+      operationId: bwGetSystemInfo
+      tags:
+      - discovery
+      summary: BW system capabilities feed (combined system info)
+      description: "Returns the BW system capabilities Atom feed. On this a4h system the feed\ncarries\
+        \ five `<atom:entry>` elements, each a different namespaced content\nblock:\n  - `<dbInfo:dbInfo>`\
+        \ — database connection (same shape as `/repo/is/dbinfo`)\n  - `<sysInfo:properties>` — list of\
+        \ `<sysInfo:property name= value=>`\n    (logical system, server version, language, planning support,\
+        \ feature\n    flags, ...)\n  - `<resource:properties>` — list of `<resource:property name= value=>`\n\
+        \    resource capability flags\n  - `<chgInfo:changeability bwChangeable= basisChangeable=>` —\
+        \ system-wide\n    changeability flags (the standalone `/repo/is/chginfo` resource is not\n  \
+        \  present on this system; the data appears here instead)\n  - `<adtUri:references>` — ADT URI\
+        \ templates for cross-protocol navigation\n    (the standalone `/repo/is/adturi` resource is not\
+        \ present here; the data\n    appears here instead)\n\nThe client parses only the `sysInfo:property`\
+        \ entries into key/value/\ndescription rows. Response media type `application/atom+xml`. Source\
+        \ CLI\ncommands: `erpl-adt bw sysinfo`, and (when the dedicated endpoints exist)\n`erpl-adt bw\
+        \ changeability`, `erpl-adt bw adturi`.\n"
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - name: Accept
+        in: header
+        description: Request media type; the client sends `application/atom+xml`.
+        schema:
+          type: string
+          default: application/atom+xml
+      responses:
+        '200':
+          description: Atom feed of system capability entries.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwSystemInfoFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/chginfo:
+    get:
+      operationId: bwGetChangeability
+      tags:
+      - discovery
+      summary: Per-TLOGO changeability settings
+      description: 'Returns per-object-type (TLOGO) changeability and transportability
+
+        settings. The client parses an Atom feed of `<atom:entry>` elements whose
+
+        content carries `objectType`/`changeable`/`transportable`/`description`
+
+        (also accepted as flat `<chginfo>` / `<changeability>` elements).
+
+
+        NOTE: On the captured a4h BW system this dedicated resource returns
+
+        HTTP 404 ("No suitable resource found"); the changeability flags are
+
+        instead delivered embedded in the `/repo/is/systeminfo` feed as
+
+        `<chgInfo:changeability bwChangeable= basisChangeable=>`. Schema below is
+
+        derived from the client parser (`src/adt/bw_system.cpp::BwGetChangeability`).
+
+
+        Response media type `application/atom+xml`. Source CLI command:
+
+        `erpl-adt bw changeability`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - name: Accept
+        in: header
+        description: Request media type; the client sends `application/atom+xml`.
+        schema:
+          type: string
+          default: application/atom+xml
+      responses:
+        '200':
+          description: Atom feed of changeability entries.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwChangeabilityFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/adturi:
+    get:
+      operationId: bwGetAdtUriMappings
+      tags:
+      - discovery
+      summary: BW-to-ADT URI mappings
+      description: 'Returns the mappings between BW modeling object types and their
+
+        corresponding ADT (`/sap/bc/adt`) resource URI templates, enabling
+
+        cross-protocol navigation from a BW object to its ADT representation
+
+        (e.g. a table definition or data element). The client parses an Atom feed
+
+        of `<atom:entry>` content carrying `bwType`/`adtType`/`bwUri`/`adtUri`
+
+        (also accepted as flat `<mapping>` elements).
+
+
+        NOTE: On the captured a4h BW system this dedicated resource returns
+
+        HTTP 404; the mappings are instead delivered embedded in the
+
+        `/repo/is/systeminfo` feed as `<adtUri:references
+
+        adtTableDefinitionUri="/sap/bc/adt/ddic/tables/"
+
+        adtDataElementDefinitionUri="/sap/bc/adt/ddic/dataelements/"/>`. Schema
+
+        below is derived from the client parser
+
+        (`src/adt/bw_system.cpp::BwGetAdtUriMappings`).
+
+
+        Response media type `application/atom+xml`. Source CLI command:
+
+        `erpl-adt bw adturi`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - name: Accept
+        in: header
+        description: Request media type; the client sends `application/atom+xml`.
+        schema:
+          type: string
+          default: application/atom+xml
+      responses:
+        '200':
+          description: Atom feed of BW-to-ADT URI mappings.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwAdtUriMappingFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/datavolumes:
+    get:
+      operationId: bwGetDataVolumes
+      tags:
+      - discovery
+      summary: BW data volume statistics
+      description: 'Returns data-volume statistics for InfoProviders (record counts / sizes).
+
+        Optionally filtered to a single InfoProvider and capped by a maximum row
+
+        count. The client parses a generic row payload: every leaf XML element is
+
+        flattened into a row of attribute name/value pairs (plus `_element` =
+
+        local element name and `_text` = element text).
+
+
+        NOTE: On the captured a4h BW system this resource returns HTTP 404
+
+        ("No suitable resource found"); the generic-row response shape below is
+
+        derived from the client parser
+
+        (`src/adt/bw_valuehelp.cpp::BwGetDataVolumes` / `ParseGenericRows`).
+
+
+        Source CLI command: `erpl-adt bw datavolumes [--infoprovider=NAME] [--max=N]`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - name: infoprovider
+        in: query
+        description: Restrict statistics to a single InfoProvider (e.g. 0ACTUALDATA).
+        schema:
+          type: string
+      - name: maxrows
+        in: query
+        description: Maximum number of rows to return (CLI `--max`).
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Generic-row data volume payload.
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwDataVolumeRows'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs:
+    get:
+      operationId: bwListJobs
+      tags:
+      - jobs
+      summary: List BW background jobs
+      description: 'List the async background jobs known to the BW Modeling framework.
+
+        Async modeling operations (activation, transport collection, etc.)
+
+        create a job and return its polling URL in a `Location` header; this
+
+        collection enumerates those jobs.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs+xml` (sent as `Accept`).
+
+        Each `<job>` element carries `guid`/`id`, `status`/`value`, `jobType`
+
+        and `description` attributes.
+
+
+        On this a4h system the collection returned HTTP 404
+
+        ("Resource /sap/bw/modeling/jobs does not exist") when no jobs were
+
+        present — jobs are created on demand by async operations.
+
+
+        Source CLI: `erpl-adt bw job list`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: List of background jobs
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}:
+    get:
+      operationId: bwGetJobResult
+      tags:
+      - jobs
+      summary: Read a single BW job result resource
+      description: 'Read the result/summary resource of one background job.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs.job+xml` (sent as
+
+        `Accept`). The root element exposes `guid`/`id`, `status`/`value`,
+
+        `jobType` and `description` attributes.
+
+
+        Source CLI: `erpl-adt bw job result <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID (from the async `Location` header)
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Job result resource
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobInfo'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/status:
+    get:
+      operationId: bwGetJobStatus
+      tags:
+      - jobs
+      summary: Get the status of a BW background job
+      description: 'Poll the current status of a background job. Used as the completion
+
+        check for async modeling operations.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs.job.status+xml` (sent
+
+        as `Accept`). Status is read from a `status`/`value` attribute (falling
+
+        back to the element text). BW single-letter status codes: `N` (new),
+
+        `R` (running), `E` (error), `W` (warning), `S` (success).
+
+
+        Source CLI: `erpl-adt bw job status <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobStatus'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/progress:
+    get:
+      operationId: bwGetJobProgress
+      tags:
+      - jobs
+      summary: Get progress of a BW background job
+      description: 'Read the completion percentage and progress description of a running
+
+        background job.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs.job.progress+xml`
+
+        (sent as `Accept`). Percentage comes from a `percentage`/`value`
+
+        attribute (falling back to element text); `status` and `description`
+
+        are read as attributes.
+
+
+        Source CLI: `erpl-adt bw job progress <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Job progress
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobProgress'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/steps:
+    get:
+      operationId: bwGetJobSteps
+      tags:
+      - jobs
+      summary: List the steps of a BW background job
+      description: 'List the individual steps of a background job.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs.steps+xml` (sent as
+
+        `Accept`). Each child element of the root is parsed into a step with
+
+        `name`, `status` and `description` attributes (description falling back
+
+        to element text).
+
+
+        Source CLI: `erpl-adt bw job steps <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: List of job steps
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobStepList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/steps/{step}:
+    get:
+      operationId: bwGetJobStep
+      tags:
+      - jobs
+      summary: Read one step of a BW background job
+      description: 'Read a single step resource of a background job.
+
+
+        Media type: `application/vnd.sap-bw-modeling.jobs.step+xml` (sent as
+
+        `Accept`). The root element exposes `name`, `status` and `description`
+
+        attributes (description falling back to element text).
+
+
+        Source CLI: `erpl-adt bw job step <guid> <step>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - name: step
+        in: path
+        required: true
+        description: Step name/identifier
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Job step
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobStep'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/messages:
+    get:
+      operationId: bwGetJobMessages
+      tags:
+      - jobs
+      summary: Get the application-log messages of a BW background job
+      description: 'Read the BAL (Business Application Log) messages produced by a
+
+        background job — used to surface activation/collection diagnostics.
+
+
+        Media type: `application/vnd.sap-bw-modeling.balmessages+xml` (sent as
+
+        `Accept`). Each child element is parsed into a message with
+
+        `severity`/`type`, `objectName` and `text` attributes (text falling
+
+        back to element text). Severity codes: `E` error, `W` warning,
+
+        `I` info, `S` success.
+
+
+        Source CLI: `erpl-adt bw job messages <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Job application-log messages
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/JobMessageList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/restart:
+    post:
+      operationId: bwRestartJob
+      tags:
+      - jobs
+      summary: Restart a failed BW background job
+      description: 'Restart a background job that ended in error. Prerequisite: the job
+
+        must be in error state (status `E`).
+
+
+        Mutating request — requires a CSRF token (and the stateful-session
+
+        conventions used by BW modeling writes). The client POSTs an empty body
+
+        with content type `application/xml`. Success is HTTP 200 or 204.
+
+        Request/response shapes derived from code only (not executed live).
+
+
+        Source CLI: `erpl-adt bw job restart <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      - $ref: '#/components/parameters/sapClient'
+      requestBody:
+        required: false
+        description: Empty body
+        content:
+          application/xml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Job restarted
+        '204':
+          description: Job restarted (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/interrupt:
+    post:
+      operationId: bwInterruptJob
+      tags:
+      - jobs
+      summary: Interrupt (cancel) a running BW background job
+      description: 'Cancel a running background job.
+
+
+        Mutating request — requires a CSRF token (and the stateful-session
+
+        conventions used by BW modeling writes). The client POSTs an empty body
+
+        with content type
+
+        `application/vnd.sap-bw-modeling.jobs.job.interrupt+xml`. Success is
+
+        HTTP 200 or 204. Request/response shapes derived from code only (not
+
+        executed live).
+
+
+        Source CLI: `erpl-adt bw job cancel <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      - $ref: '#/components/parameters/sapClient'
+      requestBody:
+        required: false
+        description: Empty body
+        content:
+          application/vnd.sap-bw-modeling.jobs.job.interrupt+xml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Job interrupted
+        '204':
+          description: Job interrupted (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{guid}/cleanup:
+    delete:
+      operationId: bwCleanupJob
+      tags:
+      - jobs
+      summary: Clean up resources of a completed/failed BW job
+      description: 'Remove the temporary resources associated with a completed or failed
+
+        background job.
+
+
+        Mutating request — requires a CSRF token. Issued as an HTTP DELETE on
+
+        the cleanup sub-resource. Success is HTTP 200 or 204. Shapes derived
+
+        from code only (not executed live).
+
+
+        Source CLI: `erpl-adt bw job cleanup <guid>`.
+
+        '
+      parameters:
+      - name: guid
+        in: path
+        required: true
+        description: Background job GUID
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      - $ref: '#/components/parameters/sapClient'
+      responses:
+        '200':
+          description: Job resources cleaned up
+        '204':
+          description: Job resources cleaned up (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{tlogo}/{name}:
+    post:
+      operationId: bwCreateObject
+      tags:
+      - lifecycle
+      summary: Create a BW modeling object
+      description: 'Create a new BW object of the given TLOGO type. The body is the object
+
+        XML in the type-specific SAP BW vendor media type (e.g.
+
+        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`; InfoObjects use plain
+
+        `application/xml`). `tlogo` and `name` are lowercased in the URI.
+
+
+        Requires CSRF token; mutating requests use a stateful session. On success
+
+        the new object URI is returned in the `Location` header (a 202 indicates
+
+        an async create -- poll the `/jobs/{guid}` resource). MUTATING -- request
+
+        and response shapes are derived from `src/adt/bw_object.cpp` (not executed
+
+        against the live system).
+
+
+        Source CLI command: `erpl-adt bw create <tlogo> <name> [--package P]
+
+        [--copy-from NAME] [--copy-from-type T]`.
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI (e.g. adso, iobj, trfn)
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/sapClient'
+      - name: package
+        in: query
+        description: Target development package for the new object
+        schema:
+          type: string
+      - name: copyFromObjectName
+        in: query
+        description: Copy the new object from this existing object's name
+        schema:
+          type: string
+      - name: copyFromObjectType
+        in: query
+        description: TLOGO type of the copy-from source object
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        description: 'Object definition XML. Empty body is allowed when copying from an
+
+          existing object via the copyFrom* query parameters.
+
+          '
+        required: false
+        content:
+          application/xml:
+            schema:
+              type: string
+              description: Object XML in the type-specific BW vendor namespace
+      responses:
+        '201':
+          description: Object created. New object URI in the `Location` header.
+          headers:
+            Location:
+              description: URI of the created object (relative to /sap/bw/modeling)
+              schema:
+                type: string
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwCreateResult'
+        '200':
+          description: Object created (sync result body).
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwCreateResult'
+        '202':
+          $ref: '#/components/responses/AsyncAccepted'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: bwSaveObject
+      tags:
+      - lifecycle
+      summary: Save (update) a BW modeling object
+      description: 'Persist changes to a BW object. Requires a valid `lockHandle` obtained
+
+        from a prior LOCK on the same stateful session, and a CSRF token. The
+
+        body is the full object XML in the type-specific BW vendor media type.
+
+
+        When a transport is supplied via `corrNr`, the client also sets the BW
+
+        context header for the transport lock holder. MUTATING -- shapes derived
+
+        from `src/adt/bw_object.cpp`; not executed against the live system.
+
+
+        Source CLI command: `erpl-adt bw save <tlogo> <name> --lock-handle H
+
+        [--transport TR] [--timestamp TS] --file body.xml`.
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/sapClient'
+      - name: lockHandle
+        in: query
+        required: true
+        description: Lock handle from a prior LOCK action
+        schema:
+          type: string
+      - name: corrNr
+        in: query
+        description: Transport request (CORRNR) to record the change under
+        schema:
+          type: string
+      - name: timestamp
+        in: query
+        description: Optimistic-locking timestamp from the LOCK response
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        description: Full object definition XML to persist.
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+              description: Object XML in the type-specific BW vendor namespace
+      responses:
+        '200':
+          description: Object saved
+        '204':
+          description: Object saved (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: bwDeleteObject
+      tags:
+      - lifecycle
+      summary: Delete a BW modeling object
+      description: 'Delete a BW object. Requires a valid `lockHandle` and a CSRF token; an
+
+        optional transport (`corrNr`) records the deletion and sets the BW
+
+        transport-lock-holder context header. MUTATING -- shapes derived from
+
+        `src/adt/bw_object.cpp`; not executed against the live system.
+
+
+        Source CLI command: `erpl-adt bw delete <tlogo> <name> --lock-handle H
+
+        [--transport TR]`.
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/sapClient'
+      - name: lockHandle
+        in: query
+        required: true
+        description: Lock handle from a prior LOCK action
+        schema:
+          type: string
+      - name: corrNr
+        in: query
+        description: Transport request (CORRNR) to record the deletion under
+        schema:
+          type: string
+      - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          description: Object deleted
+        '204':
+          description: Object deleted (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /{tlogo}/{name}#lock:
+    post:
+      operationId: bwLockObject
+      tags:
+      - lifecycle
+      summary: Lock a BW object for editing
+      description: 'Acquire an edit lock on a BW object via the `action=lock` query flag on
+
+        the object URI: `POST /{tlogo}/{name}?action=lock`. Requires a STATEFUL
+
+        session (`X-sap-adt-sessiontype: stateful`) plus a CSRF token; without a
+
+        stateful session SAP returns HTTP 400. The optional `activity` (default
+
+        `CHAN`) is sent as the `activity_context` request header.
+
+
+        The response body is flat XML elements (no root wrapper): `LOCK_HANDLE`,
+
+        `CORRNR`, `CORRTEXT`, `CORRUSER`, `IS_LOCAL`. The server timestamp,
+
+        package (`Development-Class`) and `Foreign-Object-Locks` come back as
+
+        response headers. HTTP 409/423 indicates the object is locked by another
+
+        user. MUTATING -- shapes derived from `src/adt/bw_object.cpp`; not
+
+        executed against the live system.
+
+
+        Source CLI command: `erpl-adt bw lock <tlogo> <name>
+
+        [--activity CHAN] --session-file s.json`.
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - name: action
+        in: query
+        required: true
+        description: Must be `lock` to acquire an edit lock
+        schema:
+          type: string
+          enum:
+          - lock
+      - name: parent_name
+        in: query
+        description: Parent object name (for child objects)
+        schema:
+          type: string
+      - name: parent_type
+        in: query
+        description: Parent object TLOGO type (for child objects)
+        schema:
+          type: string
+      - name: activity_context
+        in: header
+        description: Lock activity context; omitted when default CHAN
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          description: Lock acquired
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwLockResult'
+        '400':
+          description: 'Bad request -- typically a missing stateful session. Use a persisted
+
+            session file so the stateful context survives across commands.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Lock conflict -- object is locked by another user
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+        '423':
+          description: Locked -- object is locked by another user
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /{tlogo}/{name}#unlock:
+    post:
+      operationId: bwUnlockObject
+      tags:
+      - lifecycle
+      summary: Unlock a BW object
+      description: 'Release an edit lock via `POST /{tlogo}/{name}?action=unlock` on the same
+
+        stateful session that acquired it. Requires a CSRF token. MUTATING --
+
+        shapes derived from `src/adt/bw_object.cpp`; not executed live.
+
+
+        Source CLI command: `erpl-adt bw unlock <tlogo> <name>
+
+        --session-file s.json`.
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - name: action
+        in: query
+        required: true
+        description: Must be `unlock` to release the edit lock
+        schema:
+          type: string
+          enum:
+          - unlock
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          description: Lock released
+        '204':
+          description: Lock released (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /activation:
+    post:
+      operationId: bwActivateObjects
+      tags:
+      - lifecycle
+      summary: Activate, simulate, or validate BW objects (mass activation)
+      description: "Mass-activation endpoint. The request body is a\n`<bwActivation:objects xmlns:bwActivation=\"\
+        http://www.sap.com/bw/massact\">`\ndocument listing each `<object>` (objectName, objectType, objectVersion,\n\
+        objectSubtype, objectStatus, corrnum, package, href, ...). Content-Type\nis `application/vnd.sap-bw-modeling.massact+xml`;\
+        \ requires a CSRF token.\n\nThe `mode` query parameter selects the operation:\n- `activate&simu=false`\
+        \ -- real activation (default)\n- `activate&simu=true` -- simulation (dry run)\n- `activate&asjob=true`\
+        \ -- background; returns 202 + `Location` to\n  `/jobs/{guid}`, poll until completed/failed\n\
+        - `validate&sort=...&onlyina=...` -- validation pass\n\nA synchronous result returns 200 with\
+        \ `<message>`/`<object>` children;\na background job returns 202. MUTATING -- shapes derived from\n\
+        `src/adt/bw_activation.cpp`; not executed against the live system.\n\nSource CLI command: `erpl-adt\
+        \ bw activate <tlogo> <name>\n[--simulate] [--validate] [--background] [--force] [--transport\
+        \ TR]`.\n"
+      parameters:
+      - name: mode
+        in: query
+        required: true
+        description: Activation mode selector
+        schema:
+          type: string
+          enum:
+          - activate
+          - validate
+      - name: simu
+        in: query
+        description: 'When mode=activate: true for a dry-run simulation'
+        schema:
+          type: boolean
+      - name: asjob
+        in: query
+        description: 'When mode=activate: true to run as a background job (202)'
+        schema:
+          type: boolean
+      - name: sort
+        in: query
+        description: 'When mode=validate: sort the worklist'
+        schema:
+          type: boolean
+      - name: onlyina
+        in: query
+        description: 'When mode=validate: restrict to inactive objects'
+        schema:
+          type: boolean
+      - name: corrnum
+        in: query
+        description: Transport request (CORRNR) for the activation
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        description: Mass-activation worklist XML (bwActivation:objects).
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/BwActivationRequest'
+      responses:
+        '200':
+          description: Synchronous activation/validation result
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwActivationResult'
+        '202':
+          $ref: '#/components/responses/AsyncAccepted'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /validation:
+    get:
+      operationId: bwValidateObject
+      tags:
+      - lifecycle
+      summary: Validate a single BW object
+      description: 'Validate one BW object by type/name. The erpl-adt client issues this as a
+
+        GET with `Accept: application/atom+xml`, parsing an Atom feed whose
+
+        `<entry>` elements carry validation messages (severity, code, text,
+
+        objectType, objectName).
+
+
+        LIVE NOTE: on the captured a4h BW system this resource only supports POST
+
+        -- a GET returns HTTP 405 `ExceptionMethodNotSupported` ("Resource
+
+        controller does not support method GET"). Path and parameters are
+
+        confirmed; the verb may differ per system. Source: `src/adt/bw_validation.cpp`.
+
+
+        Source CLI command: `erpl-adt bw validate <tlogo> <name> [--action A]`.
+
+        '
+      parameters:
+      - name: objectType
+        in: query
+        required: true
+        description: BW TLOGO type code (e.g. IOBJ, ADSO)
+        schema:
+          type: string
+      - name: objectName
+        in: query
+        required: true
+        description: BW object technical name
+        schema:
+          type: string
+      - name: action
+        in: query
+        description: 'Validation action (default: validate)'
+        schema:
+          type: string
+          default: validate
+      - $ref: '#/components/parameters/sapClient'
+      responses:
+        '200':
+          description: Validation result feed (Atom)
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwValidationFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: 'Method not supported. On the captured a4h system this resource
+
+            rejects GET and only accepts POST.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /utils/locks:
+    get:
+      operationId: bwListLocks
+      tags:
+      - lifecycle
+      summary: List BW object locks
+      description: 'List active BW object locks (lock monitoring). Returns
+
+        `<bwLocks:dataContainer xmlns:bwLocks="http://www.sap.com/bw/locks">`
+
+        with `apiVersion`/`size` attributes and zero or more `<lock>` children.
+
+        Confirmed live: an empty result is
+
+        `<bwLocks:dataContainer ... size="0"/>`. Source: `src/adt/bw_locks.cpp`.
+
+
+        Source CLI command: `erpl-adt bw locks list [--user U] [--search S]
+
+        [--max N]`.
+
+        '
+      parameters:
+      - name: resultsize
+        in: query
+        description: Maximum number of locks to return
+        schema:
+          type: integer
+          default: 100
+      - name: user
+        in: query
+        description: Filter by lock owner user
+        schema:
+          type: string
+      - name: search
+        in: query
+        description: Search pattern over locked objects
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      responses:
+        '200':
+          description: Lock list container
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwLockList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: bwDeleteLock
+      tags:
+      - lifecycle
+      summary: Delete a stuck BW lock (admin)
+      description: 'Forcibly delete a specific BW lock (administrative operation). The lock to
+
+        remove is identified entirely through request headers taken from a prior
+
+        `GET /utils/locks` entry: `BW_OBJNAME`, `BW_ARGUMENT`, `BW_SCOPE`
+
+        (default `1`), `BW_TYPE` (lock mode), `BW_OWNER1`, `BW_OWNER2`. The owner
+
+        user is passed as the `user` query parameter. Requires a CSRF token.
+
+        MUTATING -- shapes derived from `src/adt/bw_locks.cpp`; not executed live.
+
+
+        Source CLI command: `erpl-adt bw locks delete --user U ...`.
+
+        '
+      parameters:
+      - name: user
+        in: query
+        required: true
+        description: Lock owner user
+        schema:
+          type: string
+      - name: BW_OBJNAME
+        in: header
+        description: Locked table/object name from the lock entry
+        schema:
+          type: string
+      - name: BW_ARGUMENT
+        in: header
+        description: Base64 lock argument from the lock entry
+        schema:
+          type: string
+      - name: BW_SCOPE
+        in: header
+        description: Lock scope (default 1)
+        schema:
+          type: string
+      - name: BW_TYPE
+        in: header
+        description: Lock mode (e.g. E)
+        schema:
+          type: string
+      - name: BW_OWNER1
+        in: header
+        description: Base64 owner1 from the lock entry
+        schema:
+          type: string
+      - name: BW_OWNER2
+        in: header
+        description: Base64 owner2 from the lock entry
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          description: Lock deleted
+        '204':
+          description: Lock deleted (no content)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/xref:
+    get:
+      operationId: bwGetXrefs
+      tags:
+      - lineage
+      summary: Where-used / cross-reference list for a BW object
+      description: 'Returns the where-used list (cross-references) for a BW modeling object:
+
+        the objects that use it, are used by it, depend on it, etc. The response is
+
+        an Atom feed (`application/atom+xml`); each `<atom:entry>` carries a
+
+        `<bwModel:object>` element in its `<atom:content>` and an `<atom:title>`
+
+        with a human-readable lineage hint (e.g. `0TCTHP24O -> 0TCTHP24I`).
+
+
+        Association codes map to labels: 001=Used by, 002=Uses, 003=Depends on,
+
+        004=Required by, 005=Part of, 006=Contains.
+
+
+        This endpoint is the lineage backbone: the export operations
+
+        (`bw export-area` / `export-query` / `export-cube`) call it per
+
+        infoprovider to discover consuming queries and feeding DTPs, turning each
+
+        cross-reference into a dataflow edge.
+
+
+        Source CLI command: `erpl-adt bw xref <TYPE> <NAME>`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: objectType
+        in: query
+        required: true
+        description: BW TLOGO type code of the source object (e.g. IOBJ, TRFN, ADSO, CUBE)
+        schema:
+          type: string
+      - name: objectName
+        in: query
+        required: true
+        description: Technical name of the source object
+        schema:
+          type: string
+      - name: objectVersion
+        in: query
+        description: Object version filter (A=active, M=modified)
+        schema:
+          type: string
+      - name: association
+        in: query
+        description: Filter by association code (001..006)
+        schema:
+          type: string
+      - name: associatedObjectType
+        in: query
+        description: Restrict results to a related TLOGO type
+        schema:
+          type: string
+      - name: $top
+        in: query
+        description: Maximum number of entries to return
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Atom feed of cross-reference entries (may be empty)
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/XrefFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/applicationlog:
+    get:
+      operationId: bwGetApplicationLog
+      tags:
+      - lineage
+      summary: Read BW repository application logs (BAL)
+      description: 'Returns BW application-log (BAL) headers as an Atom feed
+
+        (`application/atom+xml`). Each `<atom:entry>` carries log metadata
+
+        (identifier, user, timestamp, severity) and a `<atom:title>` text.
+
+
+        Note on the a4h trial: the backend rejects the `username` parameter
+
+        ("Parameter username could not be found") and rejects a zero/blank
+
+        `starttimestamp` with HTTP 500 "Parameter UTC_TSTMP has invalid value 0",
+
+        so a populated, valid timestamp window is required for a useful response.
+
+        The `identifier` returned here feeds `GET /repo/is/message/{identifier}/{textType}`.
+
+
+        Source CLI command: `erpl-adt bw applog [--username=... --start=... --end=...]`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: username
+        in: query
+        description: Filter logs by creating user
+        schema:
+          type: string
+      - name: starttimestamp
+        in: query
+        description: Start of the time window (SAP UTC timestamp, e.g. 20260101000000)
+        schema:
+          type: string
+      - name: endtimestamp
+        in: query
+        description: End of the time window (SAP UTC timestamp)
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Atom feed of application-log header entries
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/ApplicationLogFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: 'Returned when a required parameter is missing or invalid
+
+            (e.g. missing `username`, or `starttimestamp` of 0). Body is an
+
+            `exc:exception` payload or an SAP HTML error page.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /repo/is/message/{identifier}/{textType}:
+    get:
+      operationId: bwGetMessageText
+      tags:
+      - lineage
+      summary: Resolve a single application-log message text
+      description: 'Resolves the formatted text of one application-log message, identified by
+
+        the log `identifier` (from `GET /repo/is/applicationlog`) and a `textType`.
+
+        Optional message variables `msgv1..msgv4` are substituted into the message
+
+        template. The client sends `Accept: */*`; the response may be XML (parsed
+
+        for a `text`/`message`/`value` attribute or child) or plain text, in which
+
+        case the raw body is returned verbatim.
+
+
+        Source CLI command: `erpl-adt bw message <IDENTIFIER> <TEXTTYPE>`.
+
+        '
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        description: Application-log identifier
+        schema:
+          type: string
+      - name: textType
+        in: path
+        required: true
+        description: Message text type code
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: msgv1
+        in: query
+        description: Message variable 1
+        schema:
+          type: string
+      - name: msgv2
+        in: query
+        description: Message variable 2
+        schema:
+          type: string
+      - name: msgv3
+        in: query
+        description: Message variable 3
+        schema:
+          type: string
+      - name: msgv4
+        in: query
+        description: Message variable 4
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 'Resolved message text. XML payload (parsed) or plain text returned as-is.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/MessageText'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{tlogo}/{name}/{version}:
+    get:
+      operationId: bwReadObject
+      tags:
+      - objects
+      summary: Read a BW modeling object (generic, any TLOGO)
+      description: 'Generic read of any BW modeling object by its TLOGO type, technical name
+
+        and version. The `tlogo` and `name` segments are lowercased in the URI
+
+        (e.g. `IOBJ` `0ACTUALDATA` -> `/iobj/0actualdata/a`).
+
+
+        The `Accept` header selects the concrete SAP vendor media type for the
+
+        object type. The client derives a default from the TLOGO (e.g.
+
+        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml` for ADSO,
+
+        `application/xml` for IOBJ) but the precise version is advertised by
+
+        `GET /discovery`; on a live a4h system the resolved IOBJ type is
+
+        `application/vnd.sap-bw-modeling.iobj-v2_1_0+xml`. Sending an outdated
+
+        version yields HTTP 406 `ExceptionResourceNotAcceptable` ("Your BW client
+
+        is outdated").
+
+
+        Read-only GET; no CSRF or stateful session required. CLI:
+
+        `erpl-adt bw read <tlogo> <name> [--version=a|m|d]`
+
+        (also `--uri <path>` to read a search-result URI directly).
+
+        '
+      parameters:
+      - name: tlogo
+        in: path
+        required: true
+        description: BW TLOGO type code, lowercased in the URI (e.g. iobj, adso, area, hcpr)
+        schema:
+          type: string
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: Accept
+        in: header
+        description: Concrete SAP BW vendor media type for the TLOGO (from /discovery)
+        schema:
+          type: string
+      responses:
+        '200':
+          description: BW object definition
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwObjectDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          description: 'Not Acceptable. The requested vendor media-type version does not match
+
+            what the backend supports; re-resolve via `GET /discovery`.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /adso/{name}/{version}:
+    get:
+      operationId: bwReadAdso
+      tags:
+      - objects
+      summary: Read an Advanced DataStore Object (ADSO)
+      description: 'Read an ADSO definition and parse its field list. Default media type
+
+        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml` (override via
+
+        `GET /discovery`). Read-only GET. CLI: `erpl-adt bw read-adso <name>
+
+        [--version=a|m|d]`.
+
+
+        Note: no ADSO content exists on the reference a4h system, so this shape
+
+        is derived from the client parser (`BwReadAdsoDetail` in
+
+        `src/adt/bw_lineage.cpp`): root `description`/`packageName` attributes and
+
+        a `<fields>` container of `<field>` elements.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: ADSO definition with fields
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/AdsoDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /iobj/{name}/{version}:
+    get:
+      operationId: bwReadIobj
+      tags:
+      - objects
+      summary: Read an InfoObject (IOBJ)
+      description: 'Read an InfoObject definition. Unlike most BW types, IOBJ defaults to
+
+        `application/xml`; the live a4h backend resolves it to
+
+        `application/vnd.sap-bw-modeling.iobj-v2_1_0+xml` via `GET /discovery`.
+
+        Read-only GET. CLI: `erpl-adt bw read IOBJ <name> [--version=a|m|d]`.
+
+
+        Captured live from IOBJ `0ACTUALDATA`: root `iobj:infoObject` with
+
+        attributes `name`, `xsi:type` (sub-type, e.g. `iobj:Package`),
+
+        `attributeOnly`, `technicalInfoObject`, `fieldName`,
+
+        `objectSpecificDataType`; child elements `infoObjectType`, `dataType`,
+
+        `length`, `shortDescription`, `longDescription`, per-language `texts`,
+
+        and `tlogoProperties`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: InfoObject definition
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/IobjDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /trfn/{name}/{version}:
+    get:
+      operationId: bwReadTrfn
+      tags:
+      - objects
+      summary: Read a Transformation (TRFN)
+      description: 'Read a transformation: its source/target, source/target field lists, and
+
+        mapping rules. Default media type
+
+        `application/vnd.sap.bw.modeling.trfn-v1_0_0+xml` (override via
+
+        `GET /discovery`). Read-only GET. CLI: `erpl-adt bw read-trfn <name>
+
+        [--version=a|m|d]`.
+
+
+        Note: no TRFN content exists on the reference a4h system, so this shape is
+
+        derived from the client parser (`BwReadTransformationDetail` in
+
+        `src/adt/bw_lineage.cpp`): `sourceFields`/`targetFields` field lists and a
+
+        `rules`/`group`/`rule` mapping tree (rule types `StepDirect`,
+
+        `StepFormula`, `StepConstant`, ...).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Transformation definition with fields and rules
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/TrfnDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /dtpa/{name}/{version}:
+    get:
+      operationId: bwReadDtp
+      tags:
+      - objects
+      summary: Read a Data Transfer Process (DTP)
+      description: 'Read a DTP: source/target object references, request-selection mode,
+
+        filter fields, extraction/execution/runtime/error-handling settings, and
+
+        the program-flow node list. Default media type
+
+        `application/vnd.sap.bw.modeling.dtpa-v1_0_0+xml` (override via
+
+        `GET /discovery`). Read-only GET. CLI: `erpl-adt bw read-dtp <name>
+
+        [--version=a|m|d]`.
+
+
+        The client builds `/dtpa/{name}/{version}`; BW search returns the DTP URI
+
+        without a version segment (`/dtpa/{name}`), so both forms are accepted by
+
+        the backend. Note: on the reference a4h system the DTPA resource lookup
+
+        appears to truncate long technical names, so DTP_... sample objects could
+
+        not be captured live; this shape is derived from the parser
+
+        (`BwReadDtpDetail` in `src/adt/bw_lineage.cpp`).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: DTP definition
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/DtpDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /dmod/{name}/{version}:
+    get:
+      operationId: bwReadDmod
+      tags:
+      - objects
+      summary: Read a Data Flow / Data Model (DMOD) topology
+      description: 'Read a BW data-flow (DMOD) model: its nodes and the connections between
+
+        them. Default media type
+
+        `application/vnd.sap.bw.modeling.dmod-v1_0_0+xml`. Read-only GET. CLI:
+
+        `erpl-adt bw read-dmod <name> [--version=a|m|d]`.
+
+
+        Note: no DMOD content exists on the reference a4h system; shape derived
+
+        from the parser (`BwReadDataFlow` in `src/adt/bw_dataflow.cpp`): root
+
+        `description` plus a list of nodes (`id`, `name`, `type`, attributes) and
+
+        connections (`from`, `to`, `type`, attributes).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Data-flow topology
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/DmodDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /rsds/{name}/{logsys}/a:
+    get:
+      operationId: bwReadRsds
+      tags:
+      - objects
+      summary: Read a DataSource (RSDS)
+      description: 'Read a DataSource (RSDS). Unlike other object types the URI carries the
+
+        source/logical system as an extra path segment between the name and the
+
+        version: `/rsds/{name}/{logsys}/a`. Default media type
+
+        `application/vnd.sap.bw.modeling.rsds+xml`. Read-only GET. CLI:
+
+        `erpl-adt bw read-rsds <name> --source-system=<logsys>`.
+
+
+        Note: no RSDS content exists on the reference a4h system; shape derived
+
+        from the parser (`BwReadRsdsDetail` in `src/adt/bw_rsds.cpp`): root
+
+        `description`/`packageName` and one or more `<segment>` elements (with an
+
+        `ID`/`id`) each containing `field`/`element` children.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - name: logsys
+        in: path
+        required: true
+        description: Source / logical system name of the DataSource
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: DataSource definition with segments and fields
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/RsdsDefinition'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /query/{name}/{version}:
+    get:
+      operationId: bwReadQueryComponent
+      tags:
+      - query
+      summary: Read a query-family component (query, variable, RKF, CKF, filter, structure)
+      description: 'Reads a BW query-family component. Every query-family TLOGO subtype
+
+        (QUERY, VARIABLE, RKF, CKF, FILTER, STRUCTURE) is hosted on the same
+
+        `/query/{name}/{version}` endpoint; only the requested `Accept` media
+
+        type differs by subtype. The name is lowercased in the URI.
+
+
+        Concrete SAP vendor media types (the client tries the listed version,
+
+        then a one-minor downgrade, then generic `application/xml`):
+
+        - QUERY: `application/vnd.sap.bw.modeling.query-v1_11_0+xml` (a4h backend serves `query-v1_10_0+xml`)
+
+        - VARIABLE: `application/vnd.sap.bw.modeling.variable-v1_10_0+xml`
+
+        - RKF: `application/vnd.sap.bw.modeling.rkf-v1_10_0+xml`
+
+        - CKF: `application/vnd.sap.bw.modeling.ckf-v1_10_0+xml`
+
+        - FILTER: `application/vnd.sap.bw.modeling.filter-v1_9_0+xml`
+
+        - STRUCTURE: `application/vnd.sap.bw.modeling.structure-v1_9_0+xml`
+
+
+        On HTTP 415 the client retries with the next candidate media type. The
+
+        response root is `Qry:queryResource` (namespace
+
+        `http://www.sap.com/bw/Query.ecore`) containing one `mainComponent` and
+
+        zero or more `subComponents` (reusable variables/RKF/CKF/etc.). The
+
+        client recursively extracts referenced infoobjects, key figures, filter
+
+        selections and members to build a dependency graph.
+
+
+        Read-only GET. No CSRF or stateful session required.
+
+        Source CLI command: `erpl-adt bw read-query [<subtype>] <name> [--version=a|m|d]`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/bwObjectName'
+      - $ref: '#/components/parameters/bwVersion'
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: Accept
+        in: header
+        description: Vendor media type selecting the query-family subtype (see description)
+        schema:
+          type: string
+      - name: compuid
+        in: query
+        description: 'Component UID, present on `atom:link` hrefs to sub-resources
+
+          (variable/rkf/etc.) emitted in the response.
+
+          '
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Query-family component resource
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/QueryResource'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          description: 'Requested content type does not match the backend content type.
+
+            Body is an `exc:exception` whose properties carry the backend''s
+
+            expected media type; the client retries with a downgraded type.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /rules/qprops:
+    get:
+      operationId: bwGetQueryProperties
+      tags:
+      - query
+      summary: Read the query-properties rule service
+      description: 'Reads the BW query-properties rule service (global query default
+
+        properties and allowed value sets used by the query editor).
+
+
+        The client sends `Accept:
+
+        application/vnd.sap-bw-modeling.rulesQueryProperties+xml, application/xml`,
+
+        but the a4h backend serves `application/vnd.sap.bw.modeling.ov_query_props-v3_0_0+xml`
+
+        and returns HTTP 415 ("Requested content type ... does not match
+
+        back-end content type") if the requested type does not match exactly.
+
+        Send the backend''s `ov_query_props-v3_0_0+xml` type to receive 200.
+
+
+        On success the response is parsed generically (every element with at
+
+        least one attribute or text node becomes a record). Read-only GET.
+
+        Source CLI command: `erpl-adt bw qprops`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: Accept
+        in: header
+        description: Must match backend type application/vnd.sap.bw.modeling.ov_query_props-v3_0_0+xml
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Query-properties rule payload (parsed into generic records)
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/QueryReportingRecordList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          description: Requested content type does not match backend type
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+  /comp/reporting:
+    get:
+      operationId: bwGetReportingMetadata
+      tags:
+      - query
+      summary: Read reporting (BICS) metadata for a query component
+      description: 'Runs a BW reporting metadata request against the BICS reporting
+
+        endpoint for a query component (`compid`). Returns query runtime
+
+        metadata: dimensions, key figures, structures, exceptions, etc.
+
+
+        Media type: `Accept:
+
+        application/vnd.sap.bw.modeling.bicsresponse-v1_1_0+xml, application/xml`.
+
+        The response is parsed generically into records (element name + its
+
+        attributes + text). If the query does not exist an `exc:exception`
+
+        ("Query <compid> does not exist in active version.") is returned.
+
+
+        Various include/paging flags are passed as HTTP request headers, not
+
+        query parameters: `MetadataOnly`, `InclMetadata`, `InclObjectValues`,
+
+        `InclExceptDef`, `CompactMode`, `FromRow`, `ToRow`.
+
+
+        Read-only GET. Source CLI command:
+
+        `erpl-adt bw reporting <compid> [--dbgmode] [--metadata-only] ...`.
+
+        '
+      parameters:
+      - name: compid
+        in: query
+        required: true
+        description: Query component technical name (e.g. 0D_FC_NW_C01_Q0007)
+        schema:
+          type: string
+      - name: dbgmode
+        in: query
+        description: Enable BICS debug mode
+        schema:
+          type: boolean
+          default: false
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: MetadataOnly
+        in: header
+        description: Return metadata only (no data rows)
+        schema:
+          type: string
+          enum:
+          - 'true'
+      - name: InclMetadata
+        in: header
+        description: Include metadata block
+        schema:
+          type: string
+          enum:
+          - 'true'
+      - name: InclObjectValues
+        in: header
+        description: Include object values
+        schema:
+          type: string
+          enum:
+          - 'true'
+      - name: InclExceptDef
+        in: header
+        description: Include exception definitions
+        schema:
+          type: string
+          enum:
+          - 'true'
+      - name: CompactMode
+        in: header
+        description: Compact response mode
+        schema:
+          type: string
+          enum:
+          - 'true'
+      - name: FromRow
+        in: header
+        description: First data row (1-based) for paging
+        schema:
+          type: integer
+      - name: ToRow
+        in: header
+        description: Last data row for paging
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: BICS reporting metadata (parsed into generic records)
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/QueryReportingRecordList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /is/values/{domain}:
+    get:
+      operationId: bwGetValueHelp
+      tags:
+      - query
+      summary: Value-help lookup for a metadata domain
+      description: 'Reads a BW value-help (F4) list for a metadata `domain` (e.g.
+
+        `infoareas`, `infoobject`, `infoprovider`). Used by the query/object
+
+        editors to populate selection drop-downs.
+
+
+        Media type: `Accept: application/xml, application/atom+xml, */*`.
+
+        The response root is `valueHelp` (namespace
+
+        `http://www.sap.com/bw/modeling`) with a `valueHelpMetaInformation`
+
+        header, a `valueHelpCatalog` (column definitions) and
+
+        `valueHelpValues` containing `row` elements of positional `value`s
+
+        aligned to the catalog columns.
+
+
+        Filtering/paging are URI query parameters: `maxrows`, `pattern`,
+
+        `objectType`, `infoprovider`; an arbitrary `--query=''k=v&k2=v2''`
+
+        raw query string may also be supplied. Read-only GET.
+
+        Source CLI command:
+
+        `erpl-adt bw valuehelp <domain> [--max=N] [--pattern=...] [--query=...]`.
+
+        '
+      parameters:
+      - name: domain
+        in: path
+        required: true
+        description: Value-help domain / entity name (e.g. infoareas, infoobject)
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: maxrows
+        in: query
+        description: Maximum number of rows to return
+        schema:
+          type: integer
+      - name: pattern
+        in: query
+        description: Name/description filter pattern (e.g. 0*)
+        schema:
+          type: string
+      - name: objectType
+        in: query
+        description: Restrict to a BW object type
+        schema:
+          type: string
+      - name: infoprovider
+        in: query
+        description: Restrict to members of an InfoProvider
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Value-help result with catalog and value rows
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/QueryValueHelp'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repo/is/bwsearch:
+    get:
+      operationId: bwSearchObjects
+      tags:
+      - search
+      summary: Search BW modeling objects
+      description: 'Full-text search across the BW repository (InfoObjects, ADSOs, transformations,
+
+        DTPs, InfoAreas, queries, etc.). Returns an Atom feed where each `atom:entry`
+
+        carries a `bwModel:object` element with `objectName`, `objectType`,
+
+        `technicalObjectName`, `objectStatus` and an `atom:id`/`self` link giving the
+
+        object URI (e.g. `/sap/bw/modeling/iobj/0actualdata/m`). The `self` link `type`
+
+        attribute reveals the concrete vendor media type
+
+        (e.g. `application/vnd.sap-bw-modeling.infoobject+xml`).
+
+
+        Request uses `Accept: application/atom+xml`. No CSRF or stateful session needed
+
+        (read-only GET).
+
+
+        Source CLI: `erpl-adt bw search <term> [--type ADSO] [--max N]`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: searchTerm
+        in: query
+        required: true
+        description: Search pattern (supports `*` wildcards). Must not be empty.
+        schema:
+          type: string
+      - name: maxSize
+        in: query
+        description: Maximum number of results to return.
+        schema:
+          type: integer
+          default: 100
+      - name: objectType
+        in: query
+        description: Restrict to a BW TLOGO type (e.g. ADSO, IOBJ, TRFN, DTPA, AREA).
+        schema:
+          type: string
+      - name: objectSubType
+        in: query
+        description: Restrict to an object subtype (e.g. REP, SOB, RKF).
+        schema:
+          type: string
+      - name: objectStatus
+        in: query
+        description: 'Filter by status: ACT (active), INA (inactive), OFF.'
+        schema:
+          type: string
+      - name: objectVersion
+        in: query
+        description: 'Filter by version: A (active), M (modified), N (new).'
+        schema:
+          type: string
+      - name: changedBy
+        in: query
+        description: Filter by the user who last changed the object.
+        schema:
+          type: string
+      - name: changedOnFrom
+        in: query
+        description: Lower bound (inclusive) for last-changed date.
+        schema:
+          type: string
+      - name: changedOnTo
+        in: query
+        description: Upper bound (inclusive) for last-changed date.
+        schema:
+          type: string
+      - name: createdBy
+        in: query
+        description: Filter by the user who created the object.
+        schema:
+          type: string
+      - name: createdOnFrom
+        in: query
+        description: Lower bound (inclusive) for created-on date.
+        schema:
+          type: string
+      - name: createdOnTo
+        in: query
+        description: Upper bound (inclusive) for created-on date.
+        schema:
+          type: string
+      - name: dependsOnObjectName
+        in: query
+        description: Restrict to objects depending on the named object.
+        schema:
+          type: string
+      - name: dependsOnObjectType
+        in: query
+        description: TLOGO type of the dependency named in dependsOnObjectName.
+        schema:
+          type: string
+      - name: infoArea
+        in: query
+        description: Filter by InfoArea assignment (e.g. 0D_NW_DEMO).
+        schema:
+          type: string
+      - name: searchInDescription
+        in: query
+        description: Also match against object descriptions when `true`.
+        schema:
+          type: boolean
+          default: false
+      - name: searchInName
+        in: query
+        description: Match against object names. Defaults to true; pass `false` to disable.
+        schema:
+          type: boolean
+          default: true
+      responses:
+        '200':
+          description: Atom feed of matching BW objects.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwSearchFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/is/bwsearch/metadata:
+    get:
+      operationId: bwSearchMetadata
+      tags:
+      - search
+      summary: BW search metadata / facet feed
+      description: 'Returns the metadata feed associated with BW search (available facets, value
+
+        sets and search field descriptors used to drive the Eclipse search UI). On the
+
+        a4h system this endpoint also accepts the same query parameters as
+
+        `/repo/is/bwsearch`; without a `searchTerm` the backend may return an
+
+        `ExceptionParameterValueInvalid` ("searchTerm is invalid"), while the erpl-adt
+
+        client calls it without parameters and parses whatever entries are returned.
+
+        Each entry is parsed into name/value/category/description fields (the exact
+
+        element/attribute names vary by system).
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw search-md`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: searchTerm
+        in: query
+        description: 'Optional on some systems; required on others (returns
+
+          ExceptionParameterValueInvalid if missing). Mirrors the bwsearch term.
+
+          '
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Atom feed of search metadata entries (facets / field descriptors).
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwSearchMetadataFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/infoproviderstructure/{objectType}/{objectName}:
+    get:
+      operationId: bwGetInfoProviderNodes
+      tags:
+      - search
+      summary: InfoProvider repository node structure
+      description: 'Returns the child nodes of a BW object within the InfoProvider tree
+
+        (InfoArea hierarchy). The response is an Atom feed; each `atom:entry` holds a
+
+        `bwModel:object` with `objectName`/`objectType`, an `atom:id` node URI, a
+
+        `children` link (`rel=...relations:children`) for further drill-down, and a
+
+        `self` link to the underlying modeling object. Used to navigate the BW
+
+        repository tree (e.g. AREA -> sub-AREA -> InfoProviders).
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw nodes <TYPE> <NAME> [--child-name X] [--child-type Y]`.
+
+        '
+      parameters:
+      - name: objectType
+        in: path
+        required: true
+        description: Parent node TLOGO type (e.g. AREA, ADSO).
+        schema:
+          type: string
+      - name: objectName
+        in: path
+        required: true
+        description: Parent node technical name.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: childName
+        in: query
+        description: Restrict returned children to this name.
+        schema:
+          type: string
+      - name: childType
+        in: query
+        description: Restrict returned children to this TLOGO type.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Atom feed of child nodes.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwNodeFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/datasourcenodes/{objectType}/{objectName}:
+    get:
+      operationId: bwGetDataSourceNodes
+      tags:
+      - search
+      summary: DataSource repository node structure
+      description: 'Same as `/repo/infoproviderstructure/{type}/{name}` but navigates the
+
+        DataSource tree instead of the InfoProvider tree. Returned when the CLI is
+
+        invoked with `--datasource`. The erpl-adt client requests this path first and,
+
+        on HTTP 404, transparently falls back to the legacy
+
+        `/repo/datasourcestructure/{type}/{name}` endpoint (see that path). The Atom
+
+        feed shape is identical to the InfoProvider node structure.
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw nodes --datasource <TYPE> <NAME>`.
+
+        '
+      parameters:
+      - name: objectType
+        in: path
+        required: true
+        description: Parent DataSource node TLOGO type (e.g. RSDS).
+        schema:
+          type: string
+      - name: objectName
+        in: path
+        required: true
+        description: Parent node technical name.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: childName
+        in: query
+        description: Restrict returned children to this name.
+        schema:
+          type: string
+      - name: childType
+        in: query
+        description: Restrict returned children to this TLOGO type.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Atom feed of DataSource child nodes.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwNodeFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'Not found. The client retries against
+
+            `/repo/datasourcestructure/{type}/{name}` (legacy path).
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/datasourcestructure/{objectType}/{objectName}:
+    get:
+      operationId: bwGetDataSourceNodesLegacy
+      tags:
+      - search
+      summary: DataSource node structure (legacy path)
+      description: 'Legacy compatibility endpoint for the DataSource node structure, used on older
+
+        BW systems that do not expose `/repo/datasourcenodes`. The erpl-adt client
+
+        falls back to this path automatically after a 404 from `datasourcenodes`. On
+
+        the captured a4h system, `--datasource` resolves directly to this path. The
+
+        Atom feed shape matches the InfoProvider/DataSource node feed.
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw nodes --datasource <TYPE> <NAME>` (fallback path).
+
+        '
+      parameters:
+      - name: objectType
+        in: path
+        required: true
+        description: Parent DataSource node TLOGO type (e.g. RSDS).
+        schema:
+          type: string
+      - name: objectName
+        in: path
+        required: true
+        description: Parent node technical name.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: childName
+        in: query
+        description: Restrict returned children to this name.
+        schema:
+          type: string
+      - name: childType
+        in: query
+        description: Restrict returned children to this TLOGO type.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Atom feed of DataSource child nodes.
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwNodeFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/nodepath:
+    get:
+      operationId: bwGetNodePath
+      tags:
+      - search
+      summary: Resolve the repository tree path of an object
+      description: 'Given an object URI, returns the ancestor chain (breadcrumb path) of that
+
+        object within the BW repository tree, so a client can reveal/expand the object
+
+        in the navigation tree. The response is an Atom feed; each entry''s
+
+        `bwModel:object` carries `objectName`/`objectType` and the `atom:id` gives the
+
+        node URI under `/repo/infoproviderstructure/...`. The client walks the tree
+
+        recursively, collecting name/type/uri for every node element.
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw nodepath <objectUri>`.
+
+        '
+      parameters:
+      - name: objectUri
+        in: query
+        required: true
+        description: 'URI of the target object relative to /sap (e.g.
+
+          `/sap/bw/modeling/iobj/0actualdata/a`). Must not be empty.
+
+          '
+        schema:
+          type: string
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Atom feed describing the node path (ancestor chain).
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwNodePathFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/is/virtualfolders:
+    get:
+      operationId: bwGetVirtualFolders
+      tags:
+      - search
+      summary: Read BW virtual folders
+      description: 'Returns virtual-folder groupings of BW objects (the user/package-scoped
+
+        "virtual folder" view used by the Eclipse Project Explorer). The response is a
+
+        generic XML document; the erpl-adt client flattens every leaf element into rows
+
+        of `_element` + attribute key/value pairs (no fixed schema).
+
+
+        Request uses `Accept: application/xml, application/atom+xml, */*`. Read-only GET.
+
+
+        Note: on the captured a4h system this endpoint returns HTTP 404 ("No suitable
+
+        resource found"), i.e. virtual folders are not provisioned there. Shape below is
+
+        derived from the client''s generic row parser.
+
+
+        Source CLI: `erpl-adt bw virtualfolders [--package PKG] [--type TYPE] [--user USER]`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: package
+        in: query
+        description: Restrict to objects in this package.
+        schema:
+          type: string
+      - name: objecttype
+        in: query
+        description: Restrict to this TLOGO object type.
+        schema:
+          type: string
+      - name: user
+        in: query
+        description: Restrict to virtual folders owned by this user.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Generic XML document of virtual-folder rows.
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/BwGenericRowSet'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /repo/backendfavorites:
+    get:
+      operationId: bwListBackendFavorites
+      tags:
+      - search
+      summary: List backend (server-stored) favorites
+      description: 'Returns the user''s server-side BW favorites as an Atom feed. Each `atom:entry`
+
+        gives a favorite object''s name/type/description and the `atom:id`/`self` link
+
+        URI. On the captured a4h system the feed is empty (no favorites stored), but
+
+        the feed envelope and root `relations:root` link to
+
+        `/repo/infoproviderstructure` are returned.
+
+
+        Request uses `Accept: application/atom+xml`. Read-only GET.
+
+
+        Source CLI: `erpl-adt bw favorites`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Atom feed of backend favorites (may be empty).
+          content:
+            application/atom+xml:
+              schema:
+                $ref: '#/components/schemas/BwFavoritesFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: bwDeleteAllBackendFavorites
+      tags:
+      - search
+      summary: Clear all backend favorites
+      description: 'Deletes all of the user''s server-side BW favorites. The erpl-adt client accepts
+
+        any of HTTP 200/202/204 as success. Mutating operation: requires a CSRF token
+
+        (fetch via a GET with `x-csrf-token: fetch`; on 403 with
+
+        `x-csrf-token: Required`, re-fetch and retry once). Shape derived from the code
+
+        (no live mutation performed).
+
+
+        Source CLI: `erpl-adt bw favorites --clear`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/csrfToken'
+      - $ref: '#/components/parameters/sapClient'
+      responses:
+        '200':
+          description: Favorites cleared.
+        '202':
+          description: Favorites clear accepted.
+        '204':
+          description: Favorites cleared (no content).
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /cto:
+    get:
+      operationId: bwTransportCheck
+      tags:
+      - transport
+      summary: Check transport state / changeability for BW objects
+      description: 'Returns the current transport (CTO = Change & Transport Organizer) state:
+
+        per-TLOGO changeability settings, open transport requests with their tasks,
+
+        objects already pinned to requests, and free-text messages. The
+
+        `Writing-Enabled` response header reports whether the system currently
+
+        permits writing.
+
+
+        Media type: `application/vnd.sap.bw.modeling.cto-v1_1_0+xml` (sent as the
+
+        `Accept` header).
+
+
+        Source CLI command: `erpl-adt bw transport check [--own-only]`.
+
+
+        Note: on the captured a4h BW system the `/cto` resource is not registered
+
+        (HTTP 404 "Resource /sap/bw/modeling/cto does not exist"); the request and
+
+        response shapes here are derived from the erpl-adt client
+
+        (`src/adt/bw_transport.cpp`) and its parser.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      - name: rddetails
+        in: query
+        description: 'Read-details level: off | objs | all (default all)'
+        schema:
+          type: string
+          enum:
+          - false
+          - objs
+          - all
+          default: all
+      - name: rdprops
+        in: query
+        description: Include object properties when true
+        schema:
+          type: boolean
+      - name: ownonly
+        in: query
+        description: Restrict to transport requests owned by the caller
+        schema:
+          type: boolean
+      - name: allmsgs
+        in: query
+        description: Return all messages (not just errors)
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Transport state. The `Writing-Enabled` header reflects changeability.
+          headers:
+            Writing-Enabled:
+              description: '`true`/`X` if writing is currently permitted'
+              schema:
+                type: string
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/TransportCheckResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: bwTransportWrite
+      tags:
+      - transport
+      summary: Write / collect BW objects to a transport request
+      description: "Pins BW objects to a transport request (CORRNR). The same `/cto` resource\nserves\
+        \ two behaviours selected by query parameters:\n\n- Write (default): `?corrnum={request}[&package=...][&simulate=true]`\n\
+        \  attaches the object(s) in the request body to the given transport.\n  Source CLI command:\n\
+        \  `erpl-adt bw transport write <type> <name> --transport=<req> [--package=...] [--simulate]`.\n\
+        - Collect: `?collect=true&mode={mode}[&corrnum=...]` collects dependent\n  objects for transport\
+        \ (returns `details` + `dependencies`) without\n  necessarily writing. Collect uses\n  `Accept:\
+        \ application/vnd.sap-bw-modeling.trcollect+xml`. Modes:\n  `000` necessary objects only, `001`\
+        \ complete, `003` dataflow above,\n  `004` dataflow below.\n  Source CLI command:\n  `erpl-adt\
+        \ bw transport collect <type> <name> [--mode=000] [--transport=<req>]`.\n\nMutating request: requires\
+        \ a CSRF token and the BW context headers\n(e.g. transport-lock-holder). Content-Type is\n`application/vnd.sap.bw.modeling.cto-v1_1_0+xml`.\
+        \ Shapes derived from\n`src/adt/bw_transport.cpp` and `src/adt/bw_transport_collect.cpp`\n(the\
+        \ `/cto` resource is not active on the captured system).\n"
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/csrfToken'
+      - name: corrnum
+        in: query
+        description: Transport request number (CORRNR) to write/collect into
+        schema:
+          type: string
+      - name: package
+        in: query
+        description: Target package (devclass) for the write operation
+        schema:
+          type: string
+      - name: simulate
+        in: query
+        description: Simulate the write without committing
+        schema:
+          type: boolean
+      - name: collect
+        in: query
+        description: Set to true to switch to collect mode
+        schema:
+          type: boolean
+      - name: mode
+        in: query
+        description: 'Collect mode: 000 necessary, 001 complete, 003 dataflow above, 004 dataflow below'
+        schema:
+          type: string
+          enum:
+          - '000'
+          - '001'
+          - '003'
+          - '004'
+      - name: allmsgs
+        in: query
+        description: Return all messages (not just errors)
+        schema:
+          type: boolean
+      requestBody:
+        required: true
+        description: 'List of objects to write/collect. Root element
+
+          `bwCTO:transport` (namespace `http://www.sap.com/bw/cto`).
+
+          '
+        content:
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/TransportRequestBody'
+      responses:
+        '200':
+          description: 'Write succeeded (with optional messages) or collect result with
+
+            collected objects and their dependencies.
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/TransportCollectResult'
+        '204':
+          description: Write succeeded (no response body)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /move_requests:
+    get:
+      operationId: bwListMoveRequests
+      tags:
+      - transport
+      summary: List transport requests available for moving BW objects
+      description: 'Lists the transport requests that BW objects can be moved into, as an Atom
+
+        feed (`Accept: application/atom+xml`), one `entry` per request. Parsed
+
+        fields: request number, owner, status, and description.
+
+
+        Source CLI command: `erpl-adt bw move list`.
+
+
+        Live note: on the captured a4h BW system the `move_requests` resource is
+
+        registered (it appears in `GET /discovery` as collection `move`, scheme
+
+        `http://www.sap.com/bw/modeling/move_requests`) but it does NOT accept GET
+
+        -- the server returns HTTP 405 "Resource controller does not support
+
+        method GET". The erpl-adt client (`src/adt/bw_validation.cpp
+
+        BwListMoveRequests`) nonetheless issues GET; the response schema below is
+
+        derived from that parser.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/sapClient'
+      - $ref: '#/components/parameters/sapLanguage'
+      responses:
+        '200':
+          description: Atom feed of movable transport requests
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/MoveRequestFeed'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: 'Method not supported. The live BW system rejects GET on this resource
+
+            ("Resource controller does not support method GET").
+
+            '
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Exception'
