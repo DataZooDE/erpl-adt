@@ -43,6 +43,10 @@ find_package(ftxui CONFIG REQUIRED)
 # vcpkg cpp-httplib into that namespace. Linked PRIVATE — no consumer of
 # erpl_adt_lib sees the duckdb:: telemetry API transitively.
 if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/posthog-telemetry/CMakeLists.txt")
+    # The submodule's cmake_minimum_required(3.14) predates CMP0091, which would
+    # leave the MSVC_RUNTIME_LIBRARY abstraction disabled for its target (so our
+    # /MT override below would be ignored). Force the policy NEW for that scope.
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
     add_subdirectory(third_party/posthog-telemetry EXCLUDE_FROM_ALL)
     # The shim header must resolve for the library's quoted #include "httplib.hpp",
     # and it needs the real cpp-httplib on its include/link path.
@@ -53,6 +57,10 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/posthog-telemetry/CMakeLists.txt")
     # policy (e.g. httplib's CPPHTTPLIB_OPENSSL_SUPPORT macro redefinition on MSVC).
     if(MSVC)
         target_compile_options(posthog_telemetry PRIVATE /w /WX-)
+        # Match erpl-adt's static CRT (/MT). The submodule's CMake doesn't set
+        # this, so it would default to /MD and fail linking with LNK2038.
+        set_property(TARGET posthog_telemetry PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     else()
         target_compile_options(posthog_telemetry PRIVATE -w)
     endif()
