@@ -2,6 +2,7 @@
 #include <erpl_adt/cli/login_wizard.hpp>
 #include <erpl_adt/cli/output_formatter.hpp>
 #include <erpl_adt/core/ansi.hpp>
+#include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/terminal.hpp>
 
 #include <erpl_adt/adt/activation.hpp>
@@ -66,6 +67,46 @@
 namespace erpl_adt {
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Telemetry: scoped feature_used emitter.
+//
+// Constructed at the top of a handler; on scope exit it emits exactly one
+// feature_used event carrying the elapsed duration_ms plus any bounded props
+// the handler set (object_type, op, outcome, kind, buckets). Values are ALWAYS
+// from a fixed enumeration (via ClassifyObjectType / BucketCount / literals) —
+// never an object/package/source/transport identifier. Fires once per handler
+// invocation regardless of the return path.
+// ---------------------------------------------------------------------------
+class FeatureTimer {
+public:
+    explicit FeatureTimer(const char* feature)
+        : feature_(feature), start_(std::chrono::steady_clock::now()) {}
+
+    FeatureTimer(const FeatureTimer&) = delete;
+    FeatureTimer& operator=(const FeatureTimer&) = delete;
+
+    void SetStr(const std::string& key, const std::string& val) {
+        props_.push_back(TelemetryProp::Str(key, val));
+    }
+    void SetBool(const std::string& key, bool val) {
+        props_.push_back(TelemetryProp::Bool(key, val));
+    }
+
+    ~FeatureTimer() {
+        if (!Telemetry::IsEnabled()) return;
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start_)
+                            .count();
+        props_.push_back(TelemetryProp::Num("duration_ms", static_cast<long long>(ms)));
+        Telemetry::Feature(feature_, std::move(props_));
+    }
+
+private:
+    std::string   feature_;
+    std::chrono::steady_clock::time_point start_;
+    TelemetryProps props_;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -851,6 +892,8 @@ BwContextHeaders ParseBwContextHeaders(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleSearchQuery(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kSearch);  // { object_type, duration_ms }
+    ft.SetStr("object_type", ClassifyObjectType(GetFlag(args, "type")));
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing search pattern. Usage: erpl-adt search <pattern> [--type=CLAS] [--max=N]"));
@@ -926,6 +969,7 @@ int HandleSearchQuery(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleObjectRead(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kObjectRead);  // { object_type, duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing object name or URI. Usage: erpl-adt object read <name-or-uri>"));
@@ -963,6 +1007,7 @@ int HandleObjectRead(const CommandArgs& args) {
     }
 
     const auto& obj = result.Value();
+    ft.SetStr("object_type", ClassifyObjectType(obj.info.type));
 
     // Default source_uri for class types on ABAP Cloud where XML omits it
     auto source_uri = obj.info.source_uri;
@@ -1011,8 +1056,11 @@ int HandleObjectRead(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleObjectCreate(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kObjectWrite);  // { object_type, op, duration_ms }
+    ft.SetStr("op", "create");
 
     auto obj_type = GetFlag(args, "type");
+    ft.SetStr("object_type", ClassifyObjectType(obj_type));
     auto name = GetFlag(args, "name");
     auto package = GetFlag(args, "package");
     auto description = GetFlag(args, "description");
@@ -1057,11 +1105,14 @@ int HandleObjectCreate(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleObjectDelete(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kObjectWrite);  // { object_type, op, duration_ms }
+    ft.SetStr("op", "delete");
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing object URI. Usage: erpl-adt object delete <uri>"));
         return 99;
     }
+    ft.SetStr("object_type", ClassifyObjectType(args.positional[0]));
 
     auto uri_result = ObjectUri::Create(args.positional[0]);
     if (uri_result.IsErr()) {
@@ -1218,11 +1269,13 @@ int HandleObjectUnlock(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleSourceRead(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kSourceRead);  // { object_type, duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing source URI or object name. Usage: erpl-adt source read <name-or-uri>"));
         return 99;
     }
+    ft.SetStr("object_type", ClassifyObjectType(args.positional[0]));
 
     auto version     = GetFlag(args, "version", "active");
     auto section     = GetFlag(args, "section",  "main");
@@ -1536,11 +1589,15 @@ int HandleSourceEdit(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleSourceWrite(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kSourceWrite);  // { object_type, checked, duration_ms }
+    // `checked` = a server-side activation/check was requested after the write.
+    ft.SetBool("checked", HasFlag(args, "activate"));
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing source URI or object name. Usage: erpl-adt source write <name-or-uri> --file <path>"));
         return 99;
     }
+    ft.SetStr("object_type", ClassifyObjectType(args.positional[0]));
     auto file_path = GetFlag(args, "file");
     if (file_path.empty()) {
         fmt.PrintError(MakeValidationError("Missing --file flag"));
@@ -1742,6 +1799,7 @@ int HandleSourceCheck(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleActivateRun(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kActivate);  // { object_type, outcome, duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
@@ -1761,6 +1819,7 @@ int HandleActivateRun(const CommandArgs& args) {
     }
 
     const auto& info = info_result.Value();
+    ft.SetStr("object_type", ClassifyObjectType(info.type));
     ActivateObjectParams params;
     params.uri = info.uri;
     params.type = info.type;
@@ -1773,6 +1832,7 @@ int HandleActivateRun(const CommandArgs& args) {
     }
 
     const auto& act = result.Value();
+    ft.SetStr("outcome", act.failed ? "errors" : "active");
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["activated"] = act.activated;
@@ -1794,6 +1854,7 @@ int HandleActivateRun(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleTestRun(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kAbapunitRun);  // { outcome, duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
@@ -1819,6 +1880,7 @@ int HandleTestRun(const CommandArgs& args) {
     }
 
     const auto& tr = result.Value();
+    ft.SetStr("outcome", tr.AllPassed() ? "pass" : "fail");
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["total_methods"] = tr.TotalMethods();
@@ -1915,6 +1977,7 @@ int HandleObjectRun(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleCheckRun(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kAtcRun);  // { finding_count_bucket, duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
@@ -1941,6 +2004,8 @@ int HandleCheckRun(const CommandArgs& args) {
     }
 
     const auto& atc = result.Value();
+    ft.SetStr("finding_count_bucket",
+              BucketCount(static_cast<long long>(atc.findings.size())));
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["worklist_id"] = atc.worklist_id;
@@ -1972,6 +2037,8 @@ int HandleCheckRun(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleTransportList(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kTransportOp);  // { op, duration_ms }
+    ft.SetStr("op", "list");
 
     auto user = GetFlag(args, "user", "DEVELOPER");
 
@@ -2016,6 +2083,8 @@ int HandleTransportList(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleTransportCreate(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kTransportOp);  // { op, duration_ms }
+    ft.SetStr("op", "create");
 
     auto desc = GetFlag(args, "desc");
     auto pkg = GetFlag(args, "package");
@@ -2053,6 +2122,8 @@ int HandleTransportCreate(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleTransportRelease(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kTransportOp);  // { op, duration_ms }
+    ft.SetStr("op", "release");
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing transport number. Usage: erpl-adt transport release <number>"));
@@ -2078,6 +2149,8 @@ int HandleTransportRelease(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleDdicTable(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kDdicRead);  // { kind, duration_ms }
+    ft.SetStr("kind", "table");
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing table name. Usage: erpl-adt ddic table <name>"));
@@ -2192,6 +2265,8 @@ int HandleDdicTable(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleDdicCds(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kDdicRead);  // { kind, duration_ms }
+    ft.SetStr("kind", "cds");
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing CDS name. Usage: erpl-adt ddic cds <name>"));
@@ -2223,6 +2298,7 @@ int HandleDdicCds(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandlePackageList(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kPackageRead);  // { duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing package name. Usage: erpl-adt package list <name>"));
@@ -2269,6 +2345,7 @@ int HandlePackageList(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandlePackageTree(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kPackageRead);  // { duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError(
@@ -2335,6 +2412,7 @@ int HandlePackageTree(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandlePackageExists(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kPackageRead);  // { duration_ms }
 
     if (args.positional.empty()) {
         fmt.PrintError(MakeValidationError("Missing package name. Usage: erpl-adt package exists <name>"));

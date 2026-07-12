@@ -1,0 +1,3 @@
+[submodule "third_party/posthog-telemetry"]
+	path = third_party/posthog-telemetry
+	url = https://github.com/DataZooDE/posthog-telemetry.git
