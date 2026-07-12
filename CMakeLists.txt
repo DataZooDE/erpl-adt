@@ -49,8 +49,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/posthog-telemetry/CMakeLists.txt")
     target_include_directories(posthog_telemetry PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/posthog_shim)
     target_link_libraries(posthog_telemetry PRIVATE httplib::httplib)
-    # Third-party code: do not fail its build on our strict -Werror policy.
-    if(NOT MSVC)
+    # Third-party code: do not fail its build on our strict warnings-as-errors
+    # policy (e.g. httplib's CPPHTTPLIB_OPENSSL_SUPPORT macro redefinition on MSVC).
+    if(MSVC)
+        target_compile_options(posthog_telemetry PRIVATE /w /WX-)
+    else()
         target_compile_options(posthog_telemetry PRIVATE -w)
     endif()
     set(ERPL_ADT_HAVE_TELEMETRY TRUE)

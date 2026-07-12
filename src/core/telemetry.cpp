@@ -4,8 +4,10 @@
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <system_error>
 #include <mutex>
 #include <string>
 
@@ -49,24 +51,21 @@ void MaybePrintFirstRunNotice() {
     if (!home) home = std::getenv("USERPROFILE");
 #endif
     if (!home || !*home) return;  // no place to persist — stay silent, don't spam
-    std::string dir  = std::string(home) + "/.erpl-adt";
-    std::string mark = dir + "/telemetry-notice-shown";
-    {
-        std::ifstream existing(mark);
-        if (existing.good()) return;  // already shown
-    }
-    // Attempt to create the marker (mkdir is best-effort via ofstream in an
-    // existing dir; if the dir is missing the write fails silently and the
-    // notice may show again — acceptable).
+
+    std::error_code ec;
+    const std::filesystem::path dir  = std::filesystem::path(home) / ".erpl-adt";
+    const std::filesystem::path mark = dir / "telemetry-notice-shown";
+    if (std::filesystem::exists(mark, ec)) return;  // already shown
+
     std::cerr << "erpl-adt collects anonymous usage telemetry (no code, names, "
                  "or identifiers). Opt out with --no-telemetry or "
                  "DATAZOO_DISABLE_TELEMETRY=1. See TELEMETRY.md.\n";
-    std::ofstream(mark) << "1\n";  // if dir missing this no-ops harmlessly
-    // Fallback: also try to create the directory then the marker.
-    if (!std::ifstream(mark).good()) {
-        std::system(("mkdir -p " + dir + " 2>/dev/null").c_str());
-        std::ofstream(mark) << "1\n";
-    }
+
+    // Persist the marker so the notice shows at most once. All best-effort:
+    // create_directories takes the non-throwing error_code overload, and the
+    // ofstream is simply left to fail silently if the directory can't be made.
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(mark) << "1\n";
 }
 
 // Flatten props for the test sink.
