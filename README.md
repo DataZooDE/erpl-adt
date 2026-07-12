@@ -265,6 +265,20 @@ Or use Docker Compose for end-to-end provisioning with a SAP ABAP Cloud Develope
 docker compose up
 ```
 
+## Telemetry
+
+erpl-adt collects anonymous, aggregate usage telemetry (feature usage, outcomes,
+and durations) — never source code, object/package names, transport IDs, SAP
+hosts/users, or error text. It is on by default and easy to disable:
+
+```bash
+erpl-adt --no-telemetry ...          # per invocation
+export DATAZOO_DISABLE_TELEMETRY=1   # or DO_NOT_TRACK=1
+```
+
+See [TELEMETRY.md](TELEMETRY.md) for exactly what is collected and the privacy
+contract.
+
 ## License
 
 [Apache License 2.0](LICENSE) — Copyright 2026 Datazoo GmbH

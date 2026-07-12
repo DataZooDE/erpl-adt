@@ -17,16 +17,25 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
-#include <future>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <set>
 #include <string>
 #include <string_view>
+#include <csignal>
 #include <vector>
 
 namespace {
+
+// Drain telemetry on SIGTERM/SIGINT so a killed `mcp` server doesn't lose the
+// session's tail (the library's at-exit handler discards by design). Flush is
+// best-effort and bounded; we then terminate promptly.
+void McpTelemetrySignalHandler(int sig) {
+    erpl_adt::Telemetry::Flush();
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
 
 // Exit codes per spec section 7.
 constexpr int kExitSuccess    = 0;
@@ -473,10 +482,20 @@ int HandleMcpServer(int argc, const char* const* argv) {
     ToolRegistry registry;
     RegisterAdtTools(registry, *session);
 
+    // server_started { transport, tool_count }: counts/kinds only. The MCP
+    // server speaks JSON-RPC over stdio. One $session_id spans this whole uptime.
+    Telemetry::ServerStarted("stdio", static_cast<int>(registry.Tools().size()));
+
+    // Flush on SIGTERM/SIGINT — a long-lived server must explicitly drain.
+    std::signal(SIGTERM, McpTelemetrySignalHandler);
+    std::signal(SIGINT, McpTelemetrySignalHandler);
+
     // Create and run the MCP server (blocks until EOF on stdin).
     McpServer server(std::move(registry));
     server.Run();
 
+    // Clean shutdown (stdin EOF): drain buffered events before exit.
+    Telemetry::Flush();
     return 0;
 }
 
@@ -520,6 +539,9 @@ int main(int argc, const char* argv[]) {
     InitGlobalLogger(std::make_unique<ColorConsoleSink>(use_color), log_level);
 
     // Telemetry: initialize once, respecting --no-telemetry flag and env vars.
+    // install_kind is "server" for the long-lived `mcp` subcommand, "cli"
+    // otherwise. A single Flush() at exit is registered as the safety net (the
+    // library's own at-exit handler discards buffered events by design).
     {
         bool no_telemetry = false;
         for (int i = 1; i < argc; ++i) {
@@ -528,7 +550,10 @@ int main(int argc, const char* argv[]) {
                 break;
             }
         }
-        Telemetry::Initialize(no_telemetry, kVersion);
+        auto kind = FindMcpCommand(argc, argv) ? InstallKind::Server
+                                               : InstallKind::Cli;
+        Telemetry::Initialize(no_telemetry, kVersion, kind);
+        std::atexit([] { Telemetry::Flush(); });
     }
 
     // login/logout: special top-level commands.
@@ -570,18 +595,30 @@ int main(int argc, const char* argv[]) {
             PrintBwGroupHelp(router, std::cout, ResolveColorForHelp(argc, argv));
             return kExitSuccess;
         }
-        // Fire telemetry async before dispatch so the HTTP call runs concurrently
-        // with the command. We wait up to 2 seconds after dispatch to let it finish.
-        std::future<void> tel_fut;
+        // cli_started { command, args_shape }: command is the group; args_shape
+        // records WHICH flags were present, never their values. Per-capability
+        // feature_used events are emitted inside the handlers themselves.
         auto parse_result = CommandRouter::Parse(argc, argv);
+        std::string tel_group;
         if (parse_result.IsOk() && Telemetry::IsEnabled()) {
             const auto& cmd = parse_result.Value();
-            tel_fut = Telemetry::TrackCommand(cmd.group, cmd.action);
+            tel_group = cmd.group;
+            std::string args_shape;
+            for (const auto& kv : cmd.flags) {  // std::map → keys already sorted
+                if (!args_shape.empty()) args_shape += ",";
+                args_shape += kv.first;
+            }
+            Telemetry::CliStarted(cmd.group, args_shape);
         }
         int exit_code = router.Dispatch(argc, argv);
-        if (tel_fut.valid()) {
-            tel_fut.wait_for(std::chrono::seconds(2));
+        // Central $exception: map the enumerated exit code to an error_class so
+        // every failure is captured once without touching each handler. No
+        // message or identifier is ever included — only the enum.
+        if (Telemetry::IsEnabled()) {
+            auto ec = ErrorClassForExitCode(exit_code);
+            if (!ec.empty()) Telemetry::Error(ec, /*feature=*/"");
         }
+        Telemetry::Flush();
         return exit_code;
     }
 
@@ -701,17 +738,34 @@ int main(int argc, const char* argv[]) {
     auto codec = std::make_unique<XmlCodec>();
 
     // Step 9: Create DeployWorkflow and execute.
+    // deploy_run { outcome, object_count_bucket, duration_ms } — bounded counts
+    // only; the repo count is bucketed, never repo names/URLs.
+    Telemetry::CliStarted(std::string(GetFirstPositionalArg(argc, argv)), /*args_shape=*/"");
+    const auto deploy_start = std::chrono::steady_clock::now();
+    auto DeployTelemetry = [&](bool ok) {
+        if (!Telemetry::IsEnabled()) return;
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - deploy_start).count();
+        Telemetry::Feature(feature::kDeployRun,
+            {TelemetryProp::Str("outcome", ok ? "ok" : "error"),
+             TelemetryProp::Str("object_count_bucket",
+                                BucketCount(static_cast<long long>(config.repos.size()))),
+             TelemetryProp::Num("duration_ms", static_cast<long long>(ms))});
+    };
+
     DeployWorkflow workflow(*session, *codec, config);
     auto result = workflow.Execute(subcommand);
 
     // Step 10-11: Output results and return exit code.
     if (result.IsErr()) {
         const auto& error = result.Error();
+        DeployTelemetry(/*ok=*/false);
         PrintError(error, config.json_output);
         return ExitCodeFromError(error);
     }
 
     auto deploy_result = std::move(result).Value();
+    DeployTelemetry(deploy_result.success);
     PrintResult(deploy_result, config.json_output, config.quiet);
 
     return deploy_result.success ? kExitSuccess : kExitInternal;

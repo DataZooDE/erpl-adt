@@ -37,6 +37,30 @@ find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(ftxui CONFIG REQUIRED)
 
+# --- Shared DataZoo telemetry library (git submodule) ---
+# Built from third_party/posthog-telemetry. It expects a `duckdb_httplib_openssl`
+# httplib (its DuckDB heritage); third_party/posthog_shim/httplib.hpp aliases our
+# vcpkg cpp-httplib into that namespace. Linked PRIVATE — no consumer of
+# erpl_adt_lib sees the duckdb:: telemetry API transitively.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/posthog-telemetry/CMakeLists.txt")
+    add_subdirectory(third_party/posthog-telemetry EXCLUDE_FROM_ALL)
+    # The shim header must resolve for the library's quoted #include "httplib.hpp",
+    # and it needs the real cpp-httplib on its include/link path.
+    target_include_directories(posthog_telemetry PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/posthog_shim)
+    target_link_libraries(posthog_telemetry PRIVATE httplib::httplib)
+    # Third-party code: do not fail its build on our strict -Werror policy.
+    if(NOT MSVC)
+        target_compile_options(posthog_telemetry PRIVATE -w)
+    endif()
+    set(ERPL_ADT_HAVE_TELEMETRY TRUE)
+else()
+    message(WARNING
+        "third_party/posthog-telemetry not found — telemetry compiled out. "
+        "Run: git submodule update --init --recursive")
+    set(ERPL_ADT_HAVE_TELEMETRY FALSE)
+endif()
+
 # --- Static library (everything except main.cpp) ---
 file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main\\.cpp$")
@@ -57,6 +81,10 @@ if(LIB_SOURCES)
         nlohmann_json::nlohmann_json
         ftxui::component
     )
+    if(ERPL_ADT_HAVE_TELEMETRY)
+        target_link_libraries(erpl_adt_lib PRIVATE posthog_telemetry)
+        target_compile_definitions(erpl_adt_lib PRIVATE ERPL_ADT_TELEMETRY_ENABLED=1)
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_options(erpl_adt_lib PUBLIC -static-libgcc -static-libstdc++)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

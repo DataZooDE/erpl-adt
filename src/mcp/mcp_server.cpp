@@ -1,7 +1,9 @@
 #include <erpl_adt/mcp/mcp_server.hpp>
 
+#include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/version.hpp>
 
+#include <chrono>
 #include <optional>
 #include <string>
 
@@ -159,7 +161,18 @@ nlohmann::json McpServer::HandleToolsCall(
         return MakeError(id, -32601, "Unknown tool: " + tool_name);
     }
 
+    // mcp_tool_called { tool, outcome, duration_ms }. `tool` is the registered
+    // (bounded) tool name — never argument values. No object names, source, or
+    // ADT payload is ever captured here.
+    const auto tel_start = std::chrono::steady_clock::now();
     auto result = registry_.Execute(tool_name, arguments);
+    const auto tel_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - tel_start)
+                            .count();
+    Telemetry::Feature(feature::kMcpToolCalled,
+                       {TelemetryProp::Str("tool", tool_name),
+                        TelemetryProp::Str("outcome", result.is_error ? "error" : "ok"),
+                        TelemetryProp::Num("duration_ms", static_cast<long long>(tel_ms))});
 
     nlohmann::json response_result;
     response_result["content"] = result.content;
