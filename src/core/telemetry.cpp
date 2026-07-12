@@ -12,6 +12,14 @@
 #include <string>
 
 #if defined(ERPL_ADT_TELEMETRY_ENABLED)
+// The shared library's PropertyValue ctor branches on a type trait
+// (is_unsigned<T>), which MSVC reports as C4127 "conditional expression is
+// constant" when the template is instantiated here under /W4 /WX. It's a
+// third-party header; silence just that one warning for the rest of this TU
+// (the instantiation happens below, outside the #include).
+#if defined(_MSC_VER)
+#pragma warning(disable : 4127)
+#endif
 #include <telemetry.hpp>   // DataZooDE/posthog-telemetry (namespace duckdb)
 #endif
 
