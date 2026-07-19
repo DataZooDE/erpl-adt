@@ -91,7 +91,7 @@ const std::set<std::string>& NoArgTools() {
 TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 65);
+    CHECK(registry.Tools().size() == 67);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -427,6 +427,46 @@ TEST_CASE("adt_read_table: happy path", "[mcp][handlers][ddic]") {
         }
     }
     CHECK(found_price);
+}
+
+TEST_CASE("catalog_build: happy path", "[mcp][handlers][catalog]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("ddic/package_contents.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<asx:abap xmlns:asx=\"http://www.sap.com/abapxml\">"
+                  "<asx:values><DATA><TREE_CONTENT></TREE_CONTENT></DATA></asx:values></asx:abap>"}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "catalog_build",
+                           {{"sid", "A4H"}, {"package", "ZTEST"}});
+    auto j = ParseContent(result);
+
+    CHECK(j["contract"] == "catalog.feed.v1");
+    CHECK(j["entities"].size() == 2);
+}
+
+TEST_CASE("catalog_build: missing sid", "[mcp][handlers][catalog]") {
+    MockAdtSession mock;
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "catalog_build", {{"package", "ZTEST"}});
+    CHECK(result.is_error);
+}
+
+TEST_CASE("catalog_export: mermaid format", "[mcp][handlers][catalog]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("ddic/package_contents.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<asx:abap xmlns:asx=\"http://www.sap.com/abapxml\">"
+                  "<asx:values><DATA><TREE_CONTENT></TREE_CONTENT></DATA></asx:values></asx:abap>"}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "catalog_export",
+                           {{"sid", "A4H"}, {"package", "ZTEST"}, {"format", "mermaid"}});
+    auto j = ParseContent(result);
+    CHECK(j["mermaid"].get<std::string>().find("graph") != std::string::npos);
 }
 
 TEST_CASE("adt_read_table: missing table_name", "[mcp][handlers][ddic]") {
@@ -1118,7 +1158,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 65);
+    CHECK(tools.size() == 67);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
@@ -1132,6 +1172,8 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
         CheckNoNullMembers(schema, t["name"].get<std::string>());
     }
     CHECK(names.count("adt_search") == 1);
+    CHECK(names.count("catalog_build") == 1);
+    CHECK(names.count("catalog_export") == 1);
     CHECK(names.count("adt_read_source") == 1);
     CHECK(names.count("adt_write_source") == 1);
     CHECK(names.count("adt_run_tests") == 1);

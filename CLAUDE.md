@@ -125,6 +125,22 @@ Async ops (pull, activation): return `202 Accepted` + `Location` header. Poll un
 
 Stateful sessions: `X-sap-adt-sessiontype: stateful` header + `sap-contextid` cookie for locking/write operations. `LockGuard` RAII class manages the lifecycle.
 
+## Catalog Web UI
+
+`flutter/erpl_catalog_kit` is a Flutter web client for the `catalog_*` MCP tools (search, browse, lineage, curate, sync status, feed export). Its compiled web build can be embedded directly into the `erpl-adt` binary via CMakeRC (vendored as the `third_party/cmrc` submodule) and served same-origin with the JSON-RPC catalog API — no separate static file server, no CORS setup.
+
+```bash
+make webui              # flutter build web (requires the Flutter SDK) — run once, or after any client change
+make release             # picks up flutter/erpl_catalog_kit/example/build/web if present, embeds it
+./build/erpl-adt catalog webui catalog.duckdb --port 8383   # blocks; open http://127.0.0.1:8383/
+```
+
+`make webui` is optional — C++-only contributors don't need the Flutter SDK. If `flutter/erpl_catalog_kit/example/build/web/index.html` doesn't exist at CMake configure time, `ERPL_ADT_HAVE_WEBUI` stays undefined and `erpl-adt catalog webui` still builds and runs, but serves a plain-text instructional message (`run 'make webui' ...`) instead of the app. `ERPL_ADT_HAVE_WEBUI` is a PUBLIC compile definition on `erpl_adt_lib` (unlike `ERPL_ADT_TELEMETRY_ENABLED`) so `test/mcp/test_mcp_http_server.cpp` can assert on whichever behavior the current build actually has.
+
+`McpHttpServer`'s `serve_webui` constructor parameter (default `false`) gates a catch-all `Get(".*")` route registered after `/mcp` and `/healthz`. It resolves the embedded `cmrc::embedded_filesystem` and falls back to `index.html` for any unmatched path — required because go_router does client-side routing (e.g. `/entity/<id>`), so a hard refresh or deep link must resolve client-side rather than 404.
+
+CI does not yet run `make webui` before packaging release archives — released binaries embed the web UI only if it was built into `flutter/erpl_catalog_kit/example/build/web` locally before `make release` ran.
+
 ## CLI Verbosity
 
 - Default: warnings only (quiet)

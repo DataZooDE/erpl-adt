@@ -13,7 +13,8 @@
     "openssl",
     "nlohmann-json",
     "ftxui",
-    "catch2"
+    "catch2",
+    "duckdb"
   ],
   "builtin-baseline": "11bbc873e00e9e58d4e9dffb30b7a5493a030e0b"
 }

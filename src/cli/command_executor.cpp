@@ -32,7 +32,16 @@
 #include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/checks.hpp>
+#include <erpl_adt/adt/catalog_build.hpp>
+#include <erpl_adt/adt/catalog_export.hpp>
+#include <erpl_adt/adt/catalog_overlay.hpp>
+#include <erpl_adt/adt/catalog_sync.hpp>
+#include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/mcp_http_server.hpp>
+#include <erpl_adt/mcp/tool_registry.hpp>
 #include <erpl_adt/adt/ddic.hpp>
+#include <erpl_adt/core/gemini_embedding_provider.hpp>
+#include <erpl_adt/storage/duckdb_catalog_store.hpp>
 #include <erpl_adt/adt/discovery.hpp>
 #include <erpl_adt/adt/locking.hpp>
 #include <erpl_adt/adt/object.hpp>
@@ -132,7 +141,7 @@ inline std::string SectionUriSegment(const std::string& section) {
 
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
-    "transport", "ddic", "package", "discover"};
+    "transport", "ddic", "package", "discover", "catalog"};
 
 // ---------------------------------------------------------------------------
 // DeriveActivationParamsFromUri
@@ -2289,6 +2298,525 @@ int HandleDdicCds(const CommandArgs& args) {
         fmt.PrintJson(j.dump());
     } else {
         std::cout << result.Value();
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// catalog build
+// ---------------------------------------------------------------------------
+// Formats a duration in seconds as "1h23m45s" (largest two non-zero units,
+// dropped leading units) — used for `catalog sync`'s progress line.
+std::string FormatDuration(long total_seconds) {
+    if (total_seconds < 0) total_seconds = 0;
+    long h = total_seconds / 3600;
+    long m = (total_seconds % 3600) / 60;
+    long s = total_seconds % 60;
+    std::ostringstream out;
+    if (h > 0) {
+        out << h << "h" << m << "m";
+    } else if (m > 0) {
+        out << m << "m" << s << "s";
+    } else {
+        out << s << "s";
+    }
+    return out.str();
+}
+
+std::vector<std::string> SplitCommaList(const std::string& csv) {
+    std::vector<std::string> parts;
+    std::stringstream ss(csv);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        auto first = item.find_first_not_of(" \t");
+        if (first == std::string::npos) continue;
+        auto last = item.find_last_not_of(" \t");
+        parts.push_back(item.substr(first, last - first + 1));
+    }
+    return parts;
+}
+
+// Parses --package/--infoarea/--sid/--max-depth into CatalogBuildOptions,
+// shared by `catalog build` and `catalog export`. Returns nullopt (having
+// already printed an error) on invalid input.
+std::optional<CatalogBuildOptions> ParseCatalogBuildOptions(const CommandArgs& args,
+                                                             OutputFormatter& fmt) {
+    auto packages = SplitCommaList(GetFlag(args, "package"));
+    auto infoareas = SplitCommaList(GetFlag(args, "infoarea"));
+    if (packages.empty() && infoareas.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing scope. Usage: --package <pkg>[,<pkg>...] --infoarea <ia>[,<ia>...] "
+            "--sid <sid>"));
+        return std::nullopt;
+    }
+    if (!HasFlag(args, "sid") || GetFlag(args, "sid").empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing --sid. Entity IDs are derived per system, so a system ID "
+            "(e.g. A4H) is required."));
+        return std::nullopt;
+    }
+
+    CatalogBuildOptions options;
+    options.system_sid = GetFlag(args, "sid");
+    options.packages = packages;
+    options.infoareas = infoareas;
+    if (HasFlag(args, "max-depth")) {
+        auto depth_result = ParseIntInRange(
+            GetFlag(args, "max-depth"), 1, std::numeric_limits<int>::max(), "--max-depth");
+        if (depth_result.IsErr()) {
+            fmt.PrintError(depth_result.Error());
+            return std::nullopt;
+        }
+        options.max_depth = depth_result.Value();
+    }
+    return options;
+}
+
+// Renders the default human-readable summary (entity/field/edge counts +
+// one line per entity) — the "table" --format.
+std::string RenderCatalogFeedSummary(const CatalogFeed& feed) {
+    std::ostringstream out;
+    out << "Entities: " << feed.entities.size() << "  Fields: " << feed.fields.size()
+        << "  Edges: " << feed.edges.size() << "  Warnings: " << feed.warnings.size() << "\n";
+    for (const auto& e : feed.entities) {
+        out << "  [" << ToString(e.domain) << "] " << e.object_type << " " << e.technical_name
+            << " (" << e.id.Value().substr(0, 12) << "...)\n";
+    }
+    for (const auto& w : feed.warnings) {
+        out << "  warning: " << w << "\n";
+    }
+    return out.str();
+}
+
+int HandleCatalogBuild(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto options = ParseCatalogBuildOptions(args, fmt);
+    if (!options) return 99;
+
+    // Default format: "json" when the global --json flag is set (preserves
+    // the pre-merge `--json catalog build` contract), "table" otherwise.
+    // An explicit --format always wins.
+    auto format = GetFlag(args, "format", fmt.IsJsonMode() ? "json" : "table");
+    if (format != "table" && format != "json" && format != "openmetadata" && format != "mermaid") {
+        fmt.PrintError(MakeValidationError(
+            "Invalid --format: " + format + " (expected table|json|openmetadata|mermaid)"));
+        return 99;
+    }
+    auto db_path = GetFlag(args, "db");
+    if (db_path.empty() && HasFlag(args, "embed")) {
+        fmt.PrintError(MakeValidationError("--embed requires --db <path.duckdb> (nothing to embed into)"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+
+    auto result = CatalogBuild(*session, *options);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    const auto& feed = result.Value();
+
+    // Persist first (if requested) — the persistence confirmation goes to
+    // stderr so it never pollutes stdout, which carries whatever --format
+    // asked for (e.g. `catalog build ... --db out.duckdb --format json | jq`
+    // must see clean JSON on stdout).
+    if (!db_path.empty()) {
+        auto store_result = DuckDbCatalogStore::Open(db_path);
+        if (store_result.IsErr()) {
+            fmt.PrintError(store_result.Error());
+            return store_result.Error().ExitCode();
+        }
+        auto store = std::move(store_result).Value();
+
+        auto write_result = store->WriteFeed(feed);
+        if (write_result.IsErr()) {
+            fmt.PrintError(write_result.Error());
+            return write_result.Error().ExitCode();
+        }
+
+        int embedded_count = 0;
+        std::vector<std::string> embed_warnings;
+        if (HasFlag(args, "embed")) {
+            auto provider = GeminiEmbeddingProvider::CreateFromEnv();
+            if (provider.IsErr()) {
+                fmt.PrintError(MakeValidationError("--embed requires " + provider.Error()));
+                return 99;
+            }
+            for (const auto& e : feed.entities) {
+                // Embedding source text: curated definition first (falls back
+                // to the technical name when uncurated) — this is what lets
+                // "procurement value" match 0PUR_VALUE even before a steward
+                // has written a definition.
+                std::string text = e.display_name.empty() ? e.technical_name : e.display_name;
+                if (e.biz_definition.has_value() && !e.biz_definition->empty()) {
+                    text += " " + *e.biz_definition;
+                }
+                auto embedding = provider.Value()->EmbedText(text);
+                if (embedding.IsErr()) {
+                    embed_warnings.push_back(e.technical_name + ": " + embedding.Error().ToString());
+                    continue;
+                }
+                auto write_embed =
+                    store->WriteEmbedding(e.id, embedding.Value(), provider.Value()->ModelName());
+                if (write_embed.IsErr()) {
+                    embed_warnings.push_back(e.technical_name + ": " + write_embed.Error().ToString());
+                    continue;
+                }
+                ++embedded_count;
+            }
+        }
+
+        std::cerr << "Wrote " << feed.entities.size() << " entities, " << feed.fields.size()
+                  << " fields, " << feed.edges.size() << " edges to " << db_path << "\n";
+        if (HasFlag(args, "embed")) {
+            std::cerr << "Embedded " << embedded_count << " entities ("
+                      << embed_warnings.size() << " failed)\n";
+            for (const auto& w : embed_warnings) std::cerr << "  embed warning: " << w << "\n";
+        }
+    }
+
+    // Render per --format.
+    if (format == "table") {
+        std::cout << RenderCatalogFeedSummary(feed);
+        return 0;
+    }
+    std::string rendered;
+    if (format == "openmetadata") {
+        rendered = RenderCatalogFeedOpenMetadataJson(
+            feed, GetFlag(args, "service-name", "erpl_adt"), GetFlag(args, "system-id", feed.system_sid));
+    } else if (format == "mermaid") {
+        rendered = RenderCatalogFeedMermaid(feed);
+    } else {
+        rendered = RenderCatalogFeedJson(feed);
+    }
+    if (fmt.IsJsonMode() && format != "mermaid") {
+        fmt.PrintJson(rendered);
+    } else {
+        std::cout << rendered;
+        if (!rendered.empty() && rendered.back() != '\n') std::cout << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// catalog search
+// ---------------------------------------------------------------------------
+// Reads directly from a DuckDB file — no ADT/session involved, matching the
+// "fast, cache-only" search contract (BRD.md FR-MCP-1): sub-100ms reads
+// against an already-sunk catalog, not a live SAP round-trip.
+int HandleCatalogSearch(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.size() < 2) {
+        fmt.PrintError(MakeValidationError(
+            "Usage: erpl-adt catalog search <path.duckdb> <query> [--mode fts|vss|hybrid] "
+            "[--max <n>]"));
+        return 99;
+    }
+    const auto& db_path = args.positional[0];
+    const auto& query = args.positional[1];
+    auto mode = GetFlag(args, "mode", "fts");
+    if (mode != "fts" && mode != "vss" && mode != "hybrid") {
+        fmt.PrintError(MakeValidationError("Invalid --mode: " + mode + " (expected fts|vss|hybrid)"));
+        return 99;
+    }
+    int max_results = 20;
+    if (HasFlag(args, "max")) {
+        auto max_parsed = ParseIntInRange(GetFlag(args, "max"), 1, 1000, "--max");
+        if (max_parsed.IsErr()) {
+            fmt.PrintError(max_parsed.Error());
+            return 99;
+        }
+        max_results = max_parsed.Value();
+    }
+
+    auto store_result = DuckDbCatalogStore::Open(db_path, /*read_only=*/true);
+    if (store_result.IsErr()) {
+        fmt.PrintError(store_result.Error());
+        return store_result.Error().ExitCode();
+    }
+    auto store = std::move(store_result).Value();
+
+    Result<std::vector<CatalogSearchHit>, Error> result = Result<std::vector<CatalogSearchHit>, Error>::Ok({});
+    if (mode == "fts") {
+        result = store->SearchFts(query, max_results);
+    } else {
+        auto provider = GeminiEmbeddingProvider::CreateFromEnv();
+        if (provider.IsErr()) {
+            fmt.PrintError(MakeValidationError("--mode " + mode + " requires " + provider.Error()));
+            return 99;
+        }
+        auto embedding = provider.Value()->EmbedText(query);
+        if (embedding.IsErr()) {
+            fmt.PrintError(embedding.Error());
+            return embedding.Error().ExitCode();
+        }
+        result = (mode == "vss") ? store->SearchVss(embedding.Value(), max_results)
+                                  : store->SearchHybrid(query, embedding.Value(), max_results);
+    }
+
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& hit : result.Value()) {
+            nlohmann::json hj;
+            hj["id"] = hit.entity.id.Value();
+            hj["domain"] = ToString(hit.entity.domain);
+            hj["object_type"] = hit.entity.object_type;
+            hj["technical_name"] = hit.entity.technical_name;
+            hj["display_name"] = hit.entity.display_name;
+            hj["score"] = hit.score;
+            j.push_back(std::move(hj));
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        for (const auto& hit : result.Value()) {
+            std::cout << "  [" << ToString(hit.entity.domain) << "] " << hit.entity.object_type
+                      << " " << hit.entity.technical_name << "  (score " << hit.score << ")\n";
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// catalog annotate
+// ---------------------------------------------------------------------------
+int HandleCatalogAnnotate(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing DuckDB file path. Usage: erpl-adt catalog annotate <path.duckdb> "
+            "--file <overlay.yaml> | --id <id> --definition ... --owner ... --lob ... "
+            "--confidentiality Public|Internal|Confidential"));
+        return 99;
+    }
+    const auto& db_path = args.positional[0];
+
+    std::vector<OverlayEntry> entries;
+    if (HasFlag(args, "file")) {
+        std::ifstream ifs(GetFlag(args, "file"));
+        if (!ifs) {
+            fmt.PrintError(MakeValidationError("Cannot open --file: " + GetFlag(args, "file")));
+            return 99;
+        }
+        std::ostringstream buf;
+        buf << ifs.rdbuf();
+        auto parsed = ParseOverlayYaml(buf.str());
+        if (parsed.IsErr()) {
+            fmt.PrintError(MakeValidationError(parsed.Error()));
+            return 99;
+        }
+        entries = std::move(parsed).Value();
+    } else if (HasFlag(args, "id")) {
+        OverlayEntry entry;
+        entry.entity_id = GetFlag(args, "id");
+        if (HasFlag(args, "definition")) entry.definition = GetFlag(args, "definition");
+        if (HasFlag(args, "owner")) entry.owner = GetFlag(args, "owner");
+        if (HasFlag(args, "lob")) entry.lob = GetFlag(args, "lob");
+        if (HasFlag(args, "confidentiality")) entry.confidentiality = GetFlag(args, "confidentiality");
+        entries.push_back(std::move(entry));
+    } else {
+        fmt.PrintError(MakeValidationError(
+            "Provide either --file <overlay.yaml> or --id <entity_id> [--definition ...]"));
+        return 99;
+    }
+
+    auto store_result = DuckDbCatalogStore::Open(db_path);
+    if (store_result.IsErr()) {
+        fmt.PrintError(store_result.Error());
+        return store_result.Error().ExitCode();
+    }
+    auto store = std::move(store_result).Value();
+
+    auto curated_by = GetFlag(args, "curated-by", "cli");
+    auto result = ApplyOverlay(*store, entries, curated_by);
+
+    // Re-embed curated entities (HLD: curating changes semantic-search
+    // behavior — the embedding must be refreshed on every annotate, not
+    // just a full sink).
+    int reembedded_count = 0;
+    std::vector<std::string> embed_warnings;
+    if (HasFlag(args, "embed") && result.applied_count > 0) {
+        auto provider = GeminiEmbeddingProvider::CreateFromEnv();
+        if (provider.IsErr()) {
+            fmt.PrintError(MakeValidationError("--embed requires " + provider.Error()));
+            return 99;
+        }
+        for (const auto& entry : entries) {
+            auto id = EntityId::Create(entry.entity_id);
+            if (id.IsErr()) continue;
+            auto entity = store->GetEntity(id.Value());
+            if (entity.IsErr() || !entity.Value().has_value()) continue;
+
+            std::string text = entity.Value()->display_name;
+            if (entity.Value()->biz_definition.has_value()) {
+                text += " " + *entity.Value()->biz_definition;
+            }
+            auto embedding = provider.Value()->EmbedText(text);
+            if (embedding.IsErr()) {
+                embed_warnings.push_back(entry.entity_id + ": " + embedding.Error().ToString());
+                continue;
+            }
+            auto write_embed =
+                store->WriteEmbedding(id.Value(), embedding.Value(), provider.Value()->ModelName());
+            if (write_embed.IsOk()) ++reembedded_count;
+        }
+    }
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["applied"] = result.applied_count;
+        j["orphan_ids"] = result.orphan_ids;
+        j["write_errors"] = result.write_errors;
+        if (HasFlag(args, "embed")) {
+            j["reembedded"] = reembedded_count;
+            j["embed_warnings"] = embed_warnings;
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Applied: " << result.applied_count << "  Orphans: " << result.orphan_ids.size()
+                  << "  Errors: " << result.write_errors.size() << "\n";
+        for (const auto& id : result.orphan_ids) std::cout << "  orphan: " << id << "\n";
+        for (const auto& err : result.write_errors) std::cout << "  error: " << err << "\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// catalog sync
+// ---------------------------------------------------------------------------
+int HandleCatalogSync(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto options = ParseCatalogBuildOptions(args, fmt);
+    if (!options) return 99;
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing DuckDB file path. Usage: erpl-adt catalog sync <path.duckdb> --sid <sid> "
+            "--package <pkg>[,<pkg>...]"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+
+    auto store_result = DuckDbCatalogStore::Open(args.positional[0]);
+    if (store_result.IsErr()) {
+        fmt.PrintError(store_result.Error());
+        return store_result.Error().ExitCode();
+    }
+    auto store = std::move(store_result).Value();
+
+    std::vector<std::string> scope_parts;
+    for (const auto& p : options->packages) scope_parts.push_back("package:" + p);
+    for (const auto& i : options->infoareas) scope_parts.push_back("infoarea:" + i);
+    std::string scope_label;
+    for (size_t i = 0; i < scope_parts.size(); ++i) {
+        if (i > 0) scope_label += ",";
+        scope_label += scope_parts[i];
+    }
+
+    CatalogSyncPipelineOptions pipeline;
+    pipeline.resume = HasFlag(args, "resume");
+    auto sync_start = std::chrono::steady_clock::now();
+    pipeline.on_progress = [&](const CatalogSyncProgress& p) {
+        auto elapsed = std::chrono::steady_clock::now() - sync_start;
+        auto elapsed_s = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+        long eta_s = (p.index > 0)
+            ? static_cast<long>(elapsed_s) * (p.total - p.index) / p.index
+            : 0;
+        std::cerr << "[" << p.index << "/" << p.total << "] " << p.item_kind << " " << p.item_name
+                  << " (elapsed " << FormatDuration(elapsed_s) << ", ETA " << FormatDuration(eta_s)
+                  << ")\n";
+    };
+
+    auto result = CatalogSync(*session, *store, *options, scope_label, pipeline);
+    if (result.IsErr()) {
+        auto error = result.Error();
+        error.hint = "Rerun with --resume to continue from the last completed package/infoarea: "
+                     "erpl-adt catalog sync " + args.positional[0] + " --sid " + options->system_sid +
+                     " --package " + GetFlag(args, "package") +
+                     (HasFlag(args, "infoarea") ? " --infoarea " + GetFlag(args, "infoarea") : "") +
+                     " --resume";
+        fmt.PrintError(error);
+        return error.ExitCode();
+    }
+    const auto& summary = result.Value();
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["id"] = summary.id;
+        j["mode"] = summary.mode;
+        j["scope"] = summary.scope;
+        j["added"] = summary.added;
+        j["changed"] = summary.changed;
+        j["removed"] = summary.removed;
+        j["status"] = summary.status;
+        fmt.PrintJson(j.dump());
+    } else {
+        std::cout << "Sync " << summary.status << ": +" << summary.added << " ~" << summary.changed
+                  << " -" << summary.removed << " (scope: " << summary.scope << ")\n";
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// catalog webui
+// ---------------------------------------------------------------------------
+int HandleCatalogWebui(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto catalog_db = GetFlag(args, "catalog-db");
+    if (catalog_db.empty() && !args.positional.empty()) {
+        catalog_db = args.positional[0];
+    }
+    if (catalog_db.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing DuckDB file path. Usage: erpl-adt catalog webui <path.duckdb> "
+            "[--port <n>] [--host <addr>]"));
+        return 99;
+    }
+
+    auto port_result = ParsePort(GetFlag(args, "port", "8383"));
+    if (port_result.IsErr()) {
+        fmt.PrintError(port_result.Error());
+        return 99;
+    }
+    auto port = std::move(port_result).Value();
+    auto host = GetFlag(args, "host", "127.0.0.1");
+
+    // Opened read-write, not read-only: catalog_annotate (curation) shares
+    // this same connection, same rationale as `erpl-adt mcp --http
+    // --catalog-db` in main.cpp.
+    auto store_result = DuckDbCatalogStore::Open(catalog_db);
+    if (store_result.IsErr()) {
+        fmt.PrintError(store_result.Error());
+        return store_result.Error().ExitCode();
+    }
+    std::shared_ptr<DuckDbCatalogStore> store(std::move(store_result).Value());
+
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    McpHttpServer server(std::move(registry), /*serve_webui=*/true);
+    std::cerr << "erpl-adt catalog web UI listening on http://" << host << ":" << port << "/\n";
+    if (!server.Run(host, port)) {
+        fmt.PrintError(Error{"CatalogWebui", "", std::nullopt,
+                             "Failed to bind " + host + ":" + std::to_string(port), std::nullopt});
+        return 99;
     }
     return 0;
 }
@@ -6164,7 +6692,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     // Group ordering.
     const std::vector<std::string> group_order = {
         "search", "object", "source", "activate", "test", "check",
-        "transport", "ddic", "package", "discover", "bw"};
+        "transport", "ddic", "package", "discover", "bw", "catalog"};
 
     // Group display names and short descriptions (overrides for cleaner display).
     struct GroupMeta {
@@ -6183,6 +6711,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"package",   {"PACKAGE", ""}},
         {"discover",  {"DISCOVER", ""}},
         {"bw",        {"BW", "SAP BW/4HANA Modeling operations"}},
+        {"catalog",   {"CATALOG", "Unified cross-domain metadata catalog"}},
     };
 
     // Pre-compute max left-column width across ALL groups for alignment.
@@ -7077,6 +7606,189 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("ddic", "cds", "Get CDS source",
                          HandleDdicCds, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // catalog build
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt catalog build --sid <sid> --package <pkg>[,<pkg>...] "
+                     "--infoarea <ia>[,<ia>...] [--format table|json|openmetadata|mermaid] "
+                     "[--db <path.duckdb>] [--embed]";
+        help.long_description =
+            "Walks a scope of ABAP/DDIC/CDS packages and/or BW infoareas and normalizes the "
+            "objects found into a unified Catalog Feed (entities + fields + edges), with "
+            "stable, cross-run entity IDs. At least one of --package/--infoarea is required — "
+            "there is no 'whole system' default: SAP has no call to enumerate every BW "
+            "infoarea, and ABAP/DDIC package search has no pagination, so a silent 'catalog "
+            "everything' default risks an incomplete catalog with no signal it was truncated. "
+            "To discover packages to pass in, use the generic search command, e.g. "
+            "`erpl-adt search 'Z*' --type DEVC --json` for all custom-namespace packages.\n\n"
+            "By default this only prints a summary (--format table) — nothing is written "
+            "anywhere. Add --format to render the feed as JSON / an OpenMetadata table "
+            "profile / a Mermaid flowchart instead. Add --db <path.duckdb> to also persist "
+            "the feed into a DuckDB file (full rebuild, replacing any prior content) — that "
+            "file is what `catalog search`, `catalog annotate`, `catalog sync`, and "
+            "`catalog webui` all read from.\n\n"
+            "--db here is a single-shot, all-or-nothing write with no progress output and no "
+            "resume — fine for a small scope, but for anything large or long-running "
+            "(thousands of packages, an hour-plus run), use `catalog sync` instead, even for "
+            "the very first build: it processes one package/infoarea at a time with a "
+            "progress line per item, and a fatal error partway through leaves everything "
+            "already-synced durably committed and resumable with --resume, rather than "
+            "discarding the whole run.";
+        help.flags = {
+            {"sid", "<sid>", "System ID to stamp on entities (e.g. A4H) — required", true},
+            {"package", "<pkg>[,<pkg>...]", "ABAP/DDIC/CDS package(s), comma-separated", false},
+            {"infoarea", "<ia>[,<ia>...]", "BW infoarea(s), comma-separated", false},
+            {"max-depth", "<n>", "Max package-tree recursion depth (default: 50)", false},
+            {"format", "<table|json|openmetadata|mermaid>", "Output format (default: table)", false},
+            {"db", "<path.duckdb>", "Also persist the feed into this DuckDB file (created if missing)", false},
+            {"embed", "", "With --db: also embed entities via the Gemini API (needs GEMINI_API_KEY) for VSS search", false},
+            {"service-name", "<name>", "--format openmetadata: service name (default: erpl_adt)", false},
+            {"system-id", "<id>", "--format openmetadata: system id (default: --sid)", false},
+        };
+        help.examples = {
+            "erpl-adt search 'Z*' --type DEVC --json                         # discover packages first",
+            "erpl-adt catalog build --sid A4H --package ZTEST                # summary, nothing persisted",
+            "erpl-adt catalog build --sid A4H --package ZTEST --format mermaid",
+            "erpl-adt catalog build --sid A4H --package ZTEST --db catalog.duckdb --embed",
+        };
+        router.Register("catalog", "build", "Build a unified cross-domain catalog (optionally persist/render it)",
+                         HandleCatalogBuild, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // catalog search
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt catalog search <path.duckdb> <query> [--mode fts|vss|hybrid] [--max <n>]";
+        help.args_description =
+            "<path.duckdb>    Path to a DuckDB file written by `catalog build --db`\n"
+            "  <query>          Search text";
+        help.long_description =
+            "Fast, cache-only search over an already-sunk catalog — reads the DuckDB file "
+            "directly, no ADT/SAP round-trip. --mode vss/hybrid require entities to have "
+            "been embedded (`catalog build --db ... --embed`) and GEMINI_API_KEY set.";
+        help.flags = {
+            {"mode", "<fts|vss|hybrid>", "Search mode (default: fts)", false},
+            {"max", "<n>", "Max results (default: 20)", false},
+        };
+        help.examples = {
+            "erpl-adt catalog search catalog.duckdb \"procurement value\"",
+            "erpl-adt --json catalog search catalog.duckdb \"procurement value\" --mode hybrid",
+        };
+        router.Register("catalog", "search", "Search an already-sunk catalog (fast, no ADT call)",
+                         HandleCatalogSearch, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // catalog annotate
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt catalog annotate <path.duckdb> (--file <overlay.yaml> | --id <id> "
+                     "[--definition ...] [--owner ...] [--lob ...] [--confidentiality ...])";
+        help.args_description = "<path.duckdb>    Path to a DuckDB file written by `catalog build --db`";
+        help.long_description =
+            "Optional — the catalog is fully usable without ever running this. Technical "
+            "metadata from SAP gives you the *what* (a table's fields, a CDS view's "
+            "associations); annotate adds the *why*, written by a human: what an entity "
+            "means to the business, who owns it, and how sensitive it is. Useful once "
+            "people or AI agents start browsing/searching the catalog and 'ZFI_0034' or "
+            "'0PUR_VALUE' isn't self-explanatory — e.g. --definition 'Total procurement "
+            "value' turns a search for \"procurement spend\" into a real hit. Never touches "
+            "SAP — it only writes to the DuckDB file's business-overlay columns. An overlay "
+            "entry referencing an unknown entity_id is reported as an orphan, not silently "
+            "dropped. --embed re-embeds curated entities so semantic search reflects the "
+            "new definition immediately.";
+        help.flags = {
+            {"file", "<path>", "Bulk overlay YAML, keyed by entity_id", false},
+            {"id", "<id>", "Single entity ID to curate", false},
+            {"definition", "<text>", "Business definition", false},
+            {"owner", "<text>", "Business owner/contact", false},
+            {"lob", "<text>", "Line of Business", false},
+            {"confidentiality", "<Public|Internal|Confidential>", "Confidentiality level", false},
+            {"curated-by", "<name>", "Attribution (default: cli)", false},
+            {"embed", "", "Re-embed curated entities (needs GEMINI_API_KEY)", false},
+        };
+        help.examples = {
+            "erpl-adt catalog annotate catalog.duckdb --file overlay.yaml",
+            "erpl-adt catalog annotate catalog.duckdb --id <entity_id> "
+            "--definition \"Total procurement value\" --lob Procurement --embed",
+        };
+        router.Register("catalog", "annotate", "Curate business-overlay fields onto cached entities",
+                         HandleCatalogAnnotate, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // catalog sync
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt catalog sync <path.duckdb> --sid <sid> --package <pkg>[,<pkg>...] "
+                     "[--infoarea <ia>[,<ia>...]]";
+        help.args_description = "<path.duckdb>    Path to a DuckDB file written by `catalog build --db`";
+        help.long_description =
+            "Incremental sync: walks the scope one package/infoarea at a time, upserting each "
+            "item's entities/fields/edges into the DuckDB file as it goes (not one all-or-"
+            "nothing pass), and prints one progress line per item to stderr. This is the "
+            "recommended command for large or long-running scopes — including the very first "
+            "build of a system, not just later updates — because it's upsert-based (safe to "
+            "call repeatedly) and resumable: a fatal error (connection drop, auth expiry) "
+            "leaves every already-completed item durably committed, and rerunning with "
+            "--resume picks up exactly where it left off instead of starting over. Checkpoint/"
+            "audit state (which items are done, and whether the last attempt was interrupted) "
+            "lives in the same DuckDB file as the catalog data itself — no separate sidecar "
+            "file to lose track of. Once every item in the scope has completed (whether "
+            "freshly this run or resumed from an earlier one), a final "
+            "pass deletes entities that disappeared from the scope entirely — this removal pass "
+            "is skipped on a resumed run (it needs the complete picture from a single "
+            "uninterrupted pass); run a plain sync without --resume afterwards if you need "
+            "removal detection for a scope that was built up over several resumed runs. "
+            "Records one sync_runs row per invocation (status ok/interrupted), surfaced via the "
+            "catalog_sync_status MCP tool.";
+        help.flags = {
+            {"sid", "<sid>", "System ID to stamp on entities (e.g. A4H) — required", true},
+            {"package", "<pkg>[,<pkg>...]", "ABAP/DDIC/CDS package(s), comma-separated", false},
+            {"infoarea", "<ia>[,<ia>...]", "BW infoarea(s), comma-separated", false},
+            {"max-depth", "<n>", "Max package-tree recursion depth (default: 50)", false},
+            {"resume", "", "Continue from the checkpoint left by an interrupted sync of the same "
+                           "scope, instead of starting over", false},
+        };
+        help.examples = {
+            "erpl-adt catalog sync catalog.duckdb --sid A4H --package ZTEST",
+            "erpl-adt catalog sync catalog.duckdb --sid A4H --package ZTEST --resume",
+        };
+        router.Register("catalog", "sync", "Incrementally sync a scope into an existing DuckDB file",
+                         HandleCatalogSync, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // catalog webui
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt catalog webui <path.duckdb> [--port <n>] [--host <addr>]";
+        help.args_description = "<path.duckdb>    Path to a DuckDB file written by `catalog build --db`";
+        help.long_description =
+            "Starts a single blocking server exposing the Flutter web catalog client "
+            "(erpl_catalog_kit) and its JSON-RPC catalog API on the same origin — the web "
+            "UI is compiled into the erpl-adt binary itself, so no separate static file "
+            "server or CORS setup is needed. If the binary was built without 'make webui' "
+            "having been run first, this serves an instructional message instead of the app.";
+        help.flags = {
+            {"port", "<n>", "Port to listen on (default: 8383)", false},
+            {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
+        };
+        help.examples = {
+            "erpl-adt catalog webui catalog.duckdb",
+            "erpl-adt catalog webui catalog.duckdb --port 9000 --host 0.0.0.0",
+        };
+        router.Register("catalog", "webui", "Serve the embedded web catalog client + API (blocking)",
+                         HandleCatalogWebui, std::move(help));
     }
 
     // -----------------------------------------------------------------------

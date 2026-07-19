@@ -47,7 +47,7 @@ bool CommandRouter::IsBooleanFlag(std::string_view arg) {
            arg == "--no-search" || arg == "--no-elem-edges" ||
            arg == "--iobj-edges" || arg == "--editor" || arg == "--no-write" ||
            arg == "--optimistic" || arg == "--no-resolve-types" ||
-           arg == "--no-telemetry";
+           arg == "--no-telemetry" || arg == "--embed" || arg == "--resume";
 }
 
 void CommandRouter::Register(const std::string& group,

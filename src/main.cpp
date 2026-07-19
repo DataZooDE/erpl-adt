@@ -8,7 +8,10 @@
 #include <erpl_adt/core/terminal.hpp>
 #include <erpl_adt/core/version.hpp>
 #include <erpl_adt/mcp/mcp_server.hpp>
+#include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/mcp_http_server.hpp>
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
+#include <erpl_adt/storage/duckdb_catalog_store.hpp>
 #include <erpl_adt/workflow/deploy_workflow.hpp>
 
 #include <nlohmann/json.hpp>
@@ -381,7 +384,8 @@ int HandleMcpServer(int argc, const char* const* argv) {
                 auto key = std::string(arg.substr(2));
                 // Boolean flags don't consume next arg.
                 if (key == "https" || key == "insecure" ||
-                    key == "json" || key == "color" || key == "no-color") {
+                    key == "json" || key == "color" || key == "no-color" ||
+                    key == "http") {
                     flags[key] = "true";
                 } else if (i + 1 < argc &&
                     std::string_view{argv[i + 1]}.substr(0, 2) != "--") {
@@ -482,19 +486,69 @@ int HandleMcpServer(int argc, const char* const* argv) {
     ToolRegistry registry;
     RegisterAdtTools(registry, *session);
 
-    // server_started { transport, tool_count }: counts/kinds only. The MCP
-    // server speaks JSON-RPC over stdio. One $session_id spans this whole uptime.
-    Telemetry::ServerStarted("stdio", static_cast<int>(registry.Tools().size()));
+    // catalog_* tools (BRD.md FR-MCP-1) — opened once here, for the process
+    // lifetime (NFR-1). Optional: absent unless --catalog-db is passed,
+    // since not every deployment has a sunk catalog.
+    //
+    // Opened read-write, not read-only: catalog_annotate (P3 curation)
+    // shares this same connection, and DuckDB file-locking doesn't allow a
+    // second read-write connection from another process while this one is
+    // open. Trade-off accepted for now — a concurrent external `catalog
+    // sync`/`catalog annotate` CLI run against the same file while this MCP
+    // server holds it open will fail to open, rather than the NFR-2 ideal
+    // of never blocking. Revisit (e.g. two connections, or MVCC-based
+    // snapshot reads) once incremental sync (P4) needs true concurrent
+    // read+write.
+    if (!get("catalog-db").empty()) {
+        auto store_result = DuckDbCatalogStore::Open(get("catalog-db"));
+        if (store_result.IsErr()) {
+            std::cerr << "Error: --catalog-db: " << store_result.Error().ToString() << "\n";
+            return kExitInternal;
+        }
+        std::shared_ptr<DuckDbCatalogStore> catalog_store(std::move(store_result).Value());
+        RegisterCatalogStoreTools(registry, catalog_store);
+    }
+
+    const bool http_transport = get("http") == "true";
 
     // Flush on SIGTERM/SIGINT — a long-lived server must explicitly drain.
     std::signal(SIGTERM, McpTelemetrySignalHandler);
     std::signal(SIGINT, McpTelemetrySignalHandler);
 
-    // Create and run the MCP server (blocks until EOF on stdin).
-    McpServer server(std::move(registry));
-    server.Run();
+    if (http_transport) {
+        uint16_t mcp_port = 8383;
+        if (!get("mcp-port").empty()) {
+            std::string port_parse_error;
+            if (!ParsePort(get("mcp-port"), &mcp_port, &port_parse_error)) {
+                std::cerr << "Error: --mcp-port: " << port_parse_error << "\n";
+                return kExitInternal;
+            }
+        }
+        auto mcp_host = get("mcp-host", "127.0.0.1");
 
-    // Clean shutdown (stdin EOF): drain buffered events before exit.
+        // server_started { transport, tool_count }: same tool contract as
+        // stdio (BRD.md FR-MCP-2) — a thin HTTP shim, not a second registry.
+        Telemetry::ServerStarted("http", static_cast<int>(registry.Tools().size()));
+
+        McpHttpServer server(std::move(registry));
+        std::cerr << "erpl-adt MCP HTTP server listening on http://" << mcp_host << ":"
+                  << mcp_port << "/mcp\n";
+        if (!server.Run(mcp_host, mcp_port)) {
+            std::cerr << "Error: failed to bind " << mcp_host << ":" << mcp_port << "\n";
+            Telemetry::Flush();
+            return kExitInternal;
+        }
+    } else {
+        // server_started { transport, tool_count }: counts/kinds only. The MCP
+        // server speaks JSON-RPC over stdio. One $session_id spans this whole uptime.
+        Telemetry::ServerStarted("stdio", static_cast<int>(registry.Tools().size()));
+
+        // Create and run the MCP server (blocks until EOF on stdin).
+        McpServer server(std::move(registry));
+        server.Run();
+    }
+
+    // Clean shutdown: drain buffered events before exit.
     Telemetry::Flush();
     return 0;
 }
