@@ -232,6 +232,28 @@ TEST_CASE("ParseCdsSource: an array-valued annotation's nested commas don't "
     CHECK(info.fields[0].annotations[0].find("variableSequence: 2") != std::string::npos);
 }
 
+TEST_CASE("ParseCdsSource: a header-level object-valued annotation before "
+          "'define view entity' doesn't hijack the field-list brace",
+          "[adt][ddic][cds]") {
+    // Real captured DDL (/DMO/E_AGENCY) — `@AbapCatalog.extensibility: {...}`
+    // appears before `define view entity` with its own object-literal value
+    // (including a nested `quota: {...}`). ParseHeader previously searched
+    // for the field-list brace via `clean_source.find('{')` from position 0,
+    // so it locked onto this annotation's opening brace instead of the real
+    // one after "as select from ... {" — parsing the annotation's own
+    // key/value pairs as garbage pseudo-fields ("extensible: true",
+    // "quota: { ... }", etc.) while losing the one real field entirely.
+    auto ddl = LoadFixture("ddic/cds_e_agency_extension_include_source.abap");
+    auto info = ParseCdsSource(ddl);
+
+    CHECK(info.entity_name == "/DMO/E_Agency");
+    CHECK(info.source_table == "/dmo/agency");
+
+    REQUIRE(info.fields.size() == 1);
+    CHECK(info.fields[0].name == "AgencyId");
+    CHECK(info.fields[0].is_key);
+}
+
 TEST_CASE("GetCdsStructure: fetches source and parses it", "[adt][ddic][cds]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(

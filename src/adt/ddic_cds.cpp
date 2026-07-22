@@ -74,11 +74,20 @@ void ParseHeader(const std::string& clean_source, CdsViewInfo& info, size_t& bra
     if (std::regex_search(clean_source, m, kDefineRe)) {
         info.entity_name = m[1].str();
     }
+    // A header-level annotation (e.g. `@AbapCatalog.extensibility: { ... }`)
+    // can appear before `define view entity` with its own object-literal
+    // value — searching for '{' from the very start of the source would
+    // lock onto that annotation's brace instead of the real field-list
+    // brace. The "as select from"/"as projection on" clause always precedes
+    // the field list, so start the search for the field-list brace from
+    // there instead of from position 0.
+    size_t from_clause_end = 0;
     if (std::regex_search(clean_source, m, kFromRe)) {
         info.source_table = m[1].str();
+        from_clause_end = static_cast<size_t>(m.position(0) + m.length(0));
     }
 
-    brace_pos = clean_source.find('{');
+    brace_pos = clean_source.find('{', from_clause_end);
 
     // Association/composition header region: from after "define ..." up to
     // the first top-level '{'.
