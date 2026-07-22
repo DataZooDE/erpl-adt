@@ -325,7 +325,7 @@ void EnrichFieldsFromDataElements(IAdtSession& session,
     std::map<std::string, DataElementInfo> cache;
     std::set<std::string> domains_to_fetch;
     for (const auto& type_name : to_fetch) {
-        auto url = "/sap/bc/adt/ddic/dataelements/" + type_name;
+        auto url = "/sap/bc/adt/ddic/dataelements/" + UrlEncode(type_name);
         auto resp = session.Get(url, headers);
         if (resp.IsOk() && resp.Value().status_code == 200) {
             auto info = ParseDataElementXml(resp.Value().body);
@@ -493,7 +493,7 @@ Result<TableInfo, Error> GetTableDefinition(
     IAdtSession& session,
     const std::string& table_name,
     bool resolve_types) {
-    auto url = "/sap/bc/adt/ddic/tables/" + table_name;
+    auto url = "/sap/bc/adt/ddic/tables/" + UrlEncode(table_name);
 
     HttpHeaders headers;
     headers["Accept"] = "application/vnd.sap.adt.tables.v2+xml";
@@ -547,7 +547,7 @@ Result<TableInfo, Error> GetTableDefinition(
 Result<std::string, Error> GetCdsSource(
     IAdtSession& session,
     const std::string& cds_name) {
-    auto url = "/sap/bc/adt/ddic/ddl/sources/" + cds_name + "/source/main";
+    auto url = "/sap/bc/adt/ddic/ddl/sources/" + UrlEncode(cds_name) + "/source/main";
 
     HttpHeaders headers;
     headers["Accept"] = "text/plain";

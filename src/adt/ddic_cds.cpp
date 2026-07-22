@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/ddic_cds.hpp>
 
+#include <erpl_adt/core/url.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <regex>
@@ -302,7 +304,7 @@ CdsViewInfo ParseCdsSource(const std::string& ddl_source) {
 }
 
 Result<CdsViewInfo, Error> GetCdsStructure(IAdtSession& session, const std::string& cds_name) {
-    auto url = "/sap/bc/adt/ddic/ddl/sources/" + cds_name + "/source/main";
+    auto url = "/sap/bc/adt/ddic/ddl/sources/" + UrlEncode(cds_name) + "/source/main";
 
     HttpHeaders headers;
     headers["Accept"] = "text/plain";

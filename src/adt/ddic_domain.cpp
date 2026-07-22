@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/ddic_domain.hpp>
 
 #include "xml_utils.hpp"
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <string>
@@ -72,7 +73,7 @@ DomainInfo ParseDomainXml(const std::string& xml) {
 } // anonymous namespace
 
 Result<DomainInfo, Error> GetDomain(IAdtSession& session, const std::string& domain_name) {
-    auto url = "/sap/bc/adt/ddic/domains/" + domain_name;
+    auto url = "/sap/bc/adt/ddic/domains/" + UrlEncode(domain_name);
 
     // Accept header is required — this endpoint 400s ("Accept header
     // missing") on a bare request with none. The generic "application/xml"
