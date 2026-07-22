@@ -180,6 +180,58 @@ TEST_CASE("ParseCdsSource: a cast with no top-level alias keeps the whole expres
     CHECK_FALSE(info.fields[1].name == "abap.char( 10 ) )");
 }
 
+TEST_CASE("ParseCdsSource: extracts a field's @EndUserText.label as description",
+          "[adt][ddic][cds]") {
+    const std::string ddl =
+        "define view entity Z_LABEL_TEST\n"
+        "  as select from mara\n"
+        "{\n"
+        "  key matnr,\n"
+        "      @EndUserText.label: 'Material Group'\n"
+        "      matkl as MaterialGroup,\n"
+        "      @Semantics.quantity.unitOfMeasure: 'Unit'\n"
+        "      meins as Unit\n"
+        "}\n";
+
+    auto info = ParseCdsSource(ddl);
+    REQUIRE(info.fields.size() == 3);
+    CHECK_FALSE(info.fields[0].description.has_value());  // matnr — no annotation at all
+
+    REQUIRE(info.fields[1].description.has_value());
+    CHECK(*info.fields[1].description == "Material Group");
+
+    // A field with annotations but no @EndUserText.label has no description.
+    CHECK_FALSE(info.fields[2].description.has_value());
+}
+
+TEST_CASE("ParseCdsSource: an array-valued annotation's nested commas don't "
+          "fragment the field list",
+          "[adt][ddic][cds]") {
+    // Real captured DDL (SABAPDEMOS, DEMO_CDS_ANNOTATION_ARRAY) — the
+    // annotation's `[ {...}, {...} ]` array value has commas nested two
+    // levels deep ([...] then {...}). SplitTopLevel previously tracked
+    // only paren depth, so those nested commas were treated as top-level
+    // field separators, splitting one annotation into several garbage
+    // pseudo-fields — including a field literally named "value: '...'",
+    // duplicated once per array element (which crashed a real sync with a
+    // duplicate-field-id write failure once this package was ever synced).
+    auto ddl = LoadFixture("ddic/cds_demo_annotation_array_source.abap");
+    auto info = ParseCdsSource(ddl);
+
+    CHECK(info.entity_name == "demo_cds_annotation_array");
+    CHECK(info.source_table == "demo_expressions");
+
+    // Exactly one real field ("id"), not several garbage fragments.
+    REQUIRE(info.fields.size() == 1);
+    CHECK(info.fields[0].name == "id");
+    REQUIRE(info.fields[0].annotations.size() == 1);
+    CHECK(info.fields[0].annotations[0].find("Consumption.filter.hierarchyBinding") !=
+          std::string::npos);
+    // The whole multi-line array value stays part of the one annotation
+    // line, not split across several.
+    CHECK(info.fields[0].annotations[0].find("variableSequence: 2") != std::string::npos);
+}
+
 TEST_CASE("GetCdsStructure: fetches source and parses it", "[adt][ddic][cds]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(

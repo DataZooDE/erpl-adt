@@ -31,7 +31,12 @@ std::string GetDefaultAcceptType(const std::string& tlogo) {
     auto lower = ToLower(tlogo);
     // Object-type versions from the BW content-type catalog
     if (lower == "adso")   return "application/vnd.sap.bw.modeling.adso-v1_2_0+xml";
-    if (lower == "iobj")   return "application/xml";  // InfoObject uses plain XML
+    // InfoObject — confirmed live against A4H: the previously-hardcoded
+    // "application/xml" 406s ("Your BW client is outdated... Back end
+    // supports vnd.sap-bw-modeling.iobj-v2_1_0") — note the dash-form
+    // "sap-bw-modeling" namespace, unlike every other BW media type in this
+    // file, which uses dot-form "sap.bw.modeling".
+    if (lower == "iobj")   return "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml";
     if (lower == "hcpr")   return "application/vnd.sap.bw.modeling.hcpr-v1_2_0+xml";
     if (lower == "trfn")   return "application/vnd.sap.bw.modeling.trfn-v1_0_0+xml";
     if (lower == "dtpa")   return "application/vnd.sap.bw.modeling.dtpa-v1_0_0+xml";

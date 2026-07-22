@@ -85,6 +85,31 @@ struct BwAdsoDetail {
     const std::string& content_type = "");
 
 // ---------------------------------------------------------------------------
+// InfoProvider — generic dimensional structure (characteristics + key
+// figures) for CUBE/MPRO/HCPR/ODSO/HYBR. Unlike ADSO, these types don't
+// have their own per-type detail endpoint that exposes fields — but
+// /sap/bw/modeling/infoprov/{name} works uniformly across all of them.
+// ---------------------------------------------------------------------------
+
+struct BwInfoProviderField {
+    std::string name;
+    std::string description;
+    std::string info_object;   // Referenced InfoObject (characteristic/key figure)
+    std::string data_type;     // CHAR, NUMC, CURR, etc. (from <inlineType name=...>)
+    int length = 0;
+};
+
+struct BwInfoProviderDetail {
+    std::string description;   // from endUserTexts/@label
+    std::vector<BwInfoProviderField> fields;
+};
+
+[[nodiscard]] Result<BwInfoProviderDetail, Error> BwReadInfoProviderDetail(
+    IAdtSession& session,
+    const std::string& name,
+    const std::string& version = "a");
+
+// ---------------------------------------------------------------------------
 // DTP — source/target connections for lineage.
 // ---------------------------------------------------------------------------
 

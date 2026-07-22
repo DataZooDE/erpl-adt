@@ -37,6 +37,20 @@ void main() {
 
       expect(entity.bizDefinition, isNull);
       expect(entity.fields, isEmpty);
+      expect(entity.objectSubtype, isNull);
+    });
+
+    test('parses object_subtype when present (BW query vs. variable)', () {
+      final entity = CatalogEntity.fromJson({
+        'id': 'abc123',
+        'domain': 'BW',
+        'object_type': 'ELEM',
+        'object_subtype': 'REP',
+        'technical_name': '0BPC_BPF_ACTIVITY_REP',
+        'display_name': 'BPC BPF Activity Report',
+      });
+
+      expect(entity.objectSubtype, 'REP');
     });
   });
 

@@ -3,6 +3,7 @@
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,11 @@ struct CdsField {
     bool is_key = false;
     bool is_association = false;
     std::vector<std::string> annotations;  // raw "@Foo.bar: value" lines attached to this field
+    // Extracted from this field's @EndUserText.label annotation, if present
+    // — the only per-field metadata resolvable from DDL text alone (data
+    // type needs the CDS compiler, which isn't reachable over ADT's REST
+    // API — see ParseCdsSource's doc comment).
+    std::optional<std::string> description;
 };
 
 // ---------------------------------------------------------------------------

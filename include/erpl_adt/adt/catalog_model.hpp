@@ -20,12 +20,14 @@ struct CatalogEntity {
     std::string system_sid;
     CatalogDomain domain = CatalogDomain::Abap;
     std::string object_type;       // e.g. "TABL", "DDLS", "CLAS", "ADSO", "Query"
+    std::optional<std::string> object_subtype;  // BW only today: REP/VAR/CKF/RKF/FILT/STR
     std::string technical_name;
     std::string display_name;      // curated label if present, else technical_name
     std::optional<std::string> package_or_infoarea;
     std::optional<std::string> created_by;
     std::optional<std::string> changed_by;
     std::optional<std::string> changed_at;
+    std::optional<std::string> source_table;  // CDS: the view's FROM/projection-on target
 
     // Business overlay (nullable = uncurated) — populated by catalog_overlay.
     std::optional<std::string> biz_definition;
@@ -50,12 +52,18 @@ struct CatalogField {
     EntityId entity_id;
     std::string name;
     std::optional<std::string> role;         // key_figure | characteristic | field
+    std::optional<std::string> description;  // human-readable label, when resolvable
     std::optional<std::string> data_type;
     std::optional<int> length;
     std::optional<int> decimals;
     std::optional<std::string> aggregation;  // key-figure attributes
     std::optional<std::string> unit;
     std::optional<std::string> formula;      // calculated key figure expression
+    bool is_key = false;                     // DDIC: part of the table's primary key
+    std::optional<std::string> check_table;  // DDIC: foreign-key target table (also emitted as a "fk" edge)
+    std::optional<std::string> fixed_values_json;   // DDIC: domain's allowed values, [{low,high,text}]
+    std::optional<std::string> source_expression;   // CDS: raw pre-`as` field expression
+    std::optional<std::string> annotations_json;    // CDS: raw `@...` annotation lines, ["@Foo: ..."]
 };
 
 // ---------------------------------------------------------------------------
@@ -67,10 +75,17 @@ struct CatalogEdge {
     std::string id;
     EntityId from_id;
     EntityId to_id;
-    std::string kind;                 // lineage | where_used | contains | uses
-    std::string field_mapping_json;   // JSON array text: [{from_field,to_field}], empty if n/a
+    std::string kind;                 // lineage | where_used | contains | uses | fk | association
+    // JSON array text: [{from_field,to_field}] for lineage edges — BW TRFN
+    // lineage edges additionally carry per-mapping rule_type/formula/
+    // constant/start_routine/end_routine/expert_routine keys when known.
+    // Empty if n/a.
+    std::string field_mapping_json;
     std::string resolution = "resolved";  // resolved | ambiguous | unresolved
     std::string extracted_at;
+    // Edge-level (not per-field-mapping) structured detail, shape depends
+    // on `kind` — e.g. association: {"cardinality":"to-many","on_condition":"..."}.
+    std::optional<std::string> detail_json;
 };
 
 // ---------------------------------------------------------------------------

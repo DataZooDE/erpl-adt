@@ -252,6 +252,12 @@ struct DataElementInfo {
     std::optional<int> decimals;
     std::string description;
     std::string abap_type;
+    // Set only when dtel:typeKind == "domain" — dtel:typeName is then the
+    // domain name to feed into GetDomain (ddic_domain.hpp) for fixed
+    // values. A data element typed directly against a built-in (typeKind
+    // != "domain") has no domain to look up. Confirmed live against A4H
+    // (S_CARR_ID -> typeKind=domain, typeName=S_CARR_ID).
+    std::optional<std::string> domain_name;
 };
 
 DataElementInfo ParseDataElementXml(const std::string& xml) {
@@ -282,6 +288,12 @@ DataElementInfo ParseDataElementXml(const std::string& xml) {
     }
     auto type_str = GetText(dtel, "dtel:dataType");
     if (!type_str.empty()) info.abap_type = type_str;
+
+    auto type_kind = GetText(dtel, "dtel:typeKind");
+    if (type_kind == "domain") {
+        auto domain_name = GetText(dtel, "dtel:typeName");
+        if (!domain_name.empty()) info.domain_name = domain_name;
+    }
     return info;
 }
 
@@ -303,12 +315,33 @@ void EnrichFieldsFromDataElements(IAdtSession& session,
     }
 
     // Fetch each unique data element once and cache the result.
+    // Accept header is required — this endpoint 400s ("Accept header
+    // missing") on a bare request with none, which silently no-ops this
+    // entire enrichment step (resp.IsOk() but status_code=400, never 200).
+    // The generic "application/xml" media type is itself rejected with 406
+    // ("not acceptable") — only a wildcard subtype ("application/*") works.
+    HttpHeaders headers;
+    headers["Accept"] = "application/*";
     std::map<std::string, DataElementInfo> cache;
+    std::set<std::string> domains_to_fetch;
     for (const auto& type_name : to_fetch) {
         auto url = "/sap/bc/adt/ddic/dataelements/" + type_name;
-        auto resp = session.Get(url, {});
+        auto resp = session.Get(url, headers);
         if (resp.IsOk() && resp.Value().status_code == 200) {
-            cache[type_name] = ParseDataElementXml(resp.Value().body);
+            auto info = ParseDataElementXml(resp.Value().body);
+            if (info.domain_name.has_value()) domains_to_fetch.insert(*info.domain_name);
+            cache[type_name] = std::move(info);
+        }
+    }
+
+    // Fetch each unique domain once (one extra round-trip per distinct
+    // domain referenced, same cost model as the data-element fetch above —
+    // both are gated behind resolve_types, no separate flag needed).
+    std::map<std::string, std::vector<DomainFixValue>> domain_fix_values;
+    for (const auto& domain_name : domains_to_fetch) {
+        auto domain = GetDomain(session, domain_name);
+        if (domain.IsOk() && !domain.Value().fix_values.empty()) {
+            domain_fix_values[domain_name] = domain.Value().fix_values;
         }
     }
 
@@ -326,6 +359,12 @@ void EnrichFieldsFromDataElements(IAdtSession& session,
                 f.decimals    = it->second.decimals;
                 f.description = it->second.description;
                 f.abap_type   = it->second.abap_type;
+                if (it->second.domain_name.has_value()) {
+                    auto fv_it = domain_fix_values.find(*it->second.domain_name);
+                    if (fv_it != domain_fix_values.end()) {
+                        f.fixed_values = fv_it->second;
+                    }
+                }
             }
         }
     }

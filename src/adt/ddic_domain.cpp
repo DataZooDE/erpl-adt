@@ -74,7 +74,13 @@ DomainInfo ParseDomainXml(const std::string& xml) {
 Result<DomainInfo, Error> GetDomain(IAdtSession& session, const std::string& domain_name) {
     auto url = "/sap/bc/adt/ddic/domains/" + domain_name;
 
-    auto response = session.Get(url, {});
+    // Accept header is required — this endpoint 400s ("Accept header
+    // missing") on a bare request with none. The generic "application/xml"
+    // media type is itself rejected with 406 ("not acceptable") — only a
+    // wildcard subtype ("application/*") works.
+    HttpHeaders headers;
+    headers["Accept"] = "application/*";
+    auto response = session.Get(url, headers);
     if (response.IsErr()) {
         return Result<DomainInfo, Error>::Err(std::move(response).Error());
     }

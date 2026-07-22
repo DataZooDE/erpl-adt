@@ -24,6 +24,13 @@ struct CatalogBuildOptions {
     std::optional<std::string> type_filter;  // e.g. "TABL", "CLAS" — ABAP/DDIC scope only
     int max_depth = 50;
     bool resolve_ddic_types = false;  // true = enrich TABL fields via data-element lookups (slower)
+    // true = also stash each object's full raw source/XML into
+    // CatalogEntity.raw_json — a fallback for whatever isn't structurally
+    // modeled yet. Off by default: a full-system crawl already touches
+    // thousands of objects, and most of them are never opened again, so
+    // carrying full source for all of them by default would bloat the
+    // DB for little benefit.
+    bool include_raw_source = false;
 };
 
 // ---------------------------------------------------------------------------

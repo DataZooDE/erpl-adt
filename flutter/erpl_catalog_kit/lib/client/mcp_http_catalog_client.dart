@@ -59,10 +59,27 @@ class McpHttpCatalogClient implements CatalogClient {
   }
 
   @override
-  Future<List<CatalogSearchHit>> search(String query, {String mode = 'fts', int maxResults = 20}) async {
-    final j = await _callTool('catalog_search', {'query': query, 'mode': mode, 'max_results': maxResults});
-    final hits = j['hits'] as List<dynamic>? ?? const [];
-    return hits.map((h) => CatalogSearchHit.fromJson(h as Map<String, dynamic>)).toList();
+  Future<CatalogSearchPage> search(
+    String query, {
+    String mode = 'fts',
+    int maxResults = 20,
+    int cursor = 0,
+    String? domain,
+    String? objectType,
+    String? objectSubtype,
+    bool curatedOnly = false,
+  }) async {
+    final j = await _callTool('catalog_search', {
+      'query': query,
+      'mode': mode,
+      'max_results': maxResults,
+      'cursor': cursor,
+      if (domain != null) 'domain': domain,
+      if (objectType != null) 'object_type': objectType,
+      if (objectSubtype != null) 'subtype': objectSubtype,
+      if (curatedOnly) 'curated_only': curatedOnly,
+    });
+    return CatalogSearchPage.fromJson(j);
   }
 
   @override
@@ -107,6 +124,24 @@ class McpHttpCatalogClient implements CatalogClient {
   Future<CatalogStats> stats() async {
     final j = await _callTool('catalog_stats', {});
     return CatalogStats.fromJson(j);
+  }
+
+  @override
+  Future<List<CatalogObjectTypeCount>> objectTypes() async {
+    final j = await _callTool('catalog_object_types', {});
+    final types = j['types'] as List<dynamic>? ?? const [];
+    return types
+        .map((t) => CatalogObjectTypeCount.fromJson(t as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<List<CatalogObjectSubtypeCount>> objectSubtypes() async {
+    final j = await _callTool('catalog_object_subtypes', {});
+    final subtypes = j['subtypes'] as List<dynamic>? ?? const [];
+    return subtypes
+        .map((t) => CatalogObjectSubtypeCount.fromJson(t as Map<String, dynamic>))
+        .toList();
   }
 
   @override

@@ -36,6 +36,7 @@ CatalogFeed MakeSampleFeed() {
     CatalogField f1(tabl_id);
     f1.id = tabl_id.Value() + "#CARRID";
     f1.name = "CARRID";
+    f1.description = "Airline code";
     f1.data_type = "S_CARR_ID";
     feed.fields.push_back(std::move(f1));
 
@@ -71,6 +72,7 @@ TEST_CASE("RenderCatalogFeedJson: entities/fields/edges/warnings all present",
     CHECK(json.find("CARRID") != std::string::npos);
     CHECK(json.find("\"kind\":\"uses\"") != std::string::npos);
     CHECK(json.find("not found") != std::string::npos);
+    CHECK(json.find("Airline code") != std::string::npos);
 }
 
 TEST_CASE("RenderCatalogFeedOpenMetadataJson: DDIC entities become tables with columns; "
@@ -83,6 +85,7 @@ TEST_CASE("RenderCatalogFeedOpenMetadataJson: DDIC entities become tables with c
     CHECK(json.find("CARRID") != std::string::npos);
     CHECK(json.find("A4H.STEST.SFLIGHT") != std::string::npos);  // FQN
     CHECK(json.find("ZCL_EXAMPLE") == std::string::npos);
+    CHECK(json.find("Airline code") != std::string::npos);
 }
 
 TEST_CASE("RenderCatalogFeedMermaid: renders entity nodes and an edge",

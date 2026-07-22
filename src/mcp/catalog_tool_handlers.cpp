@@ -89,11 +89,20 @@ nlohmann::json EntityToJson(const CatalogEntity& e) {
     ej["id"] = e.id.Value();
     ej["domain"] = ToString(e.domain);
     ej["object_type"] = e.object_type;
+    if (e.object_subtype.has_value()) ej["object_subtype"] = *e.object_subtype;
     ej["technical_name"] = e.technical_name;
     ej["display_name"] = e.display_name;
     if (e.package_or_infoarea.has_value()) ej["package_or_infoarea"] = *e.package_or_infoarea;
     if (e.biz_definition.has_value()) ej["biz_definition"] = *e.biz_definition;
     if (e.biz_owner.has_value()) ej["biz_owner"] = *e.biz_owner;
+    if (e.biz_lob.has_value()) ej["biz_lob"] = *e.biz_lob;
+    if (e.biz_confidentiality.has_value()) ej["biz_confidentiality"] = *e.biz_confidentiality;
+    if (e.biz_curated_by.has_value()) ej["biz_curated_by"] = *e.biz_curated_by;
+    if (e.biz_curated_at.has_value()) ej["biz_curated_at"] = *e.biz_curated_at;
+    if (!e.extracted_at.empty()) ej["extracted_at"] = e.extracted_at;
+    if (e.changed_at.has_value()) ej["changed_at"] = *e.changed_at;
+    if (e.source_table.has_value()) ej["source_table"] = *e.source_table;
+    if (!e.raw_json.empty()) ej["raw_source"] = e.raw_json;
     return ej;
 }
 
@@ -107,6 +116,9 @@ nlohmann::json EdgeToJson(const CatalogEdge& e) {
     if (!e.field_mapping_json.empty()) {
         ej["field_mapping"] = nlohmann::json::parse(e.field_mapping_json, nullptr, false);
     }
+    if (e.detail_json.has_value()) {
+        ej["detail"] = nlohmann::json::parse(*e.detail_json, nullptr, false);
+    }
     return ej;
 }
 
@@ -119,34 +131,73 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
         "Use for interactive lookups (agent context assembly, type-ahead); use catalog_build/"
         "catalog_export instead when you need a live, current-state extraction.",
         MakeSchema(
-            {{"query", StringProp("Search text")},
+            {{"query",
+              StringProp("Search text — empty (or \"*\") browses all entities in "
+                          "technical-name order instead of ranking a match")},
              {"mode", StringProp("fts (default) | vss | hybrid — vss/hybrid require embeddings")},
-             {"max_results", IntProp("Maximum results (default: 20)")}},
-            {"query"}),
+             {"max_results", IntProp("Maximum results per page (default: 20)")},
+             {"cursor", IntProp("Opaque pagination cursor from a prior response's next_cursor "
+                                "(default: 0, first page)")},
+             {"domain", StringProp("Filter to one domain: ABAP | DDIC | CDS | BW")},
+             {"object_type",
+              StringProp("Filter to one exact object type, e.g. \"TABL/DT\", \"IOBJ\" — see "
+                          "catalog_object_types for what's actually present")},
+             {"subtype",
+              StringProp("Filter to one exact object subtype, e.g. \"REP\" (a real BW query, "
+                          "as opposed to \"VAR\"/\"CKF\"/\"RKF\"/\"FILT\"/\"STR\" which also "
+                          "carry object_type ELEM) — see catalog_object_subtypes for what's "
+                          "actually present")},
+             {"curated_only", {{"type", "boolean"},
+                               {"description", "Only entities with a business definition curated"}}}},
+            {}),
         [store](const nlohmann::json& params) -> ToolResult {
             ToolResult err;
-            auto query = RequireString(params, "query", err);
-            if (!query) return err;
+            if (params.contains("query") && !params["query"].is_string()) {
+                return MakeParamError("query must be a string");
+            }
+            // Empty query is deliberately allowed (unlike RequireString's
+            // usual empty-rejects-as-missing rule) — it's the "browse
+            // everything" signal, not a malformed request.
+            auto query = OptString(params, "query", "");
             auto mode = OptString(params, "mode", "fts");
             if (mode != "fts") {
                 return MakeParamError("mode '" + mode +
                                       "' requires an embedding provider; only 'fts' is available "
                                       "via this tool today (vss/hybrid: use `catalog search` CLI)");
             }
-            int max_results = OptInt(params, "max_results", 20);
+            ICatalogStore::SearchOptions options;
+            options.max_results = OptInt(params, "max_results", 20);
+            options.offset = OptInt(params, "cursor", 0);
+            if (params.contains("domain") && params["domain"].is_string()) {
+                options.domain = params["domain"].get<std::string>();
+            }
+            if (params.contains("object_type") && params["object_type"].is_string()) {
+                options.object_type = params["object_type"].get<std::string>();
+            }
+            if (params.contains("subtype") && params["subtype"].is_string()) {
+                options.object_subtype = params["subtype"].get<std::string>();
+            }
+            if (params.contains("curated_only") && params["curated_only"].is_boolean()) {
+                options.curated_only = params["curated_only"].get<bool>();
+            }
 
             auto t0 = std::chrono::steady_clock::now();
-            auto result = store->SearchFts(*query, max_results);
+            auto result = store->SearchFtsPage(query, options);
             if (result.IsErr()) return MakeErrorResult(result.Error());
-            LogToolLatency("catalog_search", t0, result.Value().size());
+            LogToolLatency("catalog_search", t0, result.Value().hits.size());
 
             nlohmann::json j;
             j["hits"] = nlohmann::json::array();
-            for (const auto& hit : result.Value()) {
+            for (const auto& hit : result.Value().hits) {
                 nlohmann::json hj = EntityToJson(hit.entity);
                 hj["score"] = hit.score;
                 j["hits"].push_back(std::move(hj));
             }
+            j["has_more"] = result.Value().has_more;
+            j["next_cursor"] = result.Value().has_more
+                                    ? nlohmann::json(options.offset +
+                                                      static_cast<int>(result.Value().hits.size()))
+                                    : nlohmann::json(nullptr);
             AttachCacheMeta(*store, j);
             return MakeOkResult(j);
         });
@@ -177,6 +228,21 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
                 fj["name"] = f.name;
                 if (f.data_type.has_value()) fj["data_type"] = *f.data_type;
                 if (f.role.has_value()) fj["role"] = *f.role;
+                if (f.description.has_value()) fj["description"] = *f.description;
+                if (f.length.has_value()) fj["length"] = *f.length;
+                if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
+                if (f.aggregation.has_value()) fj["aggregation"] = *f.aggregation;
+                if (f.unit.has_value()) fj["unit"] = *f.unit;
+                if (f.formula.has_value()) fj["formula"] = *f.formula;
+                if (f.is_key) fj["is_key"] = true;
+                if (f.check_table.has_value()) fj["check_table"] = *f.check_table;
+                if (f.fixed_values_json.has_value()) {
+                    fj["fixed_values"] = nlohmann::json::parse(*f.fixed_values_json, nullptr, false);
+                }
+                if (f.source_expression.has_value()) fj["source_expression"] = *f.source_expression;
+                if (f.annotations_json.has_value()) {
+                    fj["annotations"] = nlohmann::json::parse(*f.annotations_json, nullptr, false);
+                }
                 j["fields"].push_back(std::move(fj));
             }
             AttachCacheMeta(*store, j);
@@ -323,6 +389,51 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
             j["edge_count"] = stats.edge_count;
             j["unresolved_edge_count"] = stats.unresolved_edge_count;
             j["curated_entity_count"] = stats.curated_entity_count;
+            AttachCacheMeta(*store, j);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "catalog_object_types",
+        "Distinct (domain, object_type) pairs actually present in the cache, with counts — no "
+        "ADT/SAP call. Lets a caller build an object-type filter (e.g. \"only IOBJ\", \"only "
+        "TABL/DT\") from what's really there instead of guessing at every domain's possible "
+        "object types, which vary a lot (BW: IOBJ/ADSO/CUBE/ELEM/...; ABAP: TABL/CLAS/FUGR/...).",
+        MakeSchema(nlohmann::json::object(), nlohmann::json::array()),
+        [store](const nlohmann::json&) -> ToolResult {
+            auto types_result = store->ListObjectTypeCounts();
+            if (types_result.IsErr()) return MakeErrorResult(types_result.Error());
+
+            nlohmann::json j;
+            j["types"] = nlohmann::json::array();
+            for (const auto& t : types_result.Value()) {
+                j["types"].push_back(
+                    {{"domain", t.domain}, {"object_type", t.object_type}, {"count", t.count}});
+            }
+            AttachCacheMeta(*store, j);
+            return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "catalog_object_subtypes",
+        "Distinct (domain, object_type, object_subtype) triples actually present in the cache, "
+        "with counts — no ADT/SAP call. Only meaningful where object_subtype is set (BW ELEM "
+        "today: REP is a real query, VAR/CKF/RKF/FILT/STR are variables/key figures/filters/"
+        "structures that share object_type ELEM but aren't queries). Use to build a filter "
+        "that isolates real queries from everything else ELEM covers.",
+        MakeSchema(nlohmann::json::object(), nlohmann::json::array()),
+        [store](const nlohmann::json&) -> ToolResult {
+            auto subtypes_result = store->ListObjectSubtypeCounts();
+            if (subtypes_result.IsErr()) return MakeErrorResult(subtypes_result.Error());
+
+            nlohmann::json j;
+            j["subtypes"] = nlohmann::json::array();
+            for (const auto& t : subtypes_result.Value()) {
+                j["subtypes"].push_back({{"domain", t.domain},
+                                         {"object_type", t.object_type},
+                                         {"object_subtype", t.object_subtype},
+                                         {"count", t.count}});
+            }
             AttachCacheMeta(*store, j);
             return MakeOkResult(j);
         });

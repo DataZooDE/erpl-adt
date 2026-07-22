@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS entities (
     system_sid          VARCHAR NOT NULL,
     domain              VARCHAR NOT NULL,
     object_type         VARCHAR NOT NULL,
+    object_subtype      VARCHAR,
     technical_name      VARCHAR NOT NULL,
     display_name        VARCHAR,
     package_or_infoarea VARCHAR,
@@ -39,7 +40,8 @@ CREATE TABLE IF NOT EXISTS entities (
     biz_curated_by      VARCHAR,
     biz_curated_at      TIMESTAMP,
     extracted_at        TIMESTAMP NOT NULL,
-    raw_json            VARCHAR
+    raw_json            VARCHAR,
+    source_table        VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS fields (
@@ -47,12 +49,18 @@ CREATE TABLE IF NOT EXISTS fields (
     entity_id     VARCHAR NOT NULL,
     name          VARCHAR NOT NULL,
     role          VARCHAR,
+    description   VARCHAR,
     data_type     VARCHAR,
     length        INTEGER,
     decimals      INTEGER,
     aggregation   VARCHAR,
     unit          VARCHAR,
-    formula       VARCHAR
+    formula       VARCHAR,
+    is_key        BOOLEAN NOT NULL DEFAULT FALSE,
+    check_table   VARCHAR,
+    fixed_values  VARCHAR,
+    source_expr   VARCHAR,
+    annotations   VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -62,7 +70,8 @@ CREATE TABLE IF NOT EXISTS edges (
     kind          VARCHAR NOT NULL,
     field_mapping VARCHAR,
     resolution    VARCHAR NOT NULL DEFAULT 'resolved',
-    extracted_at  TIMESTAMP NOT NULL
+    extracted_at  TIMESTAMP NOT NULL,
+    detail        VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -177,10 +186,12 @@ CatalogEntity RowToEntity(duckdb::MaterializedQueryResult& result, idx_t row,
     entity.system_sid = ValueToStringOrEmpty(result.GetValue(1, row));
     entity.domain = domain_out.value_or(CatalogDomain::Abap);
     entity.object_type = ValueToStringOrEmpty(result.GetValue(3, row));
-    entity.technical_name = ValueToStringOrEmpty(result.GetValue(4, row));
-    entity.display_name = ValueToStringOrEmpty(result.GetValue(5, row));
-    entity.package_or_infoarea = ValueToOptString(result.GetValue(6, row));
-    entity.extracted_at = ValueToStringOrEmpty(result.GetValue(7, row));
+    entity.object_subtype = ValueToOptString(result.GetValue(4, row));
+    entity.technical_name = ValueToStringOrEmpty(result.GetValue(5, row));
+    entity.display_name = ValueToStringOrEmpty(result.GetValue(6, row));
+    entity.package_or_infoarea = ValueToOptString(result.GetValue(7, row));
+    entity.extracted_at = ValueToStringOrEmpty(result.GetValue(8, row));
+    entity.changed_at = ValueToOptString(result.GetValue(9, row));
     return entity;
 }
 
@@ -289,6 +300,7 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
                 app.Append<const char*>(e.system_sid.c_str());
                 app.Append<const char*>(ToString(e.domain).c_str());
                 app.Append<const char*>(e.object_type.c_str());
+                AppendOptString(app, e.object_subtype);
                 app.Append<const char*>(e.technical_name.c_str());
                 app.Append<const char*>(e.display_name.c_str());
                 AppendOptString(app, e.package_or_infoarea);
@@ -307,6 +319,7 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
                 } else {
                     app.Append<const char*>(e.raw_json.c_str());
                 }
+                AppendOptString(app, e.source_table);
                 app.EndRow();
             }
             app.Close();
@@ -320,12 +333,18 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
                 app.Append<const char*>(f.entity_id.Value().c_str());
                 app.Append<const char*>(f.name.c_str());
                 AppendOptString(app, f.role);
+                AppendOptString(app, f.description);
                 AppendOptString(app, f.data_type);
                 AppendOptInt(app, f.length);
                 AppendOptInt(app, f.decimals);
                 AppendOptString(app, f.aggregation);
                 AppendOptString(app, f.unit);
                 AppendOptString(app, f.formula);
+                app.Append<bool>(f.is_key);
+                AppendOptString(app, f.check_table);
+                AppendOptString(app, f.fixed_values_json);
+                AppendOptString(app, f.source_expression);
+                AppendOptString(app, f.annotations_json);
                 app.EndRow();
             }
             app.Close();
@@ -346,6 +365,7 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
                 }
                 app.Append<const char*>(e.resolution.c_str());
                 app.Append<const char*>(e.extracted_at.c_str());
+                AppendOptString(app, e.detail_json);
                 app.EndRow();
             }
             app.Close();
@@ -379,10 +399,10 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
 Result<std::optional<CatalogEntity>, Error> DuckDbCatalogStore::GetEntity(const EntityId& id) {
     try {
         auto stmt = impl_->con->Prepare(
-            "SELECT id, system_sid, domain, object_type, technical_name, display_name, "
-            "package_or_infoarea, created_by, changed_by, changed_at, biz_definition, "
-            "biz_owner, biz_lob, biz_confidentiality, biz_curated_by, biz_curated_at, "
-            "extracted_at, raw_json FROM entities WHERE id = $1");
+            "SELECT id, system_sid, domain, object_type, object_subtype, technical_name, "
+            "display_name, package_or_infoarea, created_by, changed_by, changed_at, "
+            "biz_definition, biz_owner, biz_lob, biz_confidentiality, biz_curated_by, "
+            "biz_curated_at, extracted_at, raw_json, source_table FROM entities WHERE id = $1");
         if (stmt->HasError()) {
             return Result<std::optional<CatalogEntity>, Error>::Err(
                 MakeStoreError("GetEntity", stmt->GetError()));
@@ -407,20 +427,22 @@ Result<std::optional<CatalogEntity>, Error> DuckDbCatalogStore::GetEntity(const 
         entity.system_sid = ValueToStringOrEmpty(result->GetValue(1, 0));
         entity.domain = domain_result.Value();
         entity.object_type = ValueToStringOrEmpty(result->GetValue(3, 0));
-        entity.technical_name = ValueToStringOrEmpty(result->GetValue(4, 0));
-        entity.display_name = ValueToStringOrEmpty(result->GetValue(5, 0));
-        entity.package_or_infoarea = ValueToOptString(result->GetValue(6, 0));
-        entity.created_by = ValueToOptString(result->GetValue(7, 0));
-        entity.changed_by = ValueToOptString(result->GetValue(8, 0));
-        entity.changed_at = ValueToOptString(result->GetValue(9, 0));
-        entity.biz_definition = ValueToOptString(result->GetValue(10, 0));
-        entity.biz_owner = ValueToOptString(result->GetValue(11, 0));
-        entity.biz_lob = ValueToOptString(result->GetValue(12, 0));
-        entity.biz_confidentiality = ValueToOptString(result->GetValue(13, 0));
-        entity.biz_curated_by = ValueToOptString(result->GetValue(14, 0));
-        entity.biz_curated_at = ValueToOptString(result->GetValue(15, 0));
-        entity.extracted_at = ValueToStringOrEmpty(result->GetValue(16, 0));
-        entity.raw_json = ValueToStringOrEmpty(result->GetValue(17, 0));
+        entity.object_subtype = ValueToOptString(result->GetValue(4, 0));
+        entity.technical_name = ValueToStringOrEmpty(result->GetValue(5, 0));
+        entity.display_name = ValueToStringOrEmpty(result->GetValue(6, 0));
+        entity.package_or_infoarea = ValueToOptString(result->GetValue(7, 0));
+        entity.created_by = ValueToOptString(result->GetValue(8, 0));
+        entity.changed_by = ValueToOptString(result->GetValue(9, 0));
+        entity.changed_at = ValueToOptString(result->GetValue(10, 0));
+        entity.biz_definition = ValueToOptString(result->GetValue(11, 0));
+        entity.biz_owner = ValueToOptString(result->GetValue(12, 0));
+        entity.biz_lob = ValueToOptString(result->GetValue(13, 0));
+        entity.biz_confidentiality = ValueToOptString(result->GetValue(14, 0));
+        entity.biz_curated_by = ValueToOptString(result->GetValue(15, 0));
+        entity.biz_curated_at = ValueToOptString(result->GetValue(16, 0));
+        entity.extracted_at = ValueToStringOrEmpty(result->GetValue(17, 0));
+        entity.raw_json = ValueToStringOrEmpty(result->GetValue(18, 0));
+        entity.source_table = ValueToOptString(result->GetValue(19, 0));
 
         return Result<std::optional<CatalogEntity>, Error>::Ok(std::move(entity));
     } catch (const std::exception& ex) {
@@ -431,8 +453,9 @@ Result<std::optional<CatalogEntity>, Error> DuckDbCatalogStore::GetEntity(const 
 Result<std::vector<CatalogField>, Error> DuckDbCatalogStore::GetFields(const EntityId& entity_id) {
     try {
         auto stmt = impl_->con->Prepare(
-            "SELECT id, entity_id, name, role, data_type, length, decimals, aggregation, "
-            "unit, formula FROM fields WHERE entity_id = $1 ORDER BY name");
+            "SELECT id, entity_id, name, role, description, data_type, length, decimals, "
+            "aggregation, unit, formula, is_key, check_table, fixed_values, source_expr, "
+            "annotations FROM fields WHERE entity_id = $1 ORDER BY name");
         if (stmt->HasError()) {
             return Result<std::vector<CatalogField>, Error>::Err(
                 MakeStoreError("GetFields", stmt->GetError()));
@@ -449,12 +472,19 @@ Result<std::vector<CatalogField>, Error> DuckDbCatalogStore::GetFields(const Ent
             field.id = ValueToStringOrEmpty(result->GetValue(0, row));
             field.name = ValueToStringOrEmpty(result->GetValue(2, row));
             field.role = ValueToOptString(result->GetValue(3, row));
-            field.data_type = ValueToOptString(result->GetValue(4, row));
-            field.length = ValueToOptInt(result->GetValue(5, row));
-            field.decimals = ValueToOptInt(result->GetValue(6, row));
-            field.aggregation = ValueToOptString(result->GetValue(7, row));
-            field.unit = ValueToOptString(result->GetValue(8, row));
-            field.formula = ValueToOptString(result->GetValue(9, row));
+            field.description = ValueToOptString(result->GetValue(4, row));
+            field.data_type = ValueToOptString(result->GetValue(5, row));
+            field.length = ValueToOptInt(result->GetValue(6, row));
+            field.decimals = ValueToOptInt(result->GetValue(7, row));
+            field.aggregation = ValueToOptString(result->GetValue(8, row));
+            field.unit = ValueToOptString(result->GetValue(9, row));
+            field.formula = ValueToOptString(result->GetValue(10, row));
+            field.is_key = !result->GetValue(11, row).IsNull() &&
+                          result->GetValue<bool>(11, row);
+            field.check_table = ValueToOptString(result->GetValue(12, row));
+            field.fixed_values_json = ValueToOptString(result->GetValue(13, row));
+            field.source_expression = ValueToOptString(result->GetValue(14, row));
+            field.annotations_json = ValueToOptString(result->GetValue(15, row));
             fields.push_back(std::move(field));
         }
         return Result<std::vector<CatalogField>, Error>::Ok(std::move(fields));
@@ -465,22 +495,70 @@ Result<std::vector<CatalogField>, Error> DuckDbCatalogStore::GetFields(const Ent
 
 Result<std::vector<CatalogSearchHit>, Error> DuckDbCatalogStore::SearchFts(
     const std::string& query, int max_results) {
+    auto page = SearchFtsPage(query, SearchOptions{max_results, 0, std::nullopt, std::nullopt,
+                                                    std::nullopt, false});
+    if (page.IsErr()) return Result<std::vector<CatalogSearchHit>, Error>::Err(page.Error());
+    return Result<std::vector<CatalogSearchHit>, Error>::Ok(std::move(page.Value().hits));
+}
+
+Result<ICatalogStore::SearchPage, Error> DuckDbCatalogStore::SearchFtsPage(
+    const std::string& query, const SearchOptions& options) {
     try {
-        auto stmt = impl_->con->Prepare(
-            "SELECT e.id, e.system_sid, e.domain, e.object_type, e.technical_name, "
-            "e.display_name, e.package_or_infoarea, e.extracted_at, "
-            "fts_main_search_docs.match_bm25(e.id, $1) AS score "
-            "FROM entities e "
-            "WHERE score IS NOT NULL "
-            "ORDER BY score DESC LIMIT $2");
+        // Empty (or literal "*") query means "browse, don't search" — the
+        // caller wants a stable listing to populate a discovery/browse view
+        // with no text typed yet, not a relevance-ranked match. Routing this
+        // through match_bm25 doesn't work: the FTS tokenizer/stemmer has no
+        // wildcard concept, so an empty or "*" query string simply matches
+        // nothing. Use a plain listing instead of fighting the tokenizer.
+        const bool is_browse_all = query.empty() || query == "*";
+
+        // Request one extra row so has_more can be computed without a
+        // second COUNT query.
+        const int fetch_limit = options.max_results + 1;
+
+        std::ostringstream sql;
+        duckdb::vector<duckdb::Value> params;
+        if (is_browse_all) {
+            sql << "SELECT e.id, e.system_sid, e.domain, e.object_type, e.object_subtype, "
+                   "e.technical_name, e.display_name, e.package_or_infoarea, e.extracted_at, "
+                   "e.changed_at, 1.0 AS score FROM entities e WHERE 1=1";
+        } else {
+            sql << "SELECT e.id, e.system_sid, e.domain, e.object_type, e.object_subtype, "
+                   "e.technical_name, e.display_name, e.package_or_infoarea, e.extracted_at, "
+                   "e.changed_at, fts_main_search_docs.match_bm25(e.id, $"
+                << (params.size() + 1) << ") AS score FROM entities e";
+            params.push_back(duckdb::Value(query));
+            sql << " WHERE score IS NOT NULL";
+        }
+        if (options.domain.has_value()) {
+            sql << " AND e.domain = $" << (params.size() + 1);
+            params.push_back(duckdb::Value(*options.domain));
+        }
+        if (options.object_type.has_value()) {
+            sql << " AND e.object_type = $" << (params.size() + 1);
+            params.push_back(duckdb::Value(*options.object_type));
+        }
+        if (options.object_subtype.has_value()) {
+            sql << " AND e.object_subtype = $" << (params.size() + 1);
+            params.push_back(duckdb::Value(*options.object_subtype));
+        }
+        if (options.curated_only) {
+            sql << " AND e.biz_definition IS NOT NULL";
+        }
+        sql << (is_browse_all ? " ORDER BY e.technical_name" : " ORDER BY score DESC");
+        sql << " LIMIT $" << (params.size() + 1) << " OFFSET $" << (params.size() + 2);
+        params.push_back(duckdb::Value::INTEGER(fetch_limit));
+        params.push_back(duckdb::Value::INTEGER(options.offset));
+
+        auto stmt = impl_->con->Prepare(sql.str());
         if (stmt->HasError()) {
             // FTS index not built (e.g. extension unavailable offline) —
             // degrade to no results rather than a hard error.
-            return Result<std::vector<CatalogSearchHit>, Error>::Ok({});
+            return Result<SearchPage, Error>::Ok(SearchPage{});
         }
-        auto result = ExecuteMaterialized(*stmt, query, max_results);
+        auto result = ExecuteMaterializedParams(*stmt, std::move(params));
         if (result->HasError()) {
-            return Result<std::vector<CatalogSearchHit>, Error>::Ok({});
+            return Result<SearchPage, Error>::Ok(SearchPage{});
         }
 
         std::vector<CatalogSearchHit> hits;
@@ -493,19 +571,28 @@ Result<std::vector<CatalogSearchHit>, Error> DuckDbCatalogStore::SearchFts(
             entity.system_sid = ValueToStringOrEmpty(result->GetValue(1, row));
             entity.domain = domain_result.Value();
             entity.object_type = ValueToStringOrEmpty(result->GetValue(3, row));
-            entity.technical_name = ValueToStringOrEmpty(result->GetValue(4, row));
-            entity.display_name = ValueToStringOrEmpty(result->GetValue(5, row));
-            entity.package_or_infoarea = ValueToOptString(result->GetValue(6, row));
-            entity.extracted_at = ValueToStringOrEmpty(result->GetValue(7, row));
+            entity.object_subtype = ValueToOptString(result->GetValue(4, row));
+            entity.technical_name = ValueToStringOrEmpty(result->GetValue(5, row));
+            entity.display_name = ValueToStringOrEmpty(result->GetValue(6, row));
+            entity.package_or_infoarea = ValueToOptString(result->GetValue(7, row));
+            entity.extracted_at = ValueToStringOrEmpty(result->GetValue(8, row));
+            entity.changed_at = ValueToOptString(result->GetValue(9, row));
 
-            double score = result->GetValue(8, row).IsNull()
+            double score = result->GetValue(10, row).IsNull()
                                ? 0.0
-                               : result->GetValue(8, row).GetValue<double>();
+                               : result->GetValue(10, row).GetValue<double>();
             hits.push_back(CatalogSearchHit{std::move(entity), score});
         }
-        return Result<std::vector<CatalogSearchHit>, Error>::Ok(std::move(hits));
+
+        SearchPage page;
+        page.has_more = static_cast<int>(hits.size()) > options.max_results;
+        if (page.has_more) {
+            hits.erase(hits.begin() + options.max_results, hits.end());
+        }
+        page.hits = std::move(hits);
+        return Result<SearchPage, Error>::Ok(std::move(page));
     } catch (const std::exception&) {
-        return Result<std::vector<CatalogSearchHit>, Error>::Ok({});
+        return Result<SearchPage, Error>::Ok(SearchPage{});
     }
 }
 
@@ -557,8 +644,9 @@ Result<std::vector<CatalogSearchHit>, Error> DuckDbCatalogStore::SearchVss(
     const std::vector<float>& query_embedding, int max_results) {
     try {
         auto stmt = impl_->con->Prepare(
-            "SELECT e.id, e.system_sid, e.domain, e.object_type, e.technical_name, "
-            "e.display_name, e.package_or_infoarea, e.extracted_at, "
+            "SELECT e.id, e.system_sid, e.domain, e.object_type, e.object_subtype, "
+            "e.technical_name, e.display_name, e.package_or_infoarea, e.extracted_at, "
+            "e.changed_at, "
             "1.0 - array_cosine_distance(v.embedding, $1) AS similarity "
             "FROM entity_embeddings v JOIN entities e ON e.id = v.entity_id "
             "ORDER BY similarity DESC LIMIT $2");
@@ -582,9 +670,9 @@ Result<std::vector<CatalogSearchHit>, Error> DuckDbCatalogStore::SearchVss(
             auto entity = RowToEntity(*result, row, domain);
             if (!domain.has_value()) continue;
 
-            double score = result->GetValue(8, row).IsNull()
+            double score = result->GetValue(10, row).IsNull()
                                ? 0.0
-                               : result->GetValue(8, row).GetValue<double>();
+                               : result->GetValue(10, row).GetValue<double>();
             hits.push_back(CatalogSearchHit{std::move(entity), score});
         }
         return Result<std::vector<CatalogSearchHit>, Error>::Ok(std::move(hits));
@@ -659,6 +747,7 @@ Result<std::vector<CatalogEdge>, Error> QueryEdges(duckdb::Connection& con, cons
             edge.field_mapping_json = ValueToStringOrEmpty(result->GetValue(4, row));
             edge.resolution = ValueToStringOrEmpty(result->GetValue(5, row));
             edge.extracted_at = ValueToStringOrEmpty(result->GetValue(6, row));
+            edge.detail_json = ValueToOptString(result->GetValue(7, row));
             edges.push_back(std::move(edge));
         }
         return Result<std::vector<CatalogEdge>, Error>::Ok(std::move(edges));
@@ -672,7 +761,8 @@ Result<std::vector<CatalogEdge>, Error> QueryEdges(duckdb::Connection& con, cons
 Result<std::vector<CatalogEdge>, Error> DuckDbCatalogStore::GetEdgesTo(const EntityId& id,
                                                                         int max_results) {
     return QueryEdges(*impl_->con,
-                       "SELECT id, from_id, to_id, kind, field_mapping, resolution, extracted_at "
+                       "SELECT id, from_id, to_id, kind, field_mapping, resolution, extracted_at, "
+                       "detail "
                        "FROM edges WHERE to_id = $1 LIMIT $2",
                        id.Value(), max_results);
 }
@@ -680,7 +770,8 @@ Result<std::vector<CatalogEdge>, Error> DuckDbCatalogStore::GetEdgesTo(const Ent
 Result<std::vector<CatalogEdge>, Error> DuckDbCatalogStore::GetEdgesFrom(const EntityId& id,
                                                                           int max_results) {
     return QueryEdges(*impl_->con,
-                       "SELECT id, from_id, to_id, kind, field_mapping, resolution, extracted_at "
+                       "SELECT id, from_id, to_id, kind, field_mapping, resolution, extracted_at, "
+                       "detail "
                        "FROM edges WHERE from_id = $1 LIMIT $2",
                        id.Value(), max_results);
 }
@@ -750,6 +841,61 @@ Result<DuckDbCatalogStore::CatalogStats, Error> DuckDbCatalogStore::Stats() {
         return Result<CatalogStats, Error>::Ok(stats);
     } catch (const std::exception& ex) {
         return Result<CatalogStats, Error>::Err(MakeStoreError("Stats", ex.what()));
+    }
+}
+
+Result<std::vector<DuckDbCatalogStore::ObjectTypeCount>, Error>
+DuckDbCatalogStore::ListObjectTypeCounts() {
+    try {
+        auto result = impl_->con->Query(
+            "SELECT domain, object_type, COUNT(*) AS cnt FROM entities "
+            "GROUP BY domain, object_type ORDER BY domain, object_type");
+        if (result->HasError()) {
+            return Result<std::vector<ObjectTypeCount>, Error>::Err(
+                MakeStoreError("ListObjectTypeCounts", result->GetError()));
+        }
+
+        std::vector<ObjectTypeCount> counts;
+        for (idx_t row = 0; row < result->RowCount(); ++row) {
+            ObjectTypeCount c;
+            c.domain = ValueToStringOrEmpty(result->GetValue(0, row));
+            c.object_type = ValueToStringOrEmpty(result->GetValue(1, row));
+            c.count = result->GetValue(2, row).IsNull() ? 0 : result->GetValue<int64_t>(2, row);
+            counts.push_back(std::move(c));
+        }
+        return Result<std::vector<ObjectTypeCount>, Error>::Ok(std::move(counts));
+    } catch (const std::exception& ex) {
+        return Result<std::vector<ObjectTypeCount>, Error>::Err(
+            MakeStoreError("ListObjectTypeCounts", ex.what()));
+    }
+}
+
+Result<std::vector<DuckDbCatalogStore::ObjectSubtypeCount>, Error>
+DuckDbCatalogStore::ListObjectSubtypeCounts() {
+    try {
+        auto result = impl_->con->Query(
+            "SELECT domain, object_type, object_subtype, COUNT(*) AS cnt FROM entities "
+            "WHERE object_subtype IS NOT NULL "
+            "GROUP BY domain, object_type, object_subtype "
+            "ORDER BY domain, object_type, object_subtype");
+        if (result->HasError()) {
+            return Result<std::vector<ObjectSubtypeCount>, Error>::Err(
+                MakeStoreError("ListObjectSubtypeCounts", result->GetError()));
+        }
+
+        std::vector<ObjectSubtypeCount> counts;
+        for (idx_t row = 0; row < result->RowCount(); ++row) {
+            ObjectSubtypeCount c;
+            c.domain = ValueToStringOrEmpty(result->GetValue(0, row));
+            c.object_type = ValueToStringOrEmpty(result->GetValue(1, row));
+            c.object_subtype = ValueToStringOrEmpty(result->GetValue(2, row));
+            c.count = result->GetValue(3, row).IsNull() ? 0 : result->GetValue<int64_t>(3, row);
+            counts.push_back(std::move(c));
+        }
+        return Result<std::vector<ObjectSubtypeCount>, Error>::Ok(std::move(counts));
+    } catch (const std::exception& ex) {
+        return Result<std::vector<ObjectSubtypeCount>, Error>::Err(
+            MakeStoreError("ListObjectSubtypeCounts", ex.what()));
     }
 }
 
@@ -884,6 +1030,7 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
                 app.Append<const char*>(e.system_sid.c_str());
                 app.Append<const char*>(ToString(e.domain).c_str());
                 app.Append<const char*>(e.object_type.c_str());
+                AppendOptString(app, e.object_subtype);
                 app.Append<const char*>(e.technical_name.c_str());
                 app.Append<const char*>(e.display_name.c_str());
                 AppendOptString(app, e.package_or_infoarea);
@@ -902,6 +1049,7 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
                 } else {
                     app.Append<const char*>(e.raw_json.c_str());
                 }
+                AppendOptString(app, e.source_table);
                 app.EndRow();
             }
             app.Close();
@@ -914,12 +1062,18 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
                 app.Append<const char*>(f.entity_id.Value().c_str());
                 app.Append<const char*>(f.name.c_str());
                 AppendOptString(app, f.role);
+                AppendOptString(app, f.description);
                 AppendOptString(app, f.data_type);
                 AppendOptInt(app, f.length);
                 AppendOptInt(app, f.decimals);
                 AppendOptString(app, f.aggregation);
                 AppendOptString(app, f.unit);
                 AppendOptString(app, f.formula);
+                app.Append<bool>(f.is_key);
+                AppendOptString(app, f.check_table);
+                AppendOptString(app, f.fixed_values_json);
+                AppendOptString(app, f.source_expression);
+                AppendOptString(app, f.annotations_json);
                 app.EndRow();
             }
             app.Close();
@@ -999,6 +1153,7 @@ Result<void, Error> DuckDbCatalogStore::UpsertEdges(const std::vector<CatalogEdg
                 }
                 app.Append<const char*>(e.resolution.c_str());
                 app.Append<const char*>(e.extracted_at.c_str());
+                AppendOptString(app, e.detail_json);
                 app.EndRow();
             }
             app.Close();

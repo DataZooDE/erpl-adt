@@ -12,12 +12,16 @@
 namespace erpl_adt {
 
 // ---------------------------------------------------------------------------
-// BwQueryIobjRef — one InfoObject reference from a query (dimension, filter,
-// variable, or key figure).
+// BwQueryIobjRef — one InfoObject reference from a query (row, column, free
+// characteristic, filter, variable, or key figure).
 // ---------------------------------------------------------------------------
 struct BwQueryIobjRef {
     std::string name;
-    std::string role;  // "dimension" | "filter" | "variable" | "key_figure"
+    std::string role;  // "row" | "column" | "free" | "filter" | "variable" |
+                        // "key_figure" | "restricted_key_figure" | "calculated_key_figure"
+    // Human-readable formula (calculated key figure) or restriction
+    // (restricted key figure) — unset for every other role.
+    std::optional<std::string> formula;
 };
 
 // ---------------------------------------------------------------------------

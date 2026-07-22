@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/catalog_theme.dart';
+import '../theme/catalog_tokens.dart';
 
 /// A small colored pill showing an entity's domain + object type, e.g.
 /// "BW · IOBJ" — used in search results, entity chips, and lineage lists.
@@ -11,7 +12,7 @@ class TypeIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = domainColor(domain, Theme.of(context).colorScheme);
+    final color = domainColor(domain, context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -35,6 +36,8 @@ class EntityChip extends StatelessWidget {
   final String objectType;
   final String technicalName;
   final String displayName;
+  final String? packageOrInfoarea;
+  final bool? isCurated;
   final VoidCallback? onTap;
 
   const EntityChip({
@@ -44,11 +47,17 @@ class EntityChip extends StatelessWidget {
     required this.objectType,
     required this.technicalName,
     required this.displayName,
+    this.packageOrInfoarea,
+    this.isCurated,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final subtitleParts = [
+      technicalName,
+      if (packageOrInfoarea != null && packageOrInfoarea!.isNotEmpty) packageOrInfoarea!,
+    ];
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
@@ -59,8 +68,26 @@ class EntityChip extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(technicalName, style: CatalogTheme.monoStyle(context)),
-        trailing: const Icon(Icons.chevron_right),
+        subtitle: Text(subtitleParts.join(' · '), style: CatalogTheme.monoStyle(context)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isCurated != null)
+              Tooltip(
+                message: isCurated! ? 'Curated' : 'Not yet curated',
+                child: Icon(
+                  isCurated! ? Icons.check_circle : Icons.circle_outlined,
+                  size: 14,
+                  color: isCurated!
+                      ? Theme.of(context).extension<CatalogTokens>()?.success ??
+                          Theme.of(context).colorScheme.secondary
+                      : Theme.of(context).colorScheme.outline,
+                ),
+              ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
       ),
     );
   }
@@ -75,7 +102,7 @@ class ConfidentialityBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (level == null || level!.isEmpty) return const SizedBox.shrink();
-    final color = confidentialityColor(level, Theme.of(context).colorScheme);
+    final color = confidentialityColor(level, context);
     return Chip(
       label: Text(level!, style: TextStyle(color: color, fontSize: 11)),
       backgroundColor: color.withValues(alpha: 0.1),
@@ -101,52 +128,72 @@ class ProvenanceBadge extends StatelessWidget {
   }
 }
 
-/// Search omnibox (S1) — "/" focuses it in a real desktop build; kept
-/// simple here (a TextField + mode selector) since keyboard-shortcut
-/// wiring is a polish item, not core functionality.
-class SearchOmnibox extends StatelessWidget {
+/// Discovery's unified search box (S1) — one field drives both "search" and
+/// "browse": an empty query browses everything, typing narrows it. No
+/// fts/vss/hybrid picker — the backend only serves 'fts' today (vss/hybrid
+/// reject with an error), so offering a selector that mostly errors would
+/// over-promise; the "smart match" chip is a static indicator of *how*
+/// results are ranked, not a mode switch.
+class SearchOmnibox extends StatefulWidget {
   final String initialQuery;
-  final String mode;
-  final ValueChanged<String> onSubmitted;
-  final ValueChanged<String> onModeChanged;
+  final ValueChanged<String> onChanged;
 
-  const SearchOmnibox({
-    super.key,
-    required this.initialQuery,
-    required this.mode,
-    required this.onSubmitted,
-    required this.onModeChanged,
-  });
+  const SearchOmnibox({super.key, required this.initialQuery, required this.onChanged});
+
+  @override
+  State<SearchOmnibox> createState() => _SearchOmniboxState();
+}
+
+class _SearchOmniboxState extends State<SearchOmnibox> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialQuery);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final controller = TextEditingController(text: initialQuery);
     return Row(
       children: [
         Expanded(
           child: TextField(
-            controller: controller,
+            controller: _controller,
             autofocus: true,
-            decoration: const InputDecoration(
-              hintText: 'Search the catalog — e.g. "procurement value"',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: 'Search or browse the catalog — e.g. "procurement value"',
+              prefixIcon: const Icon(Icons.search),
+              border: const OutlineInputBorder(),
+              suffixIcon: _controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Clear',
+                      onPressed: () {
+                        _controller.clear();
+                        widget.onChanged('');
+                        setState(() {});
+                      },
+                    ),
             ),
-            onSubmitted: onSubmitted,
+            onChanged: (v) {
+              widget.onChanged(v);
+              setState(() {}); // toggles the clear button
+            },
+            onSubmitted: widget.onChanged,
           ),
         ),
         const SizedBox(width: 12),
-        DropdownButton<String>(
-          value: mode,
-          items: const [
-            DropdownMenuItem(value: 'fts', child: Text('Full-text')),
-            DropdownMenuItem(value: 'vss', child: Text('Semantic')),
-            DropdownMenuItem(value: 'hybrid', child: Text('Hybrid')),
-          ],
-          onChanged: (v) => v != null ? onModeChanged(v) : null,
+        Tooltip(
+          message: 'Meaning-aware full-text match',
+          child: Chip(
+            avatar: const Icon(Icons.auto_awesome, size: 14),
+            label: const Text('Smart match', style: TextStyle(fontSize: 11)),
+            visualDensity: VisualDensity.compact,
+          ),
         ),
-        const SizedBox(width: 8),
-        FilledButton(onPressed: () => onSubmitted(controller.text), child: const Text('Search')),
       ],
     );
   }

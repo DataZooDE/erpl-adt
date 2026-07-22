@@ -212,6 +212,63 @@ TEST_CASE("BwReadAdsoDetail: parses fields", "[adt][bw][lineage][adso]") {
     CHECK(fields[3].decimals == 2);
 }
 
+// ===========================================================================
+// BwReadInfoProviderDetail
+// ===========================================================================
+
+TEST_CASE("BwReadInfoProviderDetail: parses a real captured InfoProvider "
+          "(CUBE) response",
+          "[adt][bw][lineage][infoprov]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_object_infoprov_cube.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwReadInfoProviderDetail(mock, "0D_FC_C01");
+    REQUIRE(result.IsOk());
+
+    const auto& detail = result.Value();
+    CHECK(detail.description == "Analytic Engine Demo Cube 1");
+    REQUIRE(detail.fields.size() == 21);
+
+    const auto& f0 = detail.fields[0];
+    CHECK(f0.name == "1CUDIM");
+    CHECK(f0.info_object == "1CUDIM");
+    CHECK(f0.description == "Currency/Unit");
+    CHECK(f0.data_type == "CHAR");
+    CHECK(f0.length == 5);
+
+    const auto& f1 = detail.fields[1];
+    CHECK(f1.name == "0REQUID");
+    CHECK(f1.description == "Request ID");
+    CHECK(f1.data_type == "CHAR");
+    CHECK(f1.length == 30);
+}
+
+TEST_CASE("BwReadInfoProviderDetail: sends correct URL and Accept header",
+          "[adt][bw][lineage][infoprov]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<Composite:infoprovider xmlns:Composite=\"x\"/>"}));
+
+    auto result = BwReadInfoProviderDetail(mock, "0D_FC_C01", "a");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path.find("/sap/bw/modeling/infoprov/0d_fc_c01/a") !=
+          std::string::npos);
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.iprov-v1_13_0+xml");
+}
+
+TEST_CASE("BwReadInfoProviderDetail: empty response is NotFound, not a crash",
+          "[adt][bw][lineage][infoprov]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = BwReadInfoProviderDetail(mock, "0D_FC_C01");
+    REQUIRE(result.IsErr());
+}
+
 TEST_CASE("BwReadAdsoDetail: sends correct URL", "[adt][bw][lineage][adso]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<adso:adso xmlns:adso=\"x\"/>"}));

@@ -31,6 +31,7 @@ CatalogFeed MakeSampleFeed() {
     clas.technical_name = "ZCL_PROCUREMENT";
     clas.display_name = "Procurement value calculator";
     clas.extracted_at = "2026-07-19T10:00:00Z";
+    clas.changed_at = "2026-07-18T09:00:00Z";
     feed.entities.push_back(clas);
 
     CatalogField f1(tabl_id);
@@ -42,6 +43,7 @@ CatalogFeed MakeSampleFeed() {
     CatalogField f2(tabl_id);
     f2.id = tabl_id.Value() + "#PRICE";
     f2.name = "PRICE";
+    f2.description = "Ticket price";
     f2.data_type = "S_PRICE";
     f2.length = 15;
     f2.decimals = 2;
@@ -118,6 +120,8 @@ TEST_CASE("DuckDbCatalogStore: GetFields returns an entity's fields", "[storage]
             found_price = true;
             REQUIRE(f.length.has_value());
             CHECK(*f.length == 15);
+            REQUIRE(f.description.has_value());
+            CHECK(*f.description == "Ticket price");
         }
     }
     CHECK(found_price);
@@ -131,6 +135,137 @@ TEST_CASE("DuckDbCatalogStore: EntityCount reflects a written feed", "[storage][
     auto count = store->EntityCount();
     REQUIRE(count.IsOk());
     CHECK(count.Value() == 2);
+}
+
+TEST_CASE("DuckDbCatalogStore: ListObjectTypeCounts returns distinct (domain, object_type) "
+          "with counts",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());  // 1 TABL (DDIC), 1 CLAS (ABAP)
+
+    auto result = store->ListObjectTypeCounts();
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().size() == 2);
+
+    bool found_tabl = false, found_clas = false;
+    for (const auto& c : result.Value()) {
+        if (c.object_type == "TABL") {
+            found_tabl = true;
+            CHECK(c.domain == "DDIC");
+            CHECK(c.count == 1);
+        }
+        if (c.object_type == "CLAS") {
+            found_clas = true;
+            CHECK(c.domain == "ABAP");
+            CHECK(c.count == 1);
+        }
+    }
+    CHECK(found_tabl);
+    CHECK(found_clas);
+}
+
+TEST_CASE("DuckDbCatalogStore: object_subtype round-trips through WriteFeed/GetEntity",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    auto query_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0BPC_BPF_ACTIVITY_REP");
+    CatalogEntity query(query_id);
+    query.system_sid = "A4H";
+    query.domain = CatalogDomain::Bw;
+    query.object_type = "ELEM";
+    query.object_subtype = "REP";
+    query.technical_name = "0BPC_BPF_ACTIVITY_REP";
+    query.display_name = "BPC BPF Activity Report";
+    query.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(query);
+
+    REQUIRE(store->WriteFeed(feed).IsOk());
+
+    auto get_result = store->GetEntity(query_id);
+    REQUIRE(get_result.IsOk());
+    REQUIRE(get_result.Value().has_value());
+    REQUIRE(get_result.Value()->object_subtype.has_value());
+    CHECK(*get_result.Value()->object_subtype == "REP");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFtsPage filters by object_subtype",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    auto query_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0BPC_BPF_ACTIVITY_REP");
+    CatalogEntity query(query_id);
+    query.system_sid = "A4H";
+    query.domain = CatalogDomain::Bw;
+    query.object_type = "ELEM";
+    query.object_subtype = "REP";
+    query.technical_name = "0BPC_BPF_ACTIVITY_REP";
+    query.display_name = "BPC BPF Activity Report";
+    query.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(query);
+
+    auto var_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0CMONTH");
+    CatalogEntity var(var_id);
+    var.system_sid = "A4H";
+    var.domain = CatalogDomain::Bw;
+    var.object_type = "ELEM";
+    var.object_subtype = "VAR";
+    var.technical_name = "0CMONTH";
+    var.display_name = "Current Calendar Month";
+    var.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(var);
+
+    REQUIRE(store->WriteFeed(feed).IsOk());
+
+    ICatalogStore::SearchOptions options;
+    options.max_results = 10;
+    options.object_subtype = "REP";
+    auto result = store->SearchFtsPage("", options);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().hits.size() == 1);
+    CHECK(result.Value().hits[0].entity.technical_name == "0BPC_BPF_ACTIVITY_REP");
+}
+
+TEST_CASE("DuckDbCatalogStore: ListObjectSubtypeCounts returns distinct "
+          "(domain, object_type, object_subtype) with counts",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    auto query_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0BPC_BPF_ACTIVITY_REP");
+    CatalogEntity query(query_id);
+    query.system_sid = "A4H";
+    query.domain = CatalogDomain::Bw;
+    query.object_type = "ELEM";
+    query.object_subtype = "REP";
+    query.technical_name = "0BPC_BPF_ACTIVITY_REP";
+    query.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(query);
+
+    // A TABL entity has no subtype at all — must not show up as a spurious
+    // (DDIC, TABL, "") row.
+    auto tabl_id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    CatalogEntity tabl(tabl_id);
+    tabl.system_sid = "A4H";
+    tabl.domain = CatalogDomain::Ddic;
+    tabl.object_type = "TABL";
+    tabl.technical_name = "SFLIGHT";
+    tabl.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(tabl);
+
+    REQUIRE(store->WriteFeed(feed).IsOk());
+
+    auto result = store->ListObjectSubtypeCounts();
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().size() == 1);
+    CHECK(result.Value()[0].domain == "BW");
+    CHECK(result.Value()[0].object_type == "ELEM");
+    CHECK(result.Value()[0].object_subtype == "REP");
+    CHECK(result.Value()[0].count == 1);
 }
 
 TEST_CASE("DuckDbCatalogStore: WriteFeed replaces prior content (full rebuild)",
@@ -167,6 +302,100 @@ TEST_CASE("DuckDbCatalogStore: SearchFts finds a curated entity by full-text mat
     REQUIRE(result.IsOk());
     REQUIRE_FALSE(result.Value().empty());
     CHECK(result.Value()[0].entity.technical_name == "ZCL_PROCUREMENT");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFts carries changed_at through to hits",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto result = store->SearchFts("procurement", 10);
+    REQUIRE(result.IsOk());
+    REQUIRE_FALSE(result.Value().empty());
+    REQUIRE(result.Value()[0].entity.changed_at.has_value());
+    // DuckDB TIMESTAMP round-trips as "YYYY-MM-DD HH:MM:SS" (space, no
+    // trailing Z), not the ISO-8601 string that was written in — matches
+    // existing extracted_at behavior elsewhere in this store.
+    CHECK(*result.Value()[0].entity.changed_at == "2026-07-18 09:00:00");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFts with an empty query browses all entities",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto result = store->SearchFts("", 10);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().size() == 2);
+    // Stable order: technical_name ascending.
+    CHECK(result.Value()[0].entity.technical_name == "SFLIGHT");
+    CHECK(result.Value()[1].entity.technical_name == "ZCL_PROCUREMENT");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFts with \"*\" browses all entities",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto result = store->SearchFts("*", 10);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().size() == 2);
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFts browse-all respects max_results",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto result = store->SearchFts("", 1);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().size() == 1);
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFtsPage sets has_more at the page boundary",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());  // 2 entities total
+
+    auto page1 = store->SearchFtsPage("", {1, 0, std::nullopt, std::nullopt, std::nullopt, false});
+    REQUIRE(page1.IsOk());
+    REQUIRE(page1.Value().hits.size() == 1);
+    CHECK(page1.Value().has_more == true);
+    CHECK(page1.Value().hits[0].entity.technical_name == "SFLIGHT");
+
+    auto page2 = store->SearchFtsPage("", {1, 1, std::nullopt, std::nullopt, std::nullopt, false});
+    REQUIRE(page2.IsOk());
+    REQUIRE(page2.Value().hits.size() == 1);
+    CHECK(page2.Value().has_more == false);
+    CHECK(page2.Value().hits[0].entity.technical_name == "ZCL_PROCUREMENT");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFtsPage filters by domain", "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto result = store->SearchFtsPage("", {10, 0, std::string("ABAP"), std::nullopt, std::nullopt, false});
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().hits.size() == 1);
+    CHECK(result.Value().hits[0].entity.technical_name == "ZCL_PROCUREMENT");
+}
+
+TEST_CASE("DuckDbCatalogStore: SearchFtsPage filters to curated-only entities",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());
+
+    auto tabl_id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    REQUIRE(store
+                ->ApplyOverlay(tabl_id, {std::string("Flight schedule master data"), std::nullopt,
+                                        std::nullopt, std::nullopt},
+                               "test")
+                .IsOk());
+
+    auto result = store->SearchFtsPage("", {10, 0, std::nullopt, std::nullopt, std::nullopt, true});
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().hits.size() == 1);
+    CHECK(result.Value().hits[0].entity.technical_name == "SFLIGHT");
 }
 
 TEST_CASE("DuckDbCatalogStore: WriteEmbedding then SearchVss ranks the nearest vector first",

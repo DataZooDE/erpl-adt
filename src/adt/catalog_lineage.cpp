@@ -65,14 +65,38 @@ std::string EscapeJsonString(std::string_view s) {
     return out;
 }
 
-std::string RenderFieldMappingJson(
-    const std::vector<std::pair<std::string, std::string>>& pairs) {
+// One BW TRFN rule's field mapping, widened beyond the bare from/to pair —
+// rule_type ("StepDirect"/"StepFormula"/"StepConstant"/...), formula, and
+// constant come straight from BwTransformationRule (already fully parsed by
+// ParseTrfnRule, bw_lineage.cpp) but were previously dropped at this exact
+// conversion step. Empty strings mean "not applicable to this rule type",
+// same convention BwTransformationRule itself already uses.
+struct FieldMappingEntry {
+    std::string from_field;
+    std::string to_field;
+    std::string rule_type;
+    std::string formula;
+    std::string constant;
+};
+
+std::string RenderFieldMappingJson(const std::vector<FieldMappingEntry>& mappings) {
     std::ostringstream oss;
     oss << "[";
-    for (size_t i = 0; i < pairs.size(); ++i) {
+    for (size_t i = 0; i < mappings.size(); ++i) {
         if (i > 0) oss << ",";
-        oss << R"({"from_field":")" << EscapeJsonString(pairs[i].first)
-            << R"(","to_field":")" << EscapeJsonString(pairs[i].second) << R"("})";
+        const auto& m = mappings[i];
+        oss << R"({"from_field":")" << EscapeJsonString(m.from_field)
+            << R"(","to_field":")" << EscapeJsonString(m.to_field) << R"(")";
+        if (!m.rule_type.empty()) {
+            oss << R"(,"rule_type":")" << EscapeJsonString(m.rule_type) << R"(")";
+        }
+        if (!m.formula.empty()) {
+            oss << R"(,"formula":")" << EscapeJsonString(m.formula) << R"(")";
+        }
+        if (!m.constant.empty()) {
+            oss << R"(,"constant":")" << EscapeJsonString(m.constant) << R"(")";
+        }
+        oss << "}";
     }
     oss << "]";
     return oss.str();
@@ -161,8 +185,7 @@ BwLineageConversion ConvertBwLineageGraph(const std::string& system_sid,
     static const std::set<std::string> kFieldEdgeTypes = {"field_mapping", "field_derivation"};
 
     std::map<std::pair<std::string, std::string>, std::string> direct_edge_kind;
-    std::map<std::pair<std::string, std::string>,
-             std::vector<std::pair<std::string, std::string>>>
+    std::map<std::pair<std::string, std::string>, std::vector<FieldMappingEntry>>
         field_mappings;
 
     for (const auto& edge : graph.edges) {
@@ -178,7 +201,16 @@ BwLineageConversion ConvertBwLineageGraph(const std::string& system_sid,
             auto from_field_it = node_owner_field.find(edge.from);
             auto to_field_it = node_owner_field.find(edge.to);
             if (from_field_it != node_owner_field.end() && to_field_it != node_owner_field.end()) {
-                field_mappings[key].emplace_back(from_field_it->second, to_field_it->second);
+                FieldMappingEntry entry;
+                entry.from_field = from_field_it->second;
+                entry.to_field = to_field_it->second;
+                auto rule_type_it = edge.attributes.find("rule_type");
+                if (rule_type_it != edge.attributes.end()) entry.rule_type = rule_type_it->second;
+                auto formula_it = edge.attributes.find("formula");
+                if (formula_it != edge.attributes.end()) entry.formula = formula_it->second;
+                auto constant_it = edge.attributes.find("constant");
+                if (constant_it != edge.attributes.end()) entry.constant = constant_it->second;
+                field_mappings[key].push_back(std::move(entry));
             }
         }
         // "contains_field", "field_origin", and anything else are structural

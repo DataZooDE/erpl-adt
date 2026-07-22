@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/ddic_domain.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
@@ -59,6 +60,10 @@ struct TableField {
     bool key_field = false;
     std::optional<int> length;    // field length (chars/bytes depending on type)
     std::optional<int> decimals;  // decimal places (for P/F/currency types)
+    // Populated only when resolve_types=true and the field's data element
+    // is typed against a domain with fixed values (e.g. a status field's
+    // enumerated valid codes) — see EnrichFieldsFromDataElements.
+    std::vector<DomainFixValue> fixed_values;
 };
 
 // ---------------------------------------------------------------------------

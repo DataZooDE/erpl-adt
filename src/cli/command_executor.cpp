@@ -2369,6 +2369,8 @@ std::optional<CatalogBuildOptions> ParseCatalogBuildOptions(const CommandArgs& a
         }
         options.max_depth = depth_result.Value();
     }
+    options.resolve_ddic_types = HasFlag(args, "resolve-ddic-types");
+    options.include_raw_source = HasFlag(args, "include-raw-source");
     return options;
 }
 
@@ -7646,6 +7648,8 @@ void RegisterAllCommands(CommandRouter& router) {
             {"format", "<table|json|openmetadata|mermaid>", "Output format (default: table)", false},
             {"db", "<path.duckdb>", "Also persist the feed into this DuckDB file (created if missing)", false},
             {"embed", "", "With --db: also embed entities via the Gemini API (needs GEMINI_API_KEY) for VSS search", false},
+            {"resolve-ddic-types", "", "Enrich TABL fields with data-element descriptions/types (slower — one extra lookup per distinct data element)", false},
+            {"include-raw-source", "", "Also stash each object's full raw source/XML for later inspection (slower, larger DB — one extra fetch per object)", false},
             {"service-name", "<name>", "--format openmetadata: service name (default: erpl_adt)", false},
             {"system-id", "<id>", "--format openmetadata: system id (default: --sid)", false},
         };

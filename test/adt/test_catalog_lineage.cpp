@@ -90,6 +90,34 @@ TEST_CASE("ConvertBwLineageGraph: field-level field_mapping edges are aggregated
     CHECK(field_edge->kind == "lineage");
     CHECK_FALSE(field_edge->field_mapping_json.empty());
     CHECK(field_edge->field_mapping_json.find("MATNR") != std::string::npos);
+    // rule_type ("1:1", set on e2 in MakeSampleGraph) must survive the
+    // conversion — previously flattened away to a bare {from_field,to_field}.
+    CHECK(field_edge->field_mapping_json.find(R"("rule_type":"1:1")") !=
+          std::string::npos);
+}
+
+TEST_CASE("ConvertBwLineageGraph: field_mapping payload carries rule_type/"
+          "formula/constant, not just field names",
+          "[adt][catalog][lineage]") {
+    BwLineageGraph graph;
+    graph.root_type = "DTPA";
+    graph.root_name = "ZDTP";
+    graph.nodes = {
+        {"field:RSDS:ZSRC:PRICE", "RSDS_FIELD", "PRICE", "source_field", "", "a", {}},
+        {"field:ADSO:ZADSO:NET_PRICE", "ADSO_FIELD", "NET_PRICE", "target_field", "", "a", {}},
+    };
+    graph.edges = {
+        {"e1", "field:RSDS:ZSRC:PRICE", "field:ADSO:ZADSO:NET_PRICE", "field_mapping",
+         {{"rule_type", "StepFormula"}, {"formula", "SOURCE_FIELDS-PRICE * 0.9"}}},
+    };
+    std::set<std::string> known;
+
+    auto conversion = ConvertBwLineageGraph("A4H", graph, known);
+    REQUIRE(conversion.edges.size() == 1);
+    const auto& edge = conversion.edges[0];
+    CHECK(edge.field_mapping_json.find(R"("rule_type":"StepFormula")") != std::string::npos);
+    CHECK(edge.field_mapping_json.find(R"("formula":"SOURCE_FIELDS-PRICE * 0.9")") !=
+          std::string::npos);
 }
 
 TEST_CASE("CatalogWhereUsed: returns every edge pointing at the target",

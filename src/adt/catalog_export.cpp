@@ -15,6 +15,7 @@ nlohmann::json EntityToJson(const CatalogEntity& e) {
     ej["system_sid"] = e.system_sid;
     ej["domain"] = ToString(e.domain);
     ej["object_type"] = e.object_type;
+    if (e.object_subtype.has_value()) ej["object_subtype"] = *e.object_subtype;
     ej["technical_name"] = e.technical_name;
     ej["display_name"] = e.display_name;
     if (e.package_or_infoarea.has_value()) ej["package_or_infoarea"] = *e.package_or_infoarea;
@@ -26,6 +27,8 @@ nlohmann::json EntityToJson(const CatalogEntity& e) {
     if (e.biz_lob.has_value()) ej["biz_lob"] = *e.biz_lob;
     if (e.biz_confidentiality.has_value()) ej["biz_confidentiality"] = *e.biz_confidentiality;
     ej["extracted_at"] = e.extracted_at;
+    if (e.source_table.has_value()) ej["source_table"] = *e.source_table;
+    if (!e.raw_json.empty()) ej["raw_source"] = e.raw_json;
     return ej;
 }
 
@@ -35,12 +38,22 @@ nlohmann::json FieldToJson(const CatalogField& f) {
     fj["entity_id"] = f.entity_id.Value();
     fj["name"] = f.name;
     if (f.role.has_value()) fj["role"] = *f.role;
+    if (f.description.has_value()) fj["description"] = *f.description;
     if (f.data_type.has_value()) fj["data_type"] = *f.data_type;
     if (f.length.has_value()) fj["length"] = *f.length;
     if (f.decimals.has_value()) fj["decimals"] = *f.decimals;
     if (f.aggregation.has_value()) fj["aggregation"] = *f.aggregation;
     if (f.unit.has_value()) fj["unit"] = *f.unit;
     if (f.formula.has_value()) fj["formula"] = *f.formula;
+    if (f.is_key) fj["is_key"] = true;
+    if (f.check_table.has_value()) fj["check_table"] = *f.check_table;
+    if (f.fixed_values_json.has_value()) {
+        fj["fixed_values"] = nlohmann::json::parse(*f.fixed_values_json, nullptr, false);
+    }
+    if (f.source_expression.has_value()) fj["source_expression"] = *f.source_expression;
+    if (f.annotations_json.has_value()) {
+        fj["annotations"] = nlohmann::json::parse(*f.annotations_json, nullptr, false);
+    }
     return fj;
 }
 
@@ -53,6 +66,9 @@ nlohmann::json EdgeToJson(const CatalogEdge& e) {
     edj["resolution"] = e.resolution;
     if (!e.field_mapping_json.empty()) {
         edj["field_mapping"] = nlohmann::json::parse(e.field_mapping_json, nullptr, false);
+    }
+    if (e.detail_json.has_value()) {
+        edj["detail"] = nlohmann::json::parse(*e.detail_json, nullptr, false);
     }
     edj["extracted_at"] = e.extracted_at;
     return edj;
@@ -122,6 +138,7 @@ std::string RenderCatalogFeedOpenMetadataJson(const CatalogFeed& feed,
                 nlohmann::json c;
                 c["name"] = f->name;
                 c["dataType"] = f->data_type.value_or("VARCHAR");
+                if (f->description.has_value()) c["description"] = *f->description;
                 cols.push_back(std::move(c));
             }
         }

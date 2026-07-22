@@ -75,6 +75,33 @@ public:
     };
     [[nodiscard]] virtual Result<CatalogStats, Error> Stats() = 0;
 
+    // One row per distinct (domain, object_type) actually present in the
+    // catalog, with a count — lets a caller (the Discover UI's object-type
+    // filter) offer exactly what's really there instead of a hardcoded
+    // guess at every domain's possible object types (which vary a lot,
+    // especially BW: IOBJ/ADSO/CUBE/ELEM/... vs ABAP's TABL/CLAS/FUGR/...).
+    struct ObjectTypeCount {
+        std::string domain;
+        std::string object_type;
+        int64_t count = 0;
+    };
+    [[nodiscard]] virtual Result<std::vector<ObjectTypeCount>, Error> ListObjectTypeCounts() = 0;
+
+    // One row per distinct (domain, object_type, object_subtype) actually
+    // present — a level deeper than ListObjectTypeCounts, only meaningful
+    // where object_subtype is set (BW ELEM today: REP/VAR/CKF/RKF/FILT/STR).
+    // Kept as its own method rather than widening ListObjectTypeCounts so
+    // the existing (domain, object_type) grain — and the object-type filter
+    // counts that already depend on it — don't change.
+    struct ObjectSubtypeCount {
+        std::string domain;
+        std::string object_type;
+        std::string object_subtype;
+        int64_t count = 0;
+    };
+    [[nodiscard]] virtual Result<std::vector<ObjectSubtypeCount>, Error>
+        ListObjectSubtypeCounts() = 0;
+
     // Business overlay fields for one entity (`catalog annotate`, P3).
     // std::nullopt fields are left unchanged; empty string clears a field.
     // Fails (rather than silently creating a stub) if `id` isn't an
@@ -144,9 +171,32 @@ public:
     [[nodiscard]] virtual Result<SyncCheckpointState, Error> LoadSyncCheckpoint() = 0;
 
     // Full-text search over technical_name/display_name/object_type
-    // (BM25-ranked), highest score first.
+    // (BM25-ranked), highest score first. An empty (or "*") query browses
+    // all entities in technical-name order instead of ranking a match.
     [[nodiscard]] virtual Result<std::vector<CatalogSearchHit>, Error> SearchFts(
         const std::string& query, int max_results) = 0;
+
+    // Cursor-paginated, filterable form of SearchFts — the `catalog_search`
+    // MCP tool's backing call. `offset` is an opaque-to-the-client integer
+    // cursor (the previous page's offset + hits.size()); `domain`/
+    // `curated_only` narrow the same query rather than filtering
+    // client-side after the fact. Plain SearchFts(query, max_results)
+    // remains the unfiltered/unpaginated convenience form used by the CLI
+    // and by SearchHybrid's fusion.
+    struct SearchOptions {
+        int max_results = 20;
+        int offset = 0;
+        std::optional<std::string> domain;        // "ABAP" | "DDIC" | "CDS" | "BW"
+        std::optional<std::string> object_type;   // exact match, e.g. "TABL/DT", "IOBJ"
+        std::optional<std::string> object_subtype;  // exact match, e.g. "REP" (BW query)
+        bool curated_only = false;
+    };
+    struct SearchPage {
+        std::vector<CatalogSearchHit> hits;
+        bool has_more = false;
+    };
+    [[nodiscard]] virtual Result<SearchPage, Error> SearchFtsPage(
+        const std::string& query, const SearchOptions& options) = 0;
 
     // Replaces the embedding vector for one entity (upsert). `model` is
     // stored alongside so a future re-embed with a different model is

@@ -125,13 +125,22 @@ void ParseHeader(const std::string& clean_source, CdsViewInfo& info, size_t& bra
     }
 }
 
+// Depth-tracks all three bracket kinds — not just parens. Annotation values
+// can be array-of-object literals (e.g.
+// `@Consumption.filter.hierarchyBinding: [ { type: #ELEMENT, value: '...',
+// variableSequence: 1 }, { type: #CONSTANT, ... } ]`, real DDL from
+// SABAPDEMOS's DEMO_CDS_ANNOTATION_ARRAY) — the commas inside that `[...]`
+// are not field separators. Missing `{`/`[` tracking here previously split
+// one such annotation into several garbage pseudo-fields (e.g. a field
+// literally named "value: '...'", duplicated once per array element,
+// producing a duplicate-field-id write failure).
 std::vector<std::string> SplitTopLevel(const std::string& s, char sep) {
     std::vector<std::string> parts;
     int depth = 0;
     std::string current;
     for (char c : s) {
-        if (c == '(') ++depth;
-        if (c == ')') --depth;
+        if (c == '(' || c == '{' || c == '[') ++depth;
+        if (c == ')' || c == '}' || c == ']') --depth;
         if (c == sep && depth <= 0) {
             parts.push_back(current);
             current.clear();
@@ -164,25 +173,67 @@ size_t FindTopLevelLastAs(const std::string& lower) {
 CdsField ParseFieldSegment(const std::string& segment) {
     CdsField field;
 
-    std::istringstream in(segment);
-    std::string line;
-    std::vector<std::string> code_lines;
-    while (std::getline(in, line)) {
-        auto trimmed = Trim(line);
-        if (trimmed.empty()) continue;
-        if (trimmed[0] == '@') {
-            field.annotations.push_back(trimmed);
+    // Character-level scan rather than line-by-line: an annotation's value
+    // can be a multi-line array-of-objects literal (e.g.
+    // `@Consumption.filter.hierarchyBinding: [ { type: #ELEMENT, value:
+    // '...', variableSequence: 1 }, {...} ]`, real DDL from SABAPDEMOS's
+    // DEMO_CDS_ANNOTATION_ARRAY) whose closing bracket can be followed by
+    // real field code on that SAME physical line — a per-line classifier
+    // can't represent "annotation for the first half of this line, code
+    // for the second half." Each `@...` clause is consumed until its own
+    // opened brackets rebalance to 0, stopping exactly at the closing
+    // bracket regardless of how many lines that spans; everything else is
+    // field code.
+    std::string expr;
+    const size_t n = segment.size();
+    size_t i = 0;
+    while (i < n) {
+        if (std::isspace(static_cast<unsigned char>(segment[i]))) {
+            ++i;
+            continue;
+        }
+        if (segment[i] == '@') {
+            const size_t start = i;
+            int depth = 0;
+            bool closed_once = false;
+            while (i < n) {
+                const char c = segment[i];
+                if (c == '(' || c == '{' || c == '[') {
+                    ++depth;
+                } else if (c == ')' || c == '}' || c == ']') {
+                    --depth;
+                    closed_once = true;
+                } else if (c == '\n' && depth <= 0 && closed_once) {
+                    break;  // single-line annotation, brackets (if any) already balanced
+                } else if (c == '\n' && depth <= 0 && !closed_once) {
+                    // No brackets opened at all yet — annotation ends at
+                    // end of its own line (the common single-line case,
+                    // e.g. `@EndUserText.label: 'X'`), UNLESS the line
+                    // ends with nothing but a bare `:` (a key with no
+                    // inline value — the array-annotation's own first
+                    // line), in which case the value starts on the next
+                    // line and this annotation is not yet complete.
+                    auto so_far = Trim(segment.substr(start, i - start));
+                    if (!so_far.empty() && so_far.back() == ':') {
+                        // fall through — keep consuming into next line
+                    } else {
+                        break;
+                    }
+                }
+                ++i;
+                if (depth <= 0 && closed_once) {
+                    break;  // consumed exactly through the closing bracket
+                }
+            }
+            field.annotations.push_back(CollapseWhitespace(segment.substr(start, i - start)));
         } else {
-            code_lines.push_back(trimmed);
+            const size_t start = i;
+            while (i < n && segment[i] != '@') ++i;
+            expr += segment.substr(start, i - start);
+            expr += ' ';
         }
     }
-
-    std::string expr;
-    for (size_t i = 0; i < code_lines.size(); ++i) {
-        if (i > 0) expr += ' ';
-        expr += code_lines[i];
-    }
-    expr = Trim(expr);
+    expr = Trim(CollapseWhitespace(expr));
 
     // "key " prefix (word boundary).
     static const std::regex kKeyRe(R"(^key\s+)", std::regex::icase);
@@ -203,6 +254,17 @@ CdsField ParseFieldSegment(const std::string& segment) {
     } else {
         field.name = expr;
         field.source_expression = expr;
+    }
+
+    // Human-readable label, when the DDL carries one — the only per-field
+    // metadata resolvable from text alone.
+    static const std::regex kLabelRe(R"(@EndUserText\.label\s*:\s*'([^']*)')", std::regex::icase);
+    for (const auto& annotation : field.annotations) {
+        std::smatch m;
+        if (std::regex_search(annotation, m, kLabelRe)) {
+            field.description = m[1].str();
+            break;
+        }
     }
 
     return field;
