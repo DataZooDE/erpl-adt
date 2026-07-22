@@ -398,10 +398,18 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
         "Distinct (domain, object_type) pairs actually present in the cache, with counts — no "
         "ADT/SAP call. Lets a caller build an object-type filter (e.g. \"only IOBJ\", \"only "
         "TABL/DT\") from what's really there instead of guessing at every domain's possible "
-        "object types, which vary a lot (BW: IOBJ/ADSO/CUBE/ELEM/...; ABAP: TABL/CLAS/FUGR/...).",
-        MakeSchema(nlohmann::json::object(), nlohmann::json::array()),
-        [store](const nlohmann::json&) -> ToolResult {
-            auto types_result = store->ListObjectTypeCounts();
+        "object types, which vary a lot (BW: IOBJ/ADSO/CUBE/ELEM/...; ABAP: TABL/CLAS/FUGR/...). "
+        "Optional `query` narrows counts to the same match catalog_search with that query text "
+        "would return, so a caller can keep a domain/type filter row's counts in sync with "
+        "whatever the user has currently typed instead of always showing whole-catalog totals.",
+        MakeSchema(
+            {{"query",
+              StringProp("Search text to narrow counts by — empty (or \"*\") counts the whole "
+                          "catalog")}},
+            {}),
+        [store](const nlohmann::json& params) -> ToolResult {
+            auto query = OptString(params, "query", "");
+            auto types_result = store->ListObjectTypeCounts(query);
             if (types_result.IsErr()) return MakeErrorResult(types_result.Error());
 
             nlohmann::json j;
@@ -420,10 +428,16 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
         "with counts — no ADT/SAP call. Only meaningful where object_subtype is set (BW ELEM "
         "today: REP is a real query, VAR/CKF/RKF/FILT/STR are variables/key figures/filters/"
         "structures that share object_type ELEM but aren't queries). Use to build a filter "
-        "that isolates real queries from everything else ELEM covers.",
-        MakeSchema(nlohmann::json::object(), nlohmann::json::array()),
-        [store](const nlohmann::json&) -> ToolResult {
-            auto subtypes_result = store->ListObjectSubtypeCounts();
+        "that isolates real queries from everything else ELEM covers. Optional `query` narrows "
+        "counts the same way as catalog_object_types.",
+        MakeSchema(
+            {{"query",
+              StringProp("Search text to narrow counts by — empty (or \"*\") counts the whole "
+                          "catalog")}},
+            {}),
+        [store](const nlohmann::json& params) -> ToolResult {
+            auto query = OptString(params, "query", "");
+            auto subtypes_result = store->ListObjectSubtypeCounts(query);
             if (subtypes_result.IsErr()) return MakeErrorResult(subtypes_result.Error());
 
             nlohmann::json j;

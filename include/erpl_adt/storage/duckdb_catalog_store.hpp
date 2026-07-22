@@ -35,8 +35,10 @@ public:
     [[nodiscard]] Result<std::vector<CatalogSyncRunSummary>, Error> RecentSyncRuns(
         int max_results) override;
     [[nodiscard]] Result<CatalogStats, Error> Stats() override;
-    [[nodiscard]] Result<std::vector<ObjectTypeCount>, Error> ListObjectTypeCounts() override;
-    [[nodiscard]] Result<std::vector<ObjectSubtypeCount>, Error> ListObjectSubtypeCounts() override;
+    [[nodiscard]] Result<std::vector<ObjectTypeCount>, Error> ListObjectTypeCounts(
+        const std::string& query = "") override;
+    [[nodiscard]] Result<std::vector<ObjectSubtypeCount>, Error> ListObjectSubtypeCounts(
+        const std::string& query = "") override;
     [[nodiscard]] Result<void, Error> ApplyOverlay(
         const EntityId& id, const OverlayFields& fields, const std::string& curated_by) override;
     [[nodiscard]] Result<std::vector<std::string>, Error> ListEntityIds(

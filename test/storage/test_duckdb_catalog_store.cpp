@@ -268,6 +268,72 @@ TEST_CASE("DuckDbCatalogStore: ListObjectSubtypeCounts returns distinct "
     CHECK(result.Value()[0].count == 1);
 }
 
+TEST_CASE("DuckDbCatalogStore: ListObjectTypeCounts narrows to the current search "
+          "query instead of always reflecting the whole catalog",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+    REQUIRE(store->WriteFeed(MakeSampleFeed()).IsOk());  // 1 TABL (SFLIGHT), 1 CLAS (ZCL_PROCUREMENT)
+
+    // Unfiltered: both object types present.
+    auto all = store->ListObjectTypeCounts();
+    REQUIRE(all.IsOk());
+    REQUIRE(all.Value().size() == 2);
+
+    // Narrowed to a query matching only the CLAS entity ("procurement",
+    // present in ZCL_PROCUREMENT's display_name) — only CLAS should count.
+    auto narrowed = store->ListObjectTypeCounts("procurement");
+    REQUIRE(narrowed.IsOk());
+    REQUIRE(narrowed.Value().size() == 1);
+    CHECK(narrowed.Value()[0].object_type == "CLAS");
+    CHECK(narrowed.Value()[0].count == 1);
+
+    // A query matching nothing narrows counts to empty, not the whole catalog.
+    auto none = store->ListObjectTypeCounts("nonexistent_zzz");
+    REQUIRE(none.IsOk());
+    CHECK(none.Value().empty());
+}
+
+TEST_CASE("DuckDbCatalogStore: ListObjectSubtypeCounts narrows to the current "
+          "search query",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    auto rep_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0BPC_BPF_ACTIVITY_REP");
+    CatalogEntity rep(rep_id);
+    rep.system_sid = "A4H";
+    rep.domain = CatalogDomain::Bw;
+    rep.object_type = "ELEM";
+    rep.object_subtype = "REP";
+    rep.technical_name = "0BPC_BPF_ACTIVITY_REP";
+    rep.display_name = "BPC BPF Activity Report";
+    rep.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(rep);
+
+    auto var_id = DeriveEntityId("A4H", CatalogDomain::Bw, "ELEM", "0CMONTH");
+    CatalogEntity var(var_id);
+    var.system_sid = "A4H";
+    var.domain = CatalogDomain::Bw;
+    var.object_type = "ELEM";
+    var.object_subtype = "VAR";
+    var.technical_name = "0CMONTH";
+    var.display_name = "Current Calendar Month";
+    var.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(var);
+
+    REQUIRE(store->WriteFeed(feed).IsOk());
+
+    auto all = store->ListObjectSubtypeCounts();
+    REQUIRE(all.IsOk());
+    REQUIRE(all.Value().size() == 2);
+
+    auto narrowed = store->ListObjectSubtypeCounts("activity");
+    REQUIRE(narrowed.IsOk());
+    REQUIRE(narrowed.Value().size() == 1);
+    CHECK(narrowed.Value()[0].object_subtype == "REP");
+}
+
 TEST_CASE("DuckDbCatalogStore: WriteFeed replaces prior content (full rebuild)",
           "[storage][duckdb]") {
     auto store = DuckDbCatalogStore::Open(":memory:").Value();

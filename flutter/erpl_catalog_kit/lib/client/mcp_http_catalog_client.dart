@@ -127,8 +127,10 @@ class McpHttpCatalogClient implements CatalogClient {
   }
 
   @override
-  Future<List<CatalogObjectTypeCount>> objectTypes() async {
-    final j = await _callTool('catalog_object_types', {});
+  Future<List<CatalogObjectTypeCount>> objectTypes({String? query}) async {
+    final j = await _callTool('catalog_object_types', {
+      if (query != null && query.isNotEmpty) 'query': query,
+    });
     final types = j['types'] as List<dynamic>? ?? const [];
     return types
         .map((t) => CatalogObjectTypeCount.fromJson(t as Map<String, dynamic>))
@@ -136,8 +138,10 @@ class McpHttpCatalogClient implements CatalogClient {
   }
 
   @override
-  Future<List<CatalogObjectSubtypeCount>> objectSubtypes() async {
-    final j = await _callTool('catalog_object_subtypes', {});
+  Future<List<CatalogObjectSubtypeCount>> objectSubtypes({String? query}) async {
+    final j = await _callTool('catalog_object_subtypes', {
+      if (query != null && query.isNotEmpty) 'query': query,
+    });
     final subtypes = j['subtypes'] as List<dynamic>? ?? const [];
     return subtypes
         .map((t) => CatalogObjectSubtypeCount.fromJson(t as Map<String, dynamic>))

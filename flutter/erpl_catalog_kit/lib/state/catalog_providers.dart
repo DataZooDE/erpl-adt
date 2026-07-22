@@ -46,17 +46,23 @@ final curatedOnlyProvider = StateProvider<bool>((ref) => false);
 /// Distinct (domain, object_type) pairs actually present in the catalog —
 /// backs the object-type filter so it only ever offers types that are
 /// really there (BW's IOBJ/ADSO/CUBE/... vs ABAP's TABL/CLAS/FUGR/... vary
-/// too much to hardcode).
+/// too much to hardcode). Watches [searchQueryProvider] so the chip counts
+/// track the current search scope instead of always showing whole-catalog
+/// totals — refetches on every query change, same reactivity as
+/// [discoveryResultsProvider] itself.
 final objectTypesProvider = FutureProvider<List<CatalogObjectTypeCount>>((ref) async {
   final client = ref.watch(catalogClientProvider);
-  return client.objectTypes();
+  final query = ref.watch(searchQueryProvider);
+  return client.objectTypes(query: query);
 });
 
 /// Distinct (domain, object_type, object_subtype) triples actually present —
 /// backs the object-subtype filter one level deeper than [objectTypesProvider].
+/// Query-scoped the same way.
 final objectSubtypesProvider = FutureProvider<List<CatalogObjectSubtypeCount>>((ref) async {
   final client = ref.watch(catalogClientProvider);
-  return client.objectSubtypes();
+  final query = ref.watch(searchQueryProvider);
+  return client.objectSubtypes(query: query);
 });
 
 /// One page (plus everything loaded so far via [loadMore]) of Discovery

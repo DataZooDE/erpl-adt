@@ -26,14 +26,18 @@ abstract class CatalogClient {
 
   /// Distinct (domain, object_type) pairs actually present in the catalog,
   /// with counts — used to build the object-type filter from what's really
-  /// there instead of guessing.
-  Future<List<CatalogObjectTypeCount>> objectTypes();
+  /// there instead of guessing. Empty/null [query] counts the whole
+  /// catalog; otherwise narrows to the same match [search] with that query
+  /// text would return, so filter-row counts track the current search
+  /// scope instead of always showing whole-catalog totals.
+  Future<List<CatalogObjectTypeCount>> objectTypes({String? query});
 
   /// Distinct (domain, object_type, object_subtype) triples actually
   /// present — only meaningful today for BW's ELEM object_type, where a
   /// subtype (REP/VAR/CKF/RKF/FILT/STR) distinguishes a real query from
-  /// everything else ELEM also covers.
-  Future<List<CatalogObjectSubtypeCount>> objectSubtypes();
+  /// everything else ELEM also covers. [query] narrows the same way as
+  /// [objectTypes].
+  Future<List<CatalogObjectSubtypeCount>> objectSubtypes({String? query});
   Future<void> annotate(
     String id, {
     String? definition,

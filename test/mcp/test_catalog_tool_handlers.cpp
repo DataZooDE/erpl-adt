@@ -277,6 +277,21 @@ TEST_CASE("catalog_object_types: returns distinct (domain, object_type) counts",
     CHECK(found_clas);
 }
 
+TEST_CASE("catalog_object_types: query param narrows counts to the current search "
+          "scope",
+          "[mcp][catalog][handlers]") {
+    auto store = MakeSeededStore();
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    auto result =
+        CallTool(registry, "catalog_object_types", {{"query", "procurement"}});
+    REQUIRE_FALSE(result.is_error);
+    auto j = ParseContent(result);
+    REQUIRE(j["types"].size() == 1);
+    CHECK(j["types"][0]["object_type"] == "CLAS");
+}
+
 TEST_CASE("catalog_get: serializes object_subtype when present",
           "[mcp][catalog][handlers]") {
     auto store = MakeBwSeededStore();
@@ -327,6 +342,21 @@ TEST_CASE("catalog_object_subtypes: returns distinct "
     }
     CHECK(found_rep);
     CHECK(found_var);
+}
+
+TEST_CASE("catalog_object_subtypes: query param narrows counts to the current "
+          "search scope",
+          "[mcp][catalog][handlers]") {
+    auto store = MakeBwSeededStore();
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    auto result =
+        CallTool(registry, "catalog_object_subtypes", {{"query", "activity"}});
+    REQUIRE_FALSE(result.is_error);
+    auto j = ParseContent(result);
+    REQUIRE(j["subtypes"].size() == 1);
+    CHECK(j["subtypes"][0]["object_subtype"] == "REP");
 }
 
 TEST_CASE("catalog_get: returns an entity with its fields", "[mcp][catalog][handlers]") {

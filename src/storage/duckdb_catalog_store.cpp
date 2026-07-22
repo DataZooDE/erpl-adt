@@ -845,11 +845,32 @@ Result<DuckDbCatalogStore::CatalogStats, Error> DuckDbCatalogStore::Stats() {
 }
 
 Result<std::vector<DuckDbCatalogStore::ObjectTypeCount>, Error>
-DuckDbCatalogStore::ListObjectTypeCounts() {
+DuckDbCatalogStore::ListObjectTypeCounts(const std::string& query) {
     try {
-        auto result = impl_->con->Query(
-            "SELECT domain, object_type, COUNT(*) AS cnt FROM entities "
-            "GROUP BY domain, object_type ORDER BY domain, object_type");
+        // Empty/"*" means "browse all", matching SearchFtsPage's own
+        // convention — narrowing counts to the same FTS match a
+        // SearchFtsPage call with this query would return, so the
+        // Discover UI's chip counts track whatever the user has typed
+        // instead of always reflecting the whole catalog.
+        const bool is_browse_all = query.empty() || query == "*";
+        std::ostringstream sql;
+        if (is_browse_all) {
+            sql << "SELECT domain, object_type, COUNT(*) AS cnt FROM entities e";
+        } else {
+            sql << "SELECT domain, object_type, COUNT(*) AS cnt FROM entities e "
+                   "WHERE fts_main_search_docs.match_bm25(e.id, $1) IS NOT NULL";
+        }
+        sql << " GROUP BY domain, object_type ORDER BY domain, object_type";
+
+        auto stmt = impl_->con->Prepare(sql.str());
+        if (stmt->HasError()) {
+            // FTS index not built (e.g. extension unavailable offline) —
+            // degrade to no counts rather than a hard error, matching
+            // SearchFtsPage's own tolerance.
+            return Result<std::vector<ObjectTypeCount>, Error>::Ok({});
+        }
+        auto result = is_browse_all ? ExecuteMaterialized(*stmt)
+                                     : ExecuteMaterialized(*stmt, query);
         if (result->HasError()) {
             return Result<std::vector<ObjectTypeCount>, Error>::Err(
                 MakeStoreError("ListObjectTypeCounts", result->GetError()));
@@ -871,13 +892,27 @@ DuckDbCatalogStore::ListObjectTypeCounts() {
 }
 
 Result<std::vector<DuckDbCatalogStore::ObjectSubtypeCount>, Error>
-DuckDbCatalogStore::ListObjectSubtypeCounts() {
+DuckDbCatalogStore::ListObjectSubtypeCounts(const std::string& query) {
     try {
-        auto result = impl_->con->Query(
-            "SELECT domain, object_type, object_subtype, COUNT(*) AS cnt FROM entities "
-            "WHERE object_subtype IS NOT NULL "
-            "GROUP BY domain, object_type, object_subtype "
-            "ORDER BY domain, object_type, object_subtype");
+        const bool is_browse_all = query.empty() || query == "*";
+        std::ostringstream sql;
+        if (is_browse_all) {
+            sql << "SELECT domain, object_type, object_subtype, COUNT(*) AS cnt FROM entities e "
+                   "WHERE object_subtype IS NOT NULL";
+        } else {
+            sql << "SELECT domain, object_type, object_subtype, COUNT(*) AS cnt FROM entities e "
+                   "WHERE object_subtype IS NOT NULL "
+                   "AND fts_main_search_docs.match_bm25(e.id, $1) IS NOT NULL";
+        }
+        sql << " GROUP BY domain, object_type, object_subtype "
+               "ORDER BY domain, object_type, object_subtype";
+
+        auto stmt = impl_->con->Prepare(sql.str());
+        if (stmt->HasError()) {
+            return Result<std::vector<ObjectSubtypeCount>, Error>::Ok({});
+        }
+        auto result = is_browse_all ? ExecuteMaterialized(*stmt)
+                                     : ExecuteMaterialized(*stmt, query);
         if (result->HasError()) {
             return Result<std::vector<ObjectSubtypeCount>, Error>::Err(
                 MakeStoreError("ListObjectSubtypeCounts", result->GetError()));

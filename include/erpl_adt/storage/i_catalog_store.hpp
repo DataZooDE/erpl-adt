@@ -85,7 +85,13 @@ public:
         std::string object_type;
         int64_t count = 0;
     };
-    [[nodiscard]] virtual Result<std::vector<ObjectTypeCount>, Error> ListObjectTypeCounts() = 0;
+    // `query` narrows counts to the same match a SearchFtsPage call with
+    // this query text would return — empty (or "*") means "browse all",
+    // matching SearchFtsPage's own convention, so the Discover UI's chip
+    // counts stay in sync with whatever the user has actually typed
+    // instead of always reflecting the whole catalog.
+    [[nodiscard]] virtual Result<std::vector<ObjectTypeCount>, Error> ListObjectTypeCounts(
+        const std::string& query = "") = 0;
 
     // One row per distinct (domain, object_type, object_subtype) actually
     // present — a level deeper than ListObjectTypeCounts, only meaningful
@@ -100,7 +106,7 @@ public:
         int64_t count = 0;
     };
     [[nodiscard]] virtual Result<std::vector<ObjectSubtypeCount>, Error>
-        ListObjectSubtypeCounts() = 0;
+        ListObjectSubtypeCounts(const std::string& query = "") = 0;
 
     // Business overlay fields for one entity (`catalog annotate`, P3).
     // std::nullopt fields are left unchanged; empty string clears a field.
