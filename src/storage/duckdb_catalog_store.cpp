@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <sstream>
 
@@ -195,6 +196,34 @@ CatalogEntity RowToEntity(duckdb::MaterializedQueryResult& result, idx_t row,
     return entity;
 }
 
+// Best-effort rebuild of the FTS search index. This MUST run OUTSIDE the
+// caller's data-write transaction (i.e. after Commit(), in autocommit mode).
+//
+// `INSTALL fts; LOAD fts;` fails on any host where the fts extension binary is
+// unavailable — notably the Windows x64-windows-static build, and any offline
+// machine. A statement that errors inside an explicit DuckDB transaction puts
+// the transaction into an aborted state, and a subsequent Connection::Commit()
+// then silently performs a ROLLBACK *without raising an error* — discarding
+// every row written in that transaction while the caller still sees success.
+// That was the root cause of the Windows-only silent data loss in issue #27.
+//
+// Running the rebuild in autocommit mode contains any fts failure to the search
+// index alone: FTS search degrades to "no results", but the catalog data that
+// was already committed stays durable.
+void RebuildFtsIndex(duckdb::Connection& con) {
+    con.Query(
+        "CREATE OR REPLACE TABLE search_docs AS "
+        "SELECT id AS entity_id, "
+        "concat_ws(' ', display_name, technical_name, object_type, "
+        "biz_definition, biz_owner, biz_lob) AS text FROM entities");
+    auto install = con.Query("INSTALL fts; LOAD fts;");
+    if (!install->HasError()) {
+        con.Query(
+            "PRAGMA create_fts_index('search_docs', 'entity_id', 'text', "
+            "stemmer='english', stopwords='english', overwrite=1)");
+    }
+}
+
 } // anonymous namespace
 
 struct DuckDbCatalogStore::Impl {
@@ -221,6 +250,19 @@ Result<std::unique_ptr<DuckDbCatalogStore>, Error> DuckDbCatalogStore::Open(
         store->impl_->db = std::make_unique<duckdb::DuckDB>(
             in_memory ? nullptr : path.c_str(), read_only ? &config : nullptr);
         store->impl_->con = std::make_unique<duckdb::Connection>(*store->impl_->db);
+
+        // Optional override of DuckDB's extension directory. Useful for
+        // air-gapped/offline installs where the default `~/.duckdb` location
+        // isn't writable, and as a deterministic test seam (pointing at an
+        // un-creatable directory makes INSTALL/LOAD fail predictably without
+        // network). Applied before any INSTALL/LOAD below.
+        if (const char* ext_dir = std::getenv("ERPL_ADT_DUCKDB_EXTENSION_DIR")) {
+            if (ext_dir[0] != '\0') {
+                std::ostringstream set_dir;
+                set_dir << "SET extension_directory='" << ext_dir << "'";
+                store->impl_->con->Query(set_dir.str());
+            }
+        }
 
         if (read_only) {
             // Extension loading is per-process, not per-database-file — a
@@ -378,23 +420,12 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
             app.Close();
         }
 
-        // Rebuild the search text + FTS index (best-effort: FTS requires the
-        // `fts` extension to be installed/loaded, which needs network access
-        // the first time — a missing index degrades SearchFts to "no
-        // results" rather than failing the whole write).
-        con.Query(
-            "CREATE OR REPLACE TABLE search_docs AS "
-            "SELECT id AS entity_id, "
-            "concat_ws(' ', display_name, technical_name, object_type, "
-            "biz_definition, biz_owner, biz_lob) AS text FROM entities");
-        auto install = con.Query("INSTALL fts; LOAD fts;");
-        if (!install->HasError()) {
-            con.Query(
-                "PRAGMA create_fts_index('search_docs', 'entity_id', 'text', "
-                "stemmer='english', stopwords='english', overwrite=1)");
-        }
-
         con.Commit();
+
+        // Rebuild the search text + FTS index AFTER the data commit — never
+        // inside the transaction. See RebuildFtsIndex: an in-transaction fts
+        // failure would silently roll back the whole write (issue #27).
+        RebuildFtsIndex(con);
     } catch (const std::exception& ex) {
         con.Rollback();
         return Result<void, Error>::Err(MakeStoreError("WriteFeed", ex.what()));
@@ -1121,19 +1152,10 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
             app.Close();
         }
 
-        con.Query(
-            "CREATE OR REPLACE TABLE search_docs AS "
-            "SELECT id AS entity_id, "
-            "concat_ws(' ', display_name, technical_name, object_type, "
-            "biz_definition, biz_owner, biz_lob) AS text FROM entities");
-        auto install = con.Query("INSTALL fts; LOAD fts;");
-        if (!install->HasError()) {
-            con.Query(
-                "PRAGMA create_fts_index('search_docs', 'entity_id', 'text', "
-                "stemmer='english', stopwords='english', overwrite=1)");
-        }
-
         con.Commit();
+
+        // FTS rebuild must run after the commit — see RebuildFtsIndex (#27).
+        RebuildFtsIndex(con);
     } catch (const std::exception& ex) {
         con.Rollback();
         return Result<void, Error>::Err(MakeStoreError("UpsertEntitiesAndFields", ex.what()));
@@ -1151,18 +1173,10 @@ Result<void, Error> DuckDbCatalogStore::DeleteEntities(const std::vector<EntityI
             ExecuteMaterialized(*delete_entity_stmt, id.Value());
             ExecuteMaterialized(*delete_fields_stmt, id.Value());
         }
-        con.Query(
-            "CREATE OR REPLACE TABLE search_docs AS "
-            "SELECT id AS entity_id, "
-            "concat_ws(' ', display_name, technical_name, object_type, "
-            "biz_definition, biz_owner, biz_lob) AS text FROM entities");
-        auto install = con.Query("INSTALL fts; LOAD fts;");
-        if (!install->HasError()) {
-            con.Query(
-                "PRAGMA create_fts_index('search_docs', 'entity_id', 'text', "
-                "stemmer='english', stopwords='english', overwrite=1)");
-        }
         con.Commit();
+
+        // FTS rebuild must run after the commit — see RebuildFtsIndex (#27).
+        RebuildFtsIndex(con);
     } catch (const std::exception& ex) {
         con.Rollback();
         return Result<void, Error>::Err(MakeStoreError("DeleteEntities", ex.what()));
