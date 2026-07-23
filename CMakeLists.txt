@@ -81,6 +81,11 @@ endif()
 # instead of the app. See ERPL_ADT_HAVE_WEBUI below.
 set(WEBUI_WEB_DIR "${CMAKE_SOURCE_DIR}/flutter/erpl_catalog_kit/example/build/web")
 if(EXISTS "${WEBUI_WEB_DIR}/index.html")
+    # CMakeRC.cmake's own cmake_minimum_required(3.12) predates CMP0091 — same
+    # issue as the posthog-telemetry submodule above — so force the policy NEW
+    # here too, otherwise the generated webui_resources target ignores our /MT
+    # override below and defaults to /MD, failing to link with LNK2038.
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
     include(${CMAKE_SOURCE_DIR}/third_party/cmrc/CMakeRC.cmake)
     file(GLOB_RECURSE WEBUI_WEB_FILES CONFIGURE_DEPENDS "${WEBUI_WEB_DIR}/*")
     cmrc_add_resource_library(webui_resources
@@ -89,6 +94,13 @@ if(EXISTS "${WEBUI_WEB_DIR}/index.html")
         WHENCE "${WEBUI_WEB_DIR}"
         ${WEBUI_WEB_FILES}
     )
+    if(MSVC)
+        # Match erpl-adt's static CRT (/MT) — CMakeRC's generated target
+        # doesn't set this, so it defaults to /MD and fails linking with
+        # LNK2038 (RuntimeLibrary mismatch), same fix as posthog_telemetry.
+        set_property(TARGET webui_resources PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
     set(ERPL_ADT_HAVE_WEBUI TRUE)
     message(STATUS "Web UI: embedding ${WEBUI_WEB_DIR} into the binary")
 else()
