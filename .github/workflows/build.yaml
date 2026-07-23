@@ -63,7 +63,7 @@ jobs:
           cd "${{ github.workspace }}/vcpkg"
           git checkout ${{ env.VCPKG_BASELINE }}
         env:
-          VCPKG_BASELINE: 11bbc873e00e9e58d4e9dffb30b7a5493a030e0b
+          VCPKG_BASELINE: 542289e02dec80d057e30f3d7a101c374a94d804
 
       - name: Bootstrap vcpkg (Unix)
         if: runner.os != 'Windows'
