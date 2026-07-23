@@ -222,16 +222,23 @@ Result<std::unique_ptr<DuckDbCatalogStore>, Error> DuckDbCatalogStore::Open(
             in_memory ? nullptr : path.c_str(), read_only ? &config : nullptr);
         store->impl_->con = std::make_unique<duckdb::Connection>(*store->impl_->db);
 
-        // Extension loading is per-process, not per-database-file — a
-        // read-only search session started fresh (e.g. `catalog search`)
-        // still needs fts/vss LOADed itself to see match_bm25/
-        // array_cosine_distance, even though the index was built by an
-        // earlier write session. Best-effort: no network on first run just
-        // means SearchFts/SearchVss degrade to empty results below.
-        store->impl_->con->Query("INSTALL fts; LOAD fts;");
-        store->impl_->con->Query("INSTALL vss; LOAD vss;");
-
-        if (!read_only) {
+        if (read_only) {
+            // Extension loading is per-process, not per-database-file — a
+            // read-only search session started fresh (e.g. `catalog search`)
+            // still needs fts/vss LOADed itself to see match_bm25/
+            // array_cosine_distance, even though the index was built by an
+            // earlier write session. Best-effort: no network on first run
+            // just means SearchFts/SearchVss degrade to empty results below.
+            // Read-write opens don't need this here — WriteFeed and friends
+            // each (re-)install fts with their own error-guarding, and vss is
+            // (re-)installed just below — running an extra, unguarded
+            // install attempt this early (before the schema DDL even runs)
+            // gains nothing for the write path and risks whatever a failed/
+            // slow extension fetch does to a brand-new connection's state
+            // before any tables exist.
+            store->impl_->con->Query("INSTALL fts; LOAD fts;");
+            store->impl_->con->Query("INSTALL vss; LOAD vss;");
+        } else {
             auto result = store->impl_->con->Query(kSchemaDdl);
             if (result->HasError()) {
                 return Result<std::unique_ptr<DuckDbCatalogStore>, Error>::Err(
