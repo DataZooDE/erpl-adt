@@ -2741,8 +2741,8 @@ int HandleCatalogSync(const CommandArgs& args) {
             ? static_cast<long>(elapsed_s) * (p.total - p.index) / p.index
             : 0;
         std::cerr << "[" << p.index << "/" << p.total << "] " << p.item_kind << " " << p.item_name
-                  << " (elapsed " << FormatDuration(elapsed_s) << ", ETA " << FormatDuration(eta_s)
-                  << ")\n";
+                  << " (elapsed " << FormatDuration(static_cast<long>(elapsed_s)) << ", ETA "
+                  << FormatDuration(eta_s) << ")\n";
     };
 
     auto result = CatalogSync(*session, *store, *options, scope_label, pipeline);
