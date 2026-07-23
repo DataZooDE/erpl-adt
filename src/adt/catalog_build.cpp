@@ -245,11 +245,11 @@ Result<void, Error> BuildAbapDdicCdsScope(IAdtSession& session,
                     if (!tf.fixed_values.empty()) {
                         nlohmann::json arr = nlohmann::json::array();
                         for (const auto& fv : tf.fixed_values) {
-                            nlohmann::json entry;
-                            entry["low"] = fv.low;
-                            if (!fv.high.empty()) entry["high"] = fv.high;
-                            if (!fv.text.empty()) entry["text"] = fv.text;
-                            arr.push_back(std::move(entry));
+                            nlohmann::json fixed_value;
+                            fixed_value["low"] = fv.low;
+                            if (!fv.high.empty()) fixed_value["high"] = fv.high;
+                            if (!fv.text.empty()) fixed_value["text"] = fv.text;
+                            arr.push_back(std::move(fixed_value));
                         }
                         field.fixed_values_json = arr.dump();
                     }
