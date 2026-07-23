@@ -13,16 +13,10 @@
     "openssl",
     "nlohmann-json",
     "ftxui",
-    "catch2",
-    "duckdb"
+    "catch2"
   ],
   "builtin-baseline": "542289e02dec80d057e30f3d7a101c374a94d804",
   "overrides": [
-    {
-      "name": "duckdb",
-      "version": "1.4.4",
-      "port-version": 1
-    },
     {
       "name": "cpp-httplib",
       "version": "0.29.0"

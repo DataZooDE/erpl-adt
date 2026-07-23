@@ -20,14 +20,6 @@ configure_file(
     @ONLY
 )
 
-# Compiler warnings
-if(MSVC)
-    add_compile_options(/W4 /WX)
-    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-else()
-    add_compile_options(-Wall -Wextra -Werror)
-endif()
-
 # --- vcpkg dependencies ---
 find_package(httplib CONFIG REQUIRED)
 find_package(tinyxml2 CONFIG REQUIRED)
@@ -36,7 +28,35 @@ find_package(argparse CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(ftxui CONFIG REQUIRED)
-find_package(DuckDB CONFIG REQUIRED)
+
+# --- Embedded DuckDB (git submodule, built statically from source) ---
+# vcpkg's duckdb port tracks upstream releases with a real lag (1.4.4 was
+# the newest available there as of this writing) and only ships a static
+# library for Linux — macOS/Windows official prebuilt archives are dynamic-
+# only, incompatible with this project's fully-static distribution model.
+# Building from source keeps static linking on every platform (DuckDB's own
+# CMakeLists.txt already sets CMAKE_MSVC_RUNTIME_LIBRARY to match this
+# project's /MT convention, so no CRT-mismatch override is needed here,
+# unlike posthog_telemetry/webui_resources below) while tracking whatever
+# tag we pin. Produces the same non-namespaced `duckdb`/`duckdb_static`
+# targets vcpkg's port did — no changes needed to the target_link_libraries
+# calls below.
+set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
+set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/duckdb EXCLUDE_FROM_ALL)
+
+# Compiler warnings — deliberately set AFTER the DuckDB subdirectory above:
+# add_compile_options() is directory-scoped and inherited by every
+# subdirectory added AFTER the call, so setting this any earlier would
+# apply our warnings-as-errors policy to DuckDB's own (much larger, not
+# ours to keep warning-clean) codebase too.
+if(MSVC)
+    add_compile_options(/W4 /WX)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+else()
+    add_compile_options(-Wall -Wextra -Werror)
+endif()
 
 # --- Shared DataZoo telemetry library (git submodule) ---
 # Built from third_party/posthog-telemetry. It expects a `duckdb_httplib_openssl`
