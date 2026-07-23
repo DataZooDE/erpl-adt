@@ -139,7 +139,7 @@ make release             # picks up flutter/erpl_catalog_kit/example/build/web i
 
 `McpHttpServer`'s `serve_webui` constructor parameter (default `false`) gates a catch-all `Get(".*")` route registered after `/mcp` and `/healthz`. It resolves the embedded `cmrc::embedded_filesystem` and falls back to `index.html` for any unmatched path — required because go_router does client-side routing (e.g. `/entity/<id>`), so a hard refresh or deep link must resolve client-side rather than 404.
 
-CI does not yet run `make webui` before packaging release archives — released binaries embed the web UI only if it was built into `flutter/erpl_catalog_kit/example/build/web` locally before `make release` ran.
+`.github/workflows/release.yaml` runs `make webui`'s equivalent (Flutter SDK setup + `flutter build web`) before configuring CMake on all 4 release platforms, so every released binary embeds the web UI — then `scripts/ci/webui_smoke.py` starts `catalog webui` against a scratch DuckDB file and asserts the real app is served (`/` returns 200 HTML, `/main.dart.js` loads, the SPA deep-link fallback works), catching a silent embed failure before it ships. `.github/workflows/build.yaml` runs the same build + smoke check on the linux-x86_64 leg only (on every push/PR), to keep Flutter-SDK cost off the other 3 platforms for routine CI.
 
 ## CLI Verbosity
 

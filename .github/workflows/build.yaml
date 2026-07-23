@@ -37,6 +37,17 @@ jobs:
         with:
           submodules: recursive   # third_party/posthog-telemetry
 
+      - name: Setup Flutter
+        if: matrix.name == 'linux-x86_64'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build catalog web UI
+        if: matrix.name == 'linux-x86_64'
+        run: cd flutter/erpl_catalog_kit/example && flutter pub get && flutter build web
+
       - name: Cache vcpkg binary cache
         uses: actions/cache@v5
         with:
@@ -108,6 +119,10 @@ jobs:
           ./build/erpl-adt.exe search --help
           ./build/erpl-adt.exe object --help
           ./build/erpl-adt.exe source --help
+
+      - name: Webui smoke test
+        if: matrix.name == 'linux-x86_64'
+        run: python3 scripts/ci/webui_smoke.py --binary build/erpl-adt
 
       - name: Upload binary (Unix)
         if: runner.os != 'Windows'

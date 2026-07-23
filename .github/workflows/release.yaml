@@ -47,6 +47,15 @@ jobs:
         with:
           submodules: recursive   # third_party/posthog-telemetry
 
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build catalog web UI
+        run: cd flutter/erpl_catalog_kit/example && flutter pub get && flutter build web
+
       - name: Extract version from tag
         id: version
         shell: bash
@@ -126,6 +135,10 @@ jobs:
           ./build/erpl-adt.exe search --help
           ./build/erpl-adt.exe object --help
           ./build/erpl-adt.exe source --help
+
+      - name: Webui smoke test
+        shell: bash
+        run: python3 scripts/ci/webui_smoke.py --binary "build/${{ matrix.binary }}"
 
       - name: Validate version
         if: matrix.name == 'linux-x86_64'
