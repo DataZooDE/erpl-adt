@@ -139,6 +139,19 @@ if(LIB_SOURCES)
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/generated
     )
+    # DuckDB's own CMakeLists.txt exposes its headers via a directory-scoped
+    # include_directories(src/include) call, not a target-scoped
+    # target_include_directories(duckdb_static PUBLIC ...) — that only
+    # reaches targets defined within its own subdirectory tree, not us.
+    # SYSTEM (not a plain PUBLIC include) matters here, not just style:
+    # duckdb.hpp is header-only in large part (e.g. VectorBuffer::Cast's
+    # DynamicCastCheck<T> template), so its code gets compiled as part of
+    # whichever of our own translation units includes it — without SYSTEM
+    # (-isystem, not -I) our own -Werror policy would fail on warnings
+    # inside DuckDB's own headers, not just our code.
+    target_include_directories(erpl_adt_lib SYSTEM PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/src/include
+    )
     target_link_libraries(erpl_adt_lib PUBLIC
         httplib::httplib
         tinyxml2::tinyxml2
