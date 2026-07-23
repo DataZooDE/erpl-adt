@@ -4,6 +4,3 @@
 [submodule "third_party/cmrc"]
 	path = third_party/cmrc
 	url = https://github.com/vector-of-bool/cmrc.git
-[submodule "third_party/duckdb"]
-	path = third_party/duckdb
-	url = https://github.com/duckdb/duckdb.git

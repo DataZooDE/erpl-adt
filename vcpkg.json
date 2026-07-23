@@ -13,44 +13,8 @@
     "openssl",
     "nlohmann-json",
     "ftxui",
-    "catch2"
+    "catch2",
+    "duckdb"
   ],
-  "builtin-baseline": "542289e02dec80d057e30f3d7a101c374a94d804",
-  "overrides": [
-    {
-      "name": "cpp-httplib",
-      "version": "0.29.0"
-    },
-    {
-      "name": "tinyxml2",
-      "version": "11.0.0"
-    },
-    {
-      "name": "yaml-cpp",
-      "version": "0.8.0",
-      "port-version": 3
-    },
-    {
-      "name": "argparse",
-      "version": "3.2"
-    },
-    {
-      "name": "openssl",
-      "version": "3.6.0",
-      "port-version": 3
-    },
-    {
-      "name": "nlohmann-json",
-      "version": "3.12.0",
-      "port-version": 1
-    },
-    {
-      "name": "ftxui",
-      "version": "6.1.9"
-    },
-    {
-      "name": "catch2",
-      "version": "3.11.0"
-    }
-  ]
+  "builtin-baseline": "11bbc873e00e9e58d4e9dffb30b7a5493a030e0b"
 }
