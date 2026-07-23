@@ -117,93 +117,21 @@ Error MakeStoreError(const std::string& operation, const std::string& message) {
     return Error{operation, "", std::nullopt, message, std::nullopt, ErrorCategory::Internal};
 }
 
-// Row-writing helpers build duckdb::Value vectors for plain parameterized
-// INSERT statements — deliberately not duckdb::Appender. A duckdb::Appender
-// write is not reliably visible to a subsequent read on the same connection
-// on the x64-windows-static build (confirmed down to the most minimal
-// possible case: a fresh :memory: store, one Appender write, one read,
-// reproducing with DuckDB 1.4.3, 1.4.4, and a from-source 1.5.5 build — not
-// a version issue). Plain INSERT via PreparedStatement is the same pattern
-// already used elsewhere in this file (e.g. WriteEmbedding) and isn't
-// implicated in the bug.
-duckdb::Value OptStringValue(const std::optional<std::string>& value) {
-    return value.has_value() ? duckdb::Value(*value) : duckdb::Value();
+void AppendOptString(duckdb::Appender& app, const std::optional<std::string>& value) {
+    if (value.has_value()) {
+        app.Append<const char*>(value->c_str());
+    } else {
+        app.Append<std::nullptr_t>(nullptr);
+    }
 }
 
-duckdb::Value OptIntValue(const std::optional<int>& value) {
-    return value.has_value() ? duckdb::Value::INTEGER(*value) : duckdb::Value();
+void AppendOptInt(duckdb::Appender& app, const std::optional<int>& value) {
+    if (value.has_value()) {
+        app.Append<int32_t>(*value);
+    } else {
+        app.Append<std::nullptr_t>(nullptr);
+    }
 }
-
-duckdb::Value OptStringValue(const std::string& value) {
-    return value.empty() ? duckdb::Value() : duckdb::Value(value);
-}
-
-duckdb::vector<duckdb::Value> EntityParams(const CatalogEntity& e) {
-    duckdb::vector<duckdb::Value> v;
-    v.push_back(duckdb::Value(e.id.Value()));
-    v.push_back(duckdb::Value(e.system_sid));
-    v.push_back(duckdb::Value(ToString(e.domain)));
-    v.push_back(duckdb::Value(e.object_type));
-    v.push_back(OptStringValue(e.object_subtype));
-    v.push_back(duckdb::Value(e.technical_name));
-    v.push_back(duckdb::Value(e.display_name));
-    v.push_back(OptStringValue(e.package_or_infoarea));
-    v.push_back(OptStringValue(e.created_by));
-    v.push_back(OptStringValue(e.changed_by));
-    v.push_back(OptStringValue(e.changed_at));
-    v.push_back(OptStringValue(e.biz_definition));
-    v.push_back(OptStringValue(e.biz_owner));
-    v.push_back(OptStringValue(e.biz_lob));
-    v.push_back(OptStringValue(e.biz_confidentiality));
-    v.push_back(OptStringValue(e.biz_curated_by));
-    v.push_back(OptStringValue(e.biz_curated_at));
-    v.push_back(duckdb::Value(e.extracted_at));
-    v.push_back(OptStringValue(e.raw_json));
-    v.push_back(OptStringValue(e.source_table));
-    return v;
-}
-
-duckdb::vector<duckdb::Value> FieldParams(const CatalogField& f) {
-    duckdb::vector<duckdb::Value> v;
-    v.push_back(duckdb::Value(f.id));
-    v.push_back(duckdb::Value(f.entity_id.Value()));
-    v.push_back(duckdb::Value(f.name));
-    v.push_back(OptStringValue(f.role));
-    v.push_back(OptStringValue(f.description));
-    v.push_back(OptStringValue(f.data_type));
-    v.push_back(OptIntValue(f.length));
-    v.push_back(OptIntValue(f.decimals));
-    v.push_back(OptStringValue(f.aggregation));
-    v.push_back(OptStringValue(f.unit));
-    v.push_back(OptStringValue(f.formula));
-    v.push_back(duckdb::Value::BOOLEAN(f.is_key));
-    v.push_back(OptStringValue(f.check_table));
-    v.push_back(OptStringValue(f.fixed_values_json));
-    v.push_back(OptStringValue(f.source_expression));
-    v.push_back(OptStringValue(f.annotations_json));
-    return v;
-}
-
-duckdb::vector<duckdb::Value> EdgeParams(const CatalogEdge& e) {
-    duckdb::vector<duckdb::Value> v;
-    v.push_back(duckdb::Value(e.id));
-    v.push_back(duckdb::Value(e.from_id.Value()));
-    v.push_back(duckdb::Value(e.to_id.Value()));
-    v.push_back(duckdb::Value(e.kind));
-    v.push_back(OptStringValue(e.field_mapping_json));
-    v.push_back(duckdb::Value(e.resolution));
-    v.push_back(duckdb::Value(e.extracted_at));
-    v.push_back(OptStringValue(e.detail_json));
-    return v;
-}
-
-constexpr const char* kInsertEntitySql =
-    "INSERT INTO entities VALUES "
-    "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)";
-constexpr const char* kInsertFieldSql =
-    "INSERT INTO fields VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)";
-constexpr const char* kInsertEdgeSql =
-    "INSERT INTO edges VALUES ($1,$2,$3,$4,$5,$6,$7,$8)";
 
 std::string ValueToStringOrEmpty(const duckdb::Value& v) {
     return v.IsNull() ? std::string() : v.ToString();
@@ -372,22 +300,82 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
         con.Query("DELETE FROM entities");
 
         {
-            auto stmt = con.Prepare(kInsertEntitySql);
+            duckdb::Appender app(con, "entities");
             for (const auto& e : feed.entities) {
-                ExecuteMaterializedParams(*stmt, EntityParams(e));
+                app.BeginRow();
+                app.Append<const char*>(e.id.Value().c_str());
+                app.Append<const char*>(e.system_sid.c_str());
+                app.Append<const char*>(ToString(e.domain).c_str());
+                app.Append<const char*>(e.object_type.c_str());
+                AppendOptString(app, e.object_subtype);
+                app.Append<const char*>(e.technical_name.c_str());
+                app.Append<const char*>(e.display_name.c_str());
+                AppendOptString(app, e.package_or_infoarea);
+                AppendOptString(app, e.created_by);
+                AppendOptString(app, e.changed_by);
+                AppendOptString(app, e.changed_at);
+                AppendOptString(app, e.biz_definition);
+                AppendOptString(app, e.biz_owner);
+                AppendOptString(app, e.biz_lob);
+                AppendOptString(app, e.biz_confidentiality);
+                AppendOptString(app, e.biz_curated_by);
+                AppendOptString(app, e.biz_curated_at);
+                app.Append<const char*>(e.extracted_at.c_str());
+                if (e.raw_json.empty()) {
+                    app.Append<std::nullptr_t>(nullptr);
+                } else {
+                    app.Append<const char*>(e.raw_json.c_str());
+                }
+                AppendOptString(app, e.source_table);
+                app.EndRow();
             }
+            app.Close();
         }
+
         {
-            auto stmt = con.Prepare(kInsertFieldSql);
+            duckdb::Appender app(con, "fields");
             for (const auto& f : feed.fields) {
-                ExecuteMaterializedParams(*stmt, FieldParams(f));
+                app.BeginRow();
+                app.Append<const char*>(f.id.c_str());
+                app.Append<const char*>(f.entity_id.Value().c_str());
+                app.Append<const char*>(f.name.c_str());
+                AppendOptString(app, f.role);
+                AppendOptString(app, f.description);
+                AppendOptString(app, f.data_type);
+                AppendOptInt(app, f.length);
+                AppendOptInt(app, f.decimals);
+                AppendOptString(app, f.aggregation);
+                AppendOptString(app, f.unit);
+                AppendOptString(app, f.formula);
+                app.Append<bool>(f.is_key);
+                AppendOptString(app, f.check_table);
+                AppendOptString(app, f.fixed_values_json);
+                AppendOptString(app, f.source_expression);
+                AppendOptString(app, f.annotations_json);
+                app.EndRow();
             }
+            app.Close();
         }
+
         {
-            auto stmt = con.Prepare(kInsertEdgeSql);
+            duckdb::Appender app(con, "edges");
             for (const auto& e : feed.edges) {
-                ExecuteMaterializedParams(*stmt, EdgeParams(e));
+                app.BeginRow();
+                app.Append<const char*>(e.id.c_str());
+                app.Append<const char*>(e.from_id.Value().c_str());
+                app.Append<const char*>(e.to_id.Value().c_str());
+                app.Append<const char*>(e.kind.c_str());
+                if (e.field_mapping_json.empty()) {
+                    app.Append<std::nullptr_t>(nullptr);
+                } else {
+                    app.Append<const char*>(e.field_mapping_json.c_str());
+                }
+                app.Append<const char*>(e.resolution.c_str());
+                app.Append<const char*>(e.extracted_at.c_str());
+                AppendOptString(app, e.detail_json);
+                app.EndRow();
             }
+            app.Close();
         }
 
         // Rebuild the search text + FTS index (best-effort: FTS requires the
@@ -1077,16 +1065,60 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
         }
 
         {
-            auto stmt = con.Prepare(kInsertEntitySql);
+            duckdb::Appender app(con, "entities");
             for (const auto& e : merged_entities) {
-                ExecuteMaterializedParams(*stmt, EntityParams(e));
+                app.BeginRow();
+                app.Append<const char*>(e.id.Value().c_str());
+                app.Append<const char*>(e.system_sid.c_str());
+                app.Append<const char*>(ToString(e.domain).c_str());
+                app.Append<const char*>(e.object_type.c_str());
+                AppendOptString(app, e.object_subtype);
+                app.Append<const char*>(e.technical_name.c_str());
+                app.Append<const char*>(e.display_name.c_str());
+                AppendOptString(app, e.package_or_infoarea);
+                AppendOptString(app, e.created_by);
+                AppendOptString(app, e.changed_by);
+                AppendOptString(app, e.changed_at);
+                AppendOptString(app, e.biz_definition);
+                AppendOptString(app, e.biz_owner);
+                AppendOptString(app, e.biz_lob);
+                AppendOptString(app, e.biz_confidentiality);
+                AppendOptString(app, e.biz_curated_by);
+                AppendOptString(app, e.biz_curated_at);
+                app.Append<const char*>(e.extracted_at.c_str());
+                if (e.raw_json.empty()) {
+                    app.Append<std::nullptr_t>(nullptr);
+                } else {
+                    app.Append<const char*>(e.raw_json.c_str());
+                }
+                AppendOptString(app, e.source_table);
+                app.EndRow();
             }
+            app.Close();
         }
         {
-            auto stmt = con.Prepare(kInsertFieldSql);
+            duckdb::Appender app(con, "fields");
             for (const auto& f : fields) {
-                ExecuteMaterializedParams(*stmt, FieldParams(f));
+                app.BeginRow();
+                app.Append<const char*>(f.id.c_str());
+                app.Append<const char*>(f.entity_id.Value().c_str());
+                app.Append<const char*>(f.name.c_str());
+                AppendOptString(app, f.role);
+                AppendOptString(app, f.description);
+                AppendOptString(app, f.data_type);
+                AppendOptInt(app, f.length);
+                AppendOptInt(app, f.decimals);
+                AppendOptString(app, f.aggregation);
+                AppendOptString(app, f.unit);
+                AppendOptString(app, f.formula);
+                app.Append<bool>(f.is_key);
+                AppendOptString(app, f.check_table);
+                AppendOptString(app, f.fixed_values_json);
+                AppendOptString(app, f.source_expression);
+                AppendOptString(app, f.annotations_json);
+                app.EndRow();
             }
+            app.Close();
         }
 
         con.Query(
@@ -1149,10 +1181,24 @@ Result<void, Error> DuckDbCatalogStore::UpsertEdges(const std::vector<CatalogEdg
         }
 
         {
-            auto stmt = con.Prepare(kInsertEdgeSql);
+            duckdb::Appender app(con, "edges");
             for (const auto& e : edges) {
-                ExecuteMaterializedParams(*stmt, EdgeParams(e));
+                app.BeginRow();
+                app.Append<const char*>(e.id.c_str());
+                app.Append<const char*>(e.from_id.Value().c_str());
+                app.Append<const char*>(e.to_id.Value().c_str());
+                app.Append<const char*>(e.kind.c_str());
+                if (e.field_mapping_json.empty()) {
+                    app.Append<std::nullptr_t>(nullptr);
+                } else {
+                    app.Append<const char*>(e.field_mapping_json.c_str());
+                }
+                app.Append<const char*>(e.resolution.c_str());
+                app.Append<const char*>(e.extracted_at.c_str());
+                AppendOptString(app, e.detail_json);
+                app.EndRow();
             }
+            app.Close();
         }
 
         con.Commit();
