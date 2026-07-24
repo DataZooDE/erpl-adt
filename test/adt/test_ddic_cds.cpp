@@ -33,7 +33,7 @@ std::string LoadFixture(const std::string& filename) {
 // Fixtures are real captured DDL source text (localhost:50000, client 001,
 // DEVELOPER, SAP ABAP Cloud Developer Trial) — not hand-written.
 
-TEST_CASE("ParseCdsSource: I_ABAPApplCompText — keys, text semantics, exposed associations",
+TEST_CASE("ParseCdsSource: I_ABAPApplCompText - keys, text semantics, exposed associations",
           "[adt][ddic][cds]") {
     auto ddl = LoadFixture("ddic/cds_i_abapapplcomptext_source.abap");
     auto info = ParseCdsSource(ddl);
@@ -86,7 +86,7 @@ TEST_CASE("ParseCdsSource: I_ABAPApplCompText — keys, text semantics, exposed 
     CHECK(f4.is_association);
 }
 
-TEST_CASE("ParseCdsSource: I_ABAPPackage — root entity, composition, no annotations on most fields",
+TEST_CASE("ParseCdsSource: I_ABAPPackage - root entity, composition, no annotations on most fields",
           "[adt][ddic][cds]") {
     auto ddl = LoadFixture("ddic/cds_i_abappackage_source.abap");
     auto info = ParseCdsSource(ddl);
