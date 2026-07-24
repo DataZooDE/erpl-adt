@@ -3,9 +3,53 @@
 #include <erpl_adt/adt/catalog_ids.hpp>
 #include <erpl_adt/storage/duckdb_catalog_store.hpp>
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
 using namespace erpl_adt;
 
 namespace {
+
+// Portable setenv/unsetenv (MSVC has no POSIX setenv).
+void SetEnvVar(const char* key, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(key, value.c_str());
+#else
+    setenv(key, value.c_str(), 1);
+#endif
+}
+
+void UnsetEnvVar(const char* key) {
+#ifdef _WIN32
+    _putenv_s(key, "");
+#else
+    unsetenv(key);
+#endif
+}
+
+// RAII: forces DuckDB's extension directory to an un-creatable path so any
+// `INSTALL fts; LOAD fts;` fails deterministically, with no network — the
+// path's parent is a regular file, so creating it as a directory yields
+// ENOTDIR (fails even for root). This reproduces the Windows x64-windows-static
+// condition (fts extension unavailable) on any platform. See issue #27.
+struct BlockedExtensionDir {
+    std::filesystem::path block_file;
+
+    BlockedExtensionDir() {
+        block_file = std::filesystem::temp_directory_path() / "erpl_adt_issue27_block_file";
+        std::ofstream(block_file) << "not a directory";
+        // Point at "<regular file>/sub" — can never be created as a directory.
+        SetEnvVar("ERPL_ADT_DUCKDB_EXTENSION_DIR", (block_file / "sub").string());
+    }
+
+    ~BlockedExtensionDir() {
+        UnsetEnvVar("ERPL_ADT_DUCKDB_EXTENSION_DIR");
+        std::error_code ec;
+        std::filesystem::remove(block_file, ec);
+    }
+};
 
 CatalogFeed MakeSampleFeed() {
     CatalogFeed feed;
@@ -94,6 +138,29 @@ TEST_CASE("DuckDbCatalogStore: WriteFeed then GetEntity round-trips an entity",
     CHECK(entity.display_name == "Flight schedule");
     REQUIRE(entity.package_or_infoarea.has_value());
     CHECK(*entity.package_or_infoarea == "STEST");
+}
+
+TEST_CASE("DuckDbCatalogStore: WriteFeed persists data even when the FTS index "
+          "rebuild fails (regression #27)",
+          "[storage][duckdb]") {
+    // Regression for issue #27 (Windows x64-windows-static data loss): the
+    // best-effort `INSTALL fts; LOAD fts;` used to run INSIDE WriteFeed's write
+    // transaction. When it errors (extension unavailable / offline), DuckDB
+    // aborts the transaction and the subsequent Commit() silently ROLLS BACK
+    // without raising — WriteFeed returns Ok() but every row is discarded.
+    // Here we force that fts failure deterministically; the data must survive.
+    BlockedExtensionDir blocked_fts;
+
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    auto write_result = store->WriteFeed(MakeSampleFeed());
+    REQUIRE(write_result.IsOk());
+
+    auto tabl_id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    auto get_result = store->GetEntity(tabl_id);
+    REQUIRE(get_result.IsOk());
+    REQUIRE(get_result.Value().has_value());
+    CHECK(get_result.Value()->technical_name == "SFLIGHT");
 }
 
 TEST_CASE("DuckDbCatalogStore: GetEntity returns nullopt for an unknown id",
