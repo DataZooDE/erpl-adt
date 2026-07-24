@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml">
+  <asx:values>
+    <DATA>
+      <TREE_CONTENT>
+        <SEU_ADT_REPOSITORY_OBJ_NODE>
+          <OBJECT_TYPE>FUGR/FF</OBJECT_TYPE>
+          <OBJECT_NAME>BAPI_USER_GET_DETAIL</OBJECT_NAME>
+          <TECH_NAME>BAPI_USER_GET_DETAIL</TECH_NAME>
+          <OBJECT_URI>/sap/bc/adt/functions/groups/su_user/fmodules/bapi_user_get_detail</OBJECT_URI>
+          <EXPANDABLE></EXPANDABLE>
+          <NODE_ID>000001</NODE_ID>
+          <DESCRIPTION>Read User Attributes</DESCRIPTION>
+        </SEU_ADT_REPOSITORY_OBJ_NODE>
+        <SEU_ADT_REPOSITORY_OBJ_NODE>
+          <OBJECT_TYPE>FUGR/FF</OBJECT_TYPE>
+          <OBJECT_NAME>BAPI_USER_CHANGE</OBJECT_NAME>
+          <TECH_NAME>BAPI_USER_CHANGE</TECH_NAME>
+          <OBJECT_URI>/sap/bc/adt/functions/groups/su_user/fmodules/bapi_user_change</OBJECT_URI>
+          <EXPANDABLE></EXPANDABLE>
+          <NODE_ID>000002</NODE_ID>
+          <DESCRIPTION>Change User Attributes</DESCRIPTION>
+        </SEU_ADT_REPOSITORY_OBJ_NODE>
+      </TREE_CONTENT>
+    </DATA>
+  </asx:values>
+</asx:abap>

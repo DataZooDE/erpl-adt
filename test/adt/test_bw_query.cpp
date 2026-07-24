@@ -135,6 +135,110 @@ TEST_CASE("BwReadQueryComponent: parses SAP Qry:queryResource structure", "[adt]
     CHECK(found_dimension);
 }
 
+TEST_CASE("BwReadQueryComponent: renders filter member values, not just the "
+          "characteristic name",
+          "[adt][bw][query]") {
+    // Real captured traffic: 0D_NW_SORG is filtered to 5 sales orgs, each
+    // with a human-readable fromValueDesc (Berlin/London/Paris/New York/
+    // San Francisco) — previously only the characteristic name survived,
+    // the actual filtered values were parsed by nothing and discarded.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/live_query_0D_FC_NW_C01_Q0007.xml")}));
+
+    auto result = BwReadQueryComponent(mock, "QUERY", "0D_FC_NW_C01_Q0007");
+    REQUIRE(result.IsOk());
+
+    bool found = false;
+    for (const auto& ref : result.Value().references) {
+        if (ref.type == "FILTER_FIELD" && ref.name == "0D_NW_SORG") {
+            found = true;
+            const auto it = ref.attributes.find("formula");
+            REQUIRE(it != ref.attributes.end());
+            CHECK(it->second ==
+                  "IN (Berlin, London, Paris, New York, San Francisco)");
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("BwReadQueryComponent: renders variable semantics (processing "
+          "type, mandatory/optional, default)",
+          "[adt][bw][query]") {
+    // Real captured traffic: 0D_NW_ACTCMON is a SAPExit-processed, Optional,
+    // SingleValue variable with a default of "1" — previously discarded
+    // entirely (procType/inputType/represents/defaultHint are child
+    // elements, which CollectAttributes' own-attributes-only read misses).
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/live_query_0D_FC_NW_C01_Q0007.xml")}));
+
+    auto result = BwReadQueryComponent(mock, "QUERY", "0D_FC_NW_C01_Q0007");
+    REQUIRE(result.IsOk());
+
+    bool found = false;
+    for (const auto& ref : result.Value().references) {
+        if (ref.type == "VARIABLE" && ref.name == "0D_NW_ACTCMON") {
+            found = true;
+            const auto it = ref.attributes.find("formula");
+            REQUIRE(it != ref.attributes.end());
+            CHECK(it->second == "SAPExit, optional, SingleValue, default: 1");
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("BwReadQueryComponent: renders a calculated key figure's formula",
+          "[adt][bw][query]") {
+    // Real captured traffic: standalone CKF 0TCTHP24_CK_100, whose own
+    // formula references another CKF (0TCTHP24_CK_109) by GUID via
+    // FormulaMemberOperand — exercises both the InfoObject-operand and the
+    // GUID cross-reference resolution paths in one fixture.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query_ckf.xml")}));
+
+    auto result = BwReadQueryComponent(mock, "CKF", "0TCTHP24_CK_100");
+    REQUIRE(result.IsOk());
+    const auto& detail = result.Value();
+
+    bool found_nested_ckf = false;
+    for (const auto& ref : detail.references) {
+        if (ref.name == "0TCTHP24_CK_109" && ref.type == "CALCULATEDMEASURE") {
+            found_nested_ckf = true;
+            const auto it = ref.attributes.find("formula");
+            REQUIRE(it != ref.attributes.end());
+            CHECK(it->second == "0TCTDURTION / 0TCTSTAUIK [exception: SUM]");
+        }
+    }
+    CHECK(found_nested_ckf);
+}
+
+TEST_CASE("BwReadQueryComponent: renders a restricted key figure's restriction",
+          "[adt][bw][query]") {
+    // Real captured traffic: standalone CKF 0TCT_CKF_Q0107_02 with RKF
+    // subcomponent 0TCT_MCWS_RK101 — a base key figure restricted by one
+    // characteristic value.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("bw/bw_object_query_rkf.xml")}));
+
+    auto result = BwReadQueryComponent(mock, "CKF", "0TCT_CKF_Q0107_02");
+    REQUIRE(result.IsOk());
+    const auto& detail = result.Value();
+
+    bool found_rkf = false;
+    for (const auto& ref : detail.references) {
+        if (ref.name == "0TCT_MCWS_RK101" && ref.type == "RESTRICTEDMEASURE") {
+            found_rkf = true;
+            const auto it = ref.attributes.find("formula");
+            REQUIRE(it != ref.attributes.end());
+            CHECK(it->second == "0TCTLPROOCC WHERE 0TCTBWOTYPE = AINX");
+        }
+    }
+    CHECK(found_rkf);
+}
+
 TEST_CASE("BwBuildQueryGraph: emits normalized nodes/edges contract", "[adt][bw][query]") {
     BwQueryComponentDetail detail;
     detail.name = "ZQ_SALES";

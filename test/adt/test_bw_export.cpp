@@ -124,11 +124,15 @@ TEST_CASE("BwExportInfoarea: search supplement adds IOBJ not in BFS tree",
     REQUIRE(result.IsOk());
 
     const auto& exp = result.Value();
-    // IOBJ 0MATERIAL must be present (from search supplement)
+    // IOBJ 0MATERIAL must be present (from search supplement), and now
+    // (IOBJ no longer skipped in CollectObjectDetail — see kNoDetailTypes)
+    // carries the real description BwReadObject fetched for it, not just
+    // whatever the search result already had.
     bool found_iobj = false;
     for (const auto& obj : exp.objects) {
         if (obj.type == "IOBJ" && obj.name == "0MATERIAL") {
             found_iobj = true;
+            CHECK_FALSE(obj.description.empty());
         }
     }
     CHECK(found_iobj);
@@ -265,16 +269,20 @@ TEST_CASE("BwExportQuery: iobj_refs harvested from query components",
     REQUIRE(result.IsOk());
 
     const auto& query_obj = result.Value().objects[0];
-    // ZQ_SALES has RKF/CKF members -> key_figure refs, and ZVAR_FISCYEAR with
-    // uppercase VARIABLE type -> variable ref (case-insensitive detection).
+    // ZQ_SALES has an RKF -> restricted_key_figure, a CKF ->
+    // calculated_key_figure, and ZVAR_FISCYEAR with uppercase VARIABLE type
+    // -> variable ref (case-insensitive detection).
     CHECK_FALSE(query_obj.iobj_refs.empty());
-    bool found_key_figure = false;
+    bool found_restricted_key_figure = false;
+    bool found_calculated_key_figure = false;
     bool found_variable = false;
     for (const auto& ref : query_obj.iobj_refs) {
-        if (ref.role == "key_figure") found_key_figure = true;
+        if (ref.role == "restricted_key_figure") found_restricted_key_figure = true;
+        if (ref.role == "calculated_key_figure") found_calculated_key_figure = true;
         if (ref.role == "variable") found_variable = true;
     }
-    CHECK(found_key_figure);
+    CHECK(found_restricted_key_figure);
+    CHECK(found_calculated_key_figure);
     CHECK(found_variable);  // uppercase VARIABLE type must be detected
 }
 

@@ -73,6 +73,11 @@ bool TypeMatches(const std::string& type,
     return false;
 }
 
+// Forward declarations — defined below, alongside their other query-component
+// helpers; CollectObjectDetail needs them for the ELEM/QUERY branch.
+std::string IobjRole(const BwQueryComponentRef& ref);
+std::optional<std::string> IobjFormula(const BwQueryComponentRef& ref);
+
 // ---------------------------------------------------------------------------
 // CollectObjectDetail — fetch per-type detail and fill BwExportedObject.
 // Partial failures are recorded in exp.warnings rather than returned as Error.
@@ -187,13 +192,49 @@ void CollectObjectDetail(IAdtSession& session,
             }
         }
 
-    } else if (type == "QUERY") {
+    } else if (type == "QUERY" || type == "ELEM") {
+        // BFS-walked queries surface as type "ELEM", not "QUERY" — this
+        // branch used to only fire for "QUERY", which real infoarea walks
+        // essentially never produce, so ELEM queries (the single largest
+        // BW object type in a typical system) got zero fields.
         if (opts.include_queries) {
             auto qres = BwAssembleQueryGraph(session, "query", name, opts.version);
             if (qres.IsErr()) {
-                exp.warnings.push_back("QUERY " + name + ": " + qres.Error().message);
+                exp.warnings.push_back(type + " " + name + ": " + qres.Error().message);
             } else {
                 obj.query_graph = qres.Value();
+            }
+
+            // A query's "fields" are the characteristics/key figures/
+            // variables it's built from — surfaced as iobj_refs (with role
+            // dimension/filter/variable/key_figure) rather than as
+            // BwExportedField rows, since a query has no field list of its
+            // own the way a table or InfoProvider does.
+            auto cres = BwReadQueryComponent(session, "QUERY", name, opts.version, "");
+            if (cres.IsErr()) {
+                exp.warnings.push_back(type + " " + name + " components: " +
+                                       cres.Error().message);
+            } else {
+                if (obj.description.empty()) obj.description = cres.Value().description;
+                obj.query_info_provider = cres.Value().info_provider;
+                // Dedup by name alone (not role+name) — MakeFieldId in
+                // catalog_build.cpp only hashes entity_id+name, so the same
+                // InfoObject referenced under two roles (e.g. a variable
+                // that's also used as a filter) would otherwise produce two
+                // iobj_refs entries that collapse to the same field ID and
+                // violate the fields table's PRIMARY KEY on write.
+                std::set<std::string> seen_iobj;
+                for (const auto& ref : cres.Value().references) {
+                    const auto role = IobjRole(ref);
+                    if (role.empty()) continue;
+                    if (seen_iobj.insert(ref.name).second) {
+                        BwQueryIobjRef iobj_ref;
+                        iobj_ref.name = ref.name;
+                        iobj_ref.role = role;
+                        iobj_ref.formula = IobjFormula(ref);
+                        obj.iobj_refs.push_back(std::move(iobj_ref));
+                    }
+                }
             }
         }
         exp.provenance.push_back(
@@ -201,12 +242,42 @@ void CollectObjectDetail(IAdtSession& session,
              "/sap/bw/modeling/query/" + name + "/" + opts.version,
              opts.include_queries ? "ok" : "skipped"});
 
+    } else if (type == "CUBE" || type == "MPRO" || type == "HCPR" ||
+              type == "ODSO" || type == "HYBR") {
+        // These InfoProvider types have no per-type detail endpoint the way
+        // ADSO does, but /sap/bw/modeling/infoprov/{name} exposes the same
+        // dimensional structure (characteristics + key figures) uniformly
+        // across all of them.
+        auto ires = BwReadInfoProviderDetail(session, name, opts.version);
+        if (ires.IsErr()) {
+            exp.warnings.push_back(type + " " + name + ": " + ires.Error().message);
+        } else {
+            const auto& d = ires.Value();
+            if (!d.description.empty()) obj.description = d.description;
+            for (const auto& f : d.fields) {
+                BwExportedField ef;
+                ef.name = f.name;
+                ef.description = f.description;
+                ef.info_object = f.info_object;
+                ef.data_type = f.data_type;
+                ef.length = f.length;
+                obj.fields.push_back(std::move(ef));
+            }
+        }
+        exp.provenance.push_back(
+            {"BwReadInfoProviderDetail",
+             "/sap/bw/modeling/infoprov/" + name + "/" + opts.version,
+             ires.IsOk() ? "ok" : "error"});
+
     } else {
         // Types with no known standalone ADT detail endpoint: metadata from
         // BFS nodes or search results is already sufficient — skip BwReadObject.
-        static const std::set<std::string> kNoDetailTypes = {
-            "CUBE", "MPRO", "HCPR", "ELEM", "IOBJ",
-        };
+        // IOBJ was here too, but the generic BwReadObject fallback below now
+        // works for it (bw_object.cpp's GetDefaultAcceptType fixed
+        // alongside this — confirmed live against A4H) — un-skipping it
+        // gives InfoObject entities a real description/package/status
+        // instead of nothing.
+        static const std::set<std::string> kNoDetailTypes = {};
         if (kNoDetailTypes.count(type)) {
             return;
         }
@@ -339,19 +410,40 @@ void CollectInfoproviderXrefEdges(IAdtSession& session, BwInfoareaExport& exp) {
 std::string IobjRole(const BwQueryComponentRef& ref) {
     if (ref.name.empty()) return "";
     const auto& t = ref.type;
-    if (t == "DIMENSION")    return "dimension";
+    // DIMENSION refs carry their query axis in ref.role ("rows"/"columns"/
+    // "free", set by CollectQueryResourceReferences) — surface that instead
+    // of collapsing every axis into one generic "dimension" bucket.
+    if (t == "DIMENSION") {
+        if (ref.role == "rows")    return "row";
+        if (ref.role == "columns") return "column";
+        if (ref.role == "free")    return "free";
+        return "dimension";
+    }
     if (t == "FILTER_FIELD") return "filter";
     // subComponents: Qry:Variable, variable, VARIABLE, etc. — case-insensitive.
     std::string t_lower = t;
     std::transform(t_lower.begin(), t_lower.end(), t_lower.begin(),
                    [](unsigned char c) { return std::tolower(c); });
     if (t_lower.find("ariable") != std::string::npos) return "variable";
-    // Key figures: token-based (KEY_FIGURE), restricted/calculated (RKF, CKF),
-    // or normalized xsi:type variants (RESTRKEYFIG, CALCKEYFIG, …).
-    if (t == "KEY_FIGURE" || t == "RKF" || t == "CKF" ||
-        t.find("KEYFIG") != std::string::npos) return "key_figure";
+    // Restricted/calculated key figures — real SAP xsi:type names
+    // (RestrictedMeasure/CalculatedMeasure, confirmed live) as well as the
+    // shorter RKF/CKF tokens used by older systems/synthetic fixtures.
+    if (t == "RESTRICTEDMEASURE" || t == "RKF") return "restricted_key_figure";
+    if (t == "CALCULATEDMEASURE" || t == "CKF") return "calculated_key_figure";
+    // Plain key figures: token-based (KEY_FIGURE) or any other normalized
+    // xsi:type variant containing "KEYFIG".
+    if (t == "KEY_FIGURE" || t.find("KEYFIG") != std::string::npos) return "key_figure";
     // Skip MEMBER (characteristic value hints) and unrecognised refs.
     return "";
+}
+
+// The synthetic "formula" attribute is stashed onto a restricted/calculated
+// key figure's ref by CollectQueryResourceReferences (bw_query.cpp) — every
+// other ref type has no such attribute.
+std::optional<std::string> IobjFormula(const BwQueryComponentRef& ref) {
+    const auto it = ref.attributes.find("formula");
+    if (it == ref.attributes.end()) return std::nullopt;
+    return it->second;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,14 +517,20 @@ void CollectOrphanElemEdges(IAdtSession& session,
         const auto& detail = res.Value();
 
         // --- Harvest iobj_refs from detail.references ---
+        // Dedup by name alone — see the matching comment above, in the
+        // ELEM/QUERY branch of CollectObjectDetail, for why role+name would
+        // produce colliding field IDs downstream.
         std::set<std::string> seen_iobj;
         std::vector<BwQueryIobjRef> iobj_refs;
         for (const auto& ref : detail.references) {
             const auto role = IobjRole(ref);
             if (role.empty()) continue;
-            std::string key = role + ":" + ref.name;
-            if (seen_iobj.insert(key).second) {
-                iobj_refs.push_back({ref.name, role});
+            if (seen_iobj.insert(ref.name).second) {
+                BwQueryIobjRef iobj_ref;
+                iobj_ref.name = ref.name;
+                iobj_ref.role = role;
+                iobj_ref.formula = IobjFormula(ref);
+                iobj_refs.push_back(std::move(iobj_ref));
             }
         }
         // Write back into the live exp.objects entry.
@@ -661,14 +759,18 @@ Result<BwInfoareaExport, Error> BwExportQuery(
     query_obj.description = detail.description;
     query_obj.query_info_provider = detail.info_provider;
 
-    // Harvest iobj_refs.
+    // Harvest iobj_refs. Dedup by name alone — see the matching comment in
+    // CollectObjectDetail's ELEM/QUERY branch for why role+name collides.
     std::set<std::string> seen_iobj;
     for (const auto& ref : detail.references) {
         const auto role = IobjRole(ref);
         if (role.empty()) continue;
-        std::string key = role + ":" + ref.name;
-        if (seen_iobj.insert(key).second) {
-            query_obj.iobj_refs.push_back({ref.name, role});
+        if (seen_iobj.insert(ref.name).second) {
+            BwQueryIobjRef iobj_ref;
+            iobj_ref.name = ref.name;
+            iobj_ref.role = role;
+            iobj_ref.formula = IobjFormula(ref);
+            query_obj.iobj_refs.push_back(std::move(iobj_ref));
         }
     }
     exp.objects.push_back(std::move(query_obj));

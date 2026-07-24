@@ -127,6 +127,22 @@ Stateful sessions: `X-sap-adt-sessiontype: stateful` header + `sap-contextid` co
 
 Logon language: the connection language is chosen with the global `--language <iso>` flag (2-letter ISO, e.g. `EN`, `DE`; default `EN`). It is sent as the `Accept-Language` header (lower-cased), which SAP maps to the logon language — language-dependent text (object descriptions) then comes back translated. Threaded via `AdtSessionOptions::language` (a `std::optional<SapLanguage>`); also settable in YAML config (`connection.language`) and persisted in `.adt.creds`.
 
+## Catalog Web UI
+
+`flutter/erpl_catalog_kit` is a Flutter web client for the `catalog_*` MCP tools (search, browse, lineage, curate, sync status, feed export). Its compiled web build can be embedded directly into the `erpl-adt` binary via CMakeRC (vendored as the `third_party/cmrc` submodule) and served same-origin with the JSON-RPC catalog API — no separate static file server, no CORS setup.
+
+```bash
+make webui              # flutter build web (requires the Flutter SDK) — run once, or after any client change
+make release             # picks up flutter/erpl_catalog_kit/example/build/web if present, embeds it
+./build/erpl-adt catalog webui catalog.duckdb --port 8383   # blocks; open http://127.0.0.1:8383/
+```
+
+`make webui` is optional — C++-only contributors don't need the Flutter SDK. If `flutter/erpl_catalog_kit/example/build/web/index.html` doesn't exist at CMake configure time, `ERPL_ADT_HAVE_WEBUI` stays undefined and `erpl-adt catalog webui` still builds and runs, but serves a plain-text instructional message (`run 'make webui' ...`) instead of the app. `ERPL_ADT_HAVE_WEBUI` is a PUBLIC compile definition on `erpl_adt_lib` (unlike `ERPL_ADT_TELEMETRY_ENABLED`) so `test/mcp/test_mcp_http_server.cpp` can assert on whichever behavior the current build actually has.
+
+`McpHttpServer`'s `serve_webui` constructor parameter (default `false`) gates a catch-all `Get(".*")` route registered after `/mcp` and `/healthz`. It resolves the embedded `cmrc::embedded_filesystem` and falls back to `index.html` for any unmatched path — required because go_router does client-side routing (e.g. `/entity/<id>`), so a hard refresh or deep link must resolve client-side rather than 404.
+
+Both `.github/workflows/release.yaml` and `.github/workflows/build.yaml` run `make webui`'s equivalent (Flutter SDK setup + `flutter build web`) before configuring CMake, on all 4 platforms (linux-x86_64, macos-arm64, macos-x86_64, windows-x64) — so every released binary, and every CI build on every push/PR, embeds the web UI. `scripts/ci/webui_smoke.py` then starts `catalog webui` against a scratch DuckDB file and asserts the real app is served (`/` returns 200 HTML, `/main.dart.js` loads, the SPA deep-link fallback works), catching a silent embed failure before it ships — on every platform, not just one.
+
 ## CLI Verbosity
 
 - Default: warnings only (quiet)

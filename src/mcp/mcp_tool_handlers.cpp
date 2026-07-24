@@ -21,6 +21,8 @@
 #include <erpl_adt/adt/bw_lineage_graph.hpp>
 #include <erpl_adt/adt/bw_xref.hpp>
 #include <erpl_adt/adt/activation.hpp>
+#include <erpl_adt/adt/catalog_build.hpp>
+#include <erpl_adt/adt/catalog_export.hpp>
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/ddic.hpp>
@@ -38,6 +40,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -382,6 +385,82 @@ ToolResult HandleReadCds(IAdtSession& session,
     nlohmann::json j;
     j["source"] = result.Value();
     return MakeOkResult(j);
+}
+
+std::vector<std::string> SplitCommaListForMcp(const std::string& csv) {
+    std::vector<std::string> parts;
+    std::stringstream ss(csv);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        auto first = item.find_first_not_of(" \t");
+        if (first == std::string::npos) continue;
+        auto last = item.find_last_not_of(" \t");
+        parts.push_back(item.substr(first, last - first + 1));
+    }
+    return parts;
+}
+
+std::optional<CatalogBuildOptions> ParseCatalogBuildOptionsForMcp(const nlohmann::json& params,
+                                                                   ToolResult& out_error) {
+    ToolResult err;
+    auto sid = RequireString(params, "sid", err);
+    if (!sid) {
+        out_error = err;
+        return std::nullopt;
+    }
+    auto packages = SplitCommaListForMcp(OptString(params, "package"));
+    auto infoareas = SplitCommaListForMcp(OptString(params, "infoarea"));
+    if (packages.empty() && infoareas.empty()) {
+        out_error = MakeParamError("At least one of 'package' or 'infoarea' is required");
+        return std::nullopt;
+    }
+    CatalogBuildOptions options;
+    options.system_sid = *sid;
+    options.packages = packages;
+    options.infoareas = infoareas;
+    options.max_depth = OptInt(params, "max_depth", 50);
+    return options;
+}
+
+// catalog_build
+ToolResult HandleCatalogBuildTool(IAdtSession& session, const nlohmann::json& params) {
+    ToolResult err;
+    auto options = ParseCatalogBuildOptionsForMcp(params, err);
+    if (!options) return err;
+
+    auto result = CatalogBuild(session, *options);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+
+    return MakeOkResult(nlohmann::json::parse(RenderCatalogFeedJson(result.Value())));
+}
+
+// catalog_export
+ToolResult HandleCatalogExportTool(IAdtSession& session, const nlohmann::json& params) {
+    ToolResult err;
+    auto options = ParseCatalogBuildOptionsForMcp(params, err);
+    if (!options) return err;
+
+    auto format = OptString(params, "format", "json");
+    if (format != "json" && format != "openmetadata" && format != "mermaid") {
+        return MakeParamError("Invalid format: " + format + " (expected json|openmetadata|mermaid)");
+    }
+
+    auto result = CatalogBuild(session, *options);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+    const auto& feed = result.Value();
+
+    if (format == "openmetadata") {
+        auto service_name = OptString(params, "service_name", "erpl_adt");
+        auto system_id = OptString(params, "system_id", feed.system_sid);
+        return MakeOkResult(
+            nlohmann::json::parse(RenderCatalogFeedOpenMetadataJson(feed, service_name, system_id)));
+    }
+    if (format == "mermaid") {
+        nlohmann::json j;
+        j["mermaid"] = RenderCatalogFeedMermaid(feed);
+        return MakeOkResult(j);
+    }
+    return MakeOkResult(nlohmann::json::parse(RenderCatalogFeedJson(feed)));
 }
 
 // adt_list_package
@@ -2675,6 +2754,39 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             j["provenance"] = std::move(prov);
             j["warnings"] = graph.warnings;
             return MakeOkResult(j);
+        });
+
+    registry.Register(
+        "catalog_build",
+        "Build a unified cross-domain catalog (ABAP/DDIC/CDS packages and/or BW infoareas) "
+        "into a Catalog Feed v1 JSON payload (entities/fields/edges), with stable, "
+        "cross-run entity IDs.",
+        MakeSchema(
+            {{"sid", StringProp("System ID to stamp on entities (e.g. A4H)")},
+             {"package", StringProp("ABAP/DDIC/CDS package(s), comma-separated")},
+             {"infoarea", StringProp("BW infoarea(s), comma-separated")},
+             {"max_depth", IntProp("Max package-tree recursion depth (default: 50)")}},
+            {"sid"}),
+        [&session](const nlohmann::json& params) {
+            return HandleCatalogBuildTool(session, params);
+        });
+
+    registry.Register(
+        "catalog_export",
+        "Build a catalog over the given scope (same parameters as catalog_build) and "
+        "render it as Catalog Feed v1 JSON (default), an OpenMetadata table profile, "
+        "or a Mermaid flowchart.",
+        MakeSchema(
+            {{"sid", StringProp("System ID to stamp on entities (e.g. A4H)")},
+             {"package", StringProp("ABAP/DDIC/CDS package(s), comma-separated")},
+             {"infoarea", StringProp("BW infoarea(s), comma-separated")},
+             {"max_depth", IntProp("Max package-tree recursion depth (default: 50)")},
+             {"format", StringProp("json (default) | openmetadata | mermaid")},
+             {"service_name", StringProp("OpenMetadata service name (default: erpl_adt)")},
+             {"system_id", StringProp("OpenMetadata system id (default: sid)")}},
+            {"sid"}),
+        [&session](const nlohmann::json& params) {
+            return HandleCatalogExportTool(session, params);
         });
 }
 

@@ -1,4 +1,4 @@
-.PHONY: release debug test test-integration-py test-integration-py-smoke clean submodules
+.PHONY: release debug test test-integration-py test-integration-py-smoke webui clean submodules
 
 BUILD_DIR := build
 
@@ -39,6 +39,15 @@ test-integration-py:
 
 test-integration-py-smoke:
 	cd test/integration_py && uv run pytest -v -m smoke
+
+# Build the Flutter web client so CMake can embed it into the erpl-adt
+# binary (see CMakeLists.txt's ERPL_ADT_HAVE_WEBUI guard). Requires the
+# Flutter SDK; run this once before `make release`/`make debug` if you want
+# `erpl-adt catalog webui` to serve the real app instead of the
+# instructional fallback message. Re-run after any flutter/erpl_catalog_kit
+# change, then re-run `make release` to pick up the new build output.
+webui:
+	cd flutter/erpl_catalog_kit/example && flutter build web
 
 clean:
 	rm -rf $(BUILD_DIR)

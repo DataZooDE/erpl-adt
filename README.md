@@ -209,6 +209,79 @@ Configure it in your MCP client (e.g., Claude Desktop, Claude Code):
 }
 ```
 
+## Catalog
+
+A unified, cross-domain (ABAP + DDIC + CDS + BW) metadata catalog, persisted in a single DuckDB file so search/lineage/where-used run in milliseconds instead of round-tripping SAP. Covers full-text + semantic (Gemini embeddings) hybrid search, end-to-end lineage stitching, a business-glossary overlay (definitions/owner/line-of-business/confidentiality) layered on top of the technical metadata, and incremental sync.
+
+Every catalog command needs an explicit scope (`--package`/`--infoarea`) — there's no "catalog the whole system" default, because SAP has no call to enumerate every BW infoarea and ABAP/DDIC package search has no pagination, so a silent "everything" default risks quietly missing content past the result cap. Discover packages first with the regular `search` command:
+
+```bash
+erpl-adt search 'Z*' --type DEVC --json   # all custom-namespace packages
+```
+
+**Build** — `erpl-adt catalog build` always builds the feed; add `--db` to persist it, `--format` to render it differently, both, or neither:
+
+```bash
+erpl-adt catalog build --sid A4H --package ZMY_PACKAGE --infoarea ZBW_AREA
+# -> just a summary, nothing is written anywhere
+
+erpl-adt catalog build --sid A4H --package ZMY_PACKAGE --db catalog.duckdb
+# -> persists into a DuckDB file (full rebuild, replaces any prior content) —
+#    this is the file catalog search/annotate/sync/webui all read from
+
+erpl-adt catalog build --sid A4H --package ZMY_PACKAGE --db catalog.duckdb --embed
+# -> also computes embeddings for semantic/hybrid search (needs GEMINI_API_KEY)
+
+erpl-adt catalog build --sid A4H --package ZMY_PACKAGE --format mermaid
+erpl-adt catalog build --sid A4H --package ZMY_PACKAGE --format openmetadata
+```
+
+`catalog build --db` is a single-shot, all-or-nothing write with no progress output and no resume — fine for a small scope. For anything large (thousands of packages, an hour-plus run), use `catalog sync` instead, even for the very first build:
+
+```bash
+erpl-adt catalog sync catalog.duckdb --sid A4H --package ZMY_PACKAGE
+# [1/1] package ZMY_PACKAGE (elapsed 0m4s, ETA 0s)   <- one progress line per item, on stderr
+
+# interrupted (connection drop, auth expiry, Ctrl-C)? everything already synced is
+# durably committed — pick up exactly where it left off instead of starting over:
+erpl-adt catalog sync catalog.duckdb --sid A4H --package ZMY_PACKAGE --resume
+```
+
+Checkpoint/audit state (which items are done, whether the last attempt was interrupted) lives in the same DuckDB file as the catalog data — one artifact, no sidecar file to lose track of or leave behind. Removal detection (deleting entities that disappeared from the scope) only runs on a plain, non-resumed sync — a resumed run only sees the items it personally processed, not the whole scope's picture, so it skips removal rather than risk flagging a still-valid item as gone.
+
+**Maintain:**
+
+```bash
+# Incremental sync — diffs against what's already stored, writes only the delta
+erpl-adt catalog sync catalog.duckdb --sid A4H --package ZMY_PACKAGE
+
+# Curate business context — optional; the catalog works fine without it.
+# Technical metadata gives you the *what* (a table's fields); this adds the
+# *why* a human would write: what an entity means, who owns it, how
+# sensitive it is. Turns a search for "procurement spend" into a real hit
+# on 0PUR_VALUE even before anyone remembers what that technical name means.
+# Never touches SAP — only writes to catalog.duckdb's overlay columns.
+erpl-adt catalog annotate catalog.duckdb --id <entity_id> \
+    --definition "Total procurement value" --owner "jane@example.com" --lob Procurement
+erpl-adt catalog annotate catalog.duckdb --file overlay.yaml   # bulk, keyed by entity_id
+```
+
+**View:**
+
+```bash
+# CLI — fast, cache-only, no SAP round-trip
+erpl-adt catalog search catalog.duckdb "procurement value" --mode hybrid
+
+# Web UI — search, browse, lineage, curate, sync status, feed export
+erpl-adt catalog webui catalog.duckdb --port 8383   # then open http://127.0.0.1:8383/
+
+# MCP — catalog_search/catalog_get/catalog_lineage/catalog_where_used/... for AI agents
+erpl-adt mcp --catalog-db catalog.duckdb            # stdio
+erpl-adt mcp --catalog-db catalog.duckdb --http     # JSON-RPC over HTTP
+```
+
+The web UI ([`flutter/erpl_catalog_kit`](flutter/erpl_catalog_kit), compiled and embedded straight into the `erpl-adt` binary — see [Building from source](#building-from-source)) is **read-only against the cache except for curation**: Search, Browse, Entity Detail, Lineage, and Driver Tree all query the same fast `catalog_*` MCP tools the CLI and AI agents use; the Curate screen is the only one that writes, via `catalog_annotate`. There's no build/sync button — `catalog webui` doesn't hold a live SAP connection, so building, exporting, and syncing stay CLI-only operations. The Sync Status screen shows past sync runs and cache health, and Feed Export surfaces the exact `erpl-adt catalog build --format ...` command to run for each format, rather than re-implementing either client-side.
+
 ## Deploy workflow
 
 erpl-adt also includes the original `deploy` workflow for automated abapGit package deployment via YAML configuration:
@@ -246,6 +319,15 @@ make release
 ```
 
 Requires CMake 3.21+, Ninja, and a C++17 compiler (GCC 13+, Apple Clang 15+, or MSVC 17+). vcpkg is included as a git submodule.
+
+To also embed the [catalog web UI](#catalog) into the binary (optional — not required for the CLI/MCP server), build the Flutter client first, then rebuild:
+
+```bash
+make webui      # flutter build web — requires the Flutter SDK
+make release    # picks up the build output and embeds it via CMakeRC
+```
+
+Without `make webui`, `erpl-adt catalog webui` still builds and runs, but serves an instructional message instead of the app.
 
 To run the tests:
 

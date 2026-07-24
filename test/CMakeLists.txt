@@ -10,6 +10,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/workflow/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/cli/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/storage/*.cpp"
 )
 
 if(TEST_SOURCES)

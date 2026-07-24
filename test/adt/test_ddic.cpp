@@ -526,6 +526,32 @@ TEST_CASE("GetTableDefinition: resolve_types fetches data elements for DDL field
     CHECK(mock.GetCallCount() == 4);
 }
 
+TEST_CASE("GetTableDefinition: resolve_types resolves description from a real captured "
+          "data-element response",
+          "[adt][ddic][resolve]") {
+    // Regression test: the synthetic MakeDataElementXml fixture above passed
+    // even when EnrichFieldsFromDataElements' live requests were silently
+    // failing end-to-end (missing/wrong Accept header — see ddic.cpp) — a
+    // real captured response is what actually caught it.
+    MockAdtSession mock;
+    auto table_xml = LoadFixture("ddic/table_sflight_bluesource.xml");
+    std::string ddl =
+        "define table ztest {\n"
+        "  key mandt : as4local not null;\n"
+        "}\n";
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, table_xml}));  // table XML
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ddl}));        // DDL source
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("ddic/dataelement_as4local.xml")}));           // real captured
+
+    auto result = GetTableDefinition(mock, "ZTEST", /*resolve_types=*/true);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().fields.size() == 1);
+    CHECK(result.Value().fields[0].description == "Aktivierungsstand eines Repository-Objektes");
+    REQUIRE(result.Value().fields[0].length.has_value());
+    CHECK(*result.Value().fields[0].length == 1);
+}
+
 TEST_CASE("GetTableDefinition: resolve_types=false skips data element fetches",
           "[adt][ddic][resolve]") {
     MockAdtSession mock;

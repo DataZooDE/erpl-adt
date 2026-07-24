@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace erpl_adt {
 
@@ -223,6 +224,157 @@ void CollectReferencesRecursive(const tinyxml2::XMLElement* element,
     }
 }
 
+// Builds a GUID -> readable-name index over the whole document (any element
+// with an `id` attribute) so FormulaMemberOperand's `member="<guid>"` cross-
+// references — which point at another subcomponent's own `id`, not a name —
+// can be resolved to something human-readable. Best-effort: unresolvable
+// GUIDs are rendered verbatim by the caller, not treated as an error.
+void BuildIdIndex(const tinyxml2::XMLElement* element,
+                  std::map<std::string, std::string>& out) {
+    if (element == nullptr) return;
+    const auto id = xml_utils::Attr(element, "id");
+    if (!id.empty()) {
+        auto name = AttrAny(element, "technicalName", "infoObjectName", "infoObject");
+        if (name.empty()) {
+            if (auto* desc = FirstChildByLocalName(element, "description")) {
+                name = xml_utils::Attr(desc, "value");
+            }
+        }
+        if (!name.empty()) {
+            out.emplace(id, name);  // first occurrence wins
+        }
+    }
+    for (auto* child = element->FirstChildElement(); child != nullptr;
+         child = child->NextSiblingElement()) {
+        BuildIdIndex(child, out);
+    }
+}
+
+// Recursively renders a Qry:formulaToken/Qry:childToken operator tree (a
+// calculated key figure's definition) into a human-readable infix string,
+// e.g. "0TCTDURTION / 0TCTSTAUIK". Token vocabulary confirmed against real
+// captured traffic (test/testdata/bw/bw_object_query_ckf.xml): infix binary
+// operators, prefix/sign unary operators, InfoObject/member/constant leaves.
+// An unrecognized token shape renders as its own type name rather than
+// silently dropping data — this is a best-effort renderer, not a full
+// formula-language parser.
+std::string RenderFormulaToken(const tinyxml2::XMLElement* token,
+                               const std::map<std::string, std::string>& id_index) {
+    if (token == nullptr) return "";
+    const auto type = NormalizeTypeToken(AttrAny(token, "xsi:type", "type"));
+
+    if (type == "FORMULAIOBJECTOPERAND") {
+        return xml_utils::Attr(token, "infoObject");
+    }
+    if (type == "FORMULACONSTANT") {
+        return xml_utils::Attr(token, "value");
+    }
+    if (type == "FORMULAMEMBEROPERAND") {
+        const auto member_id = xml_utils::Attr(token, "member");
+        const auto it = id_index.find(member_id);
+        return it != id_index.end() ? it->second : ("member:" + member_id);
+    }
+
+    std::vector<const tinyxml2::XMLElement*> children;
+    for (auto* child = token->FirstChildElement(); child != nullptr;
+         child = child->NextSiblingElement()) {
+        if (LocalName(child->Name()) == "childToken") children.push_back(child);
+    }
+    const auto code = xml_utils::Attr(token, "code");
+
+    if (type == "FORMULAINFIXOPERATOR" && children.size() == 2) {
+        return RenderFormulaToken(children[0], id_index) + " " + code + " " +
+               RenderFormulaToken(children[1], id_index);
+    }
+    if ((type == "FORMULAPREFIXOPERATOR" || type == "FORMULASIGNOPERATOR") &&
+        !children.empty()) {
+        return code + "(" + RenderFormulaToken(children[0], id_index) + ")";
+    }
+    return type.empty() ? "?" : type;
+}
+
+// Renders a Qry:selections element's own Qry:tokens children (the actual
+// filter values/ranges, e.g. "IN (Berlin, London, Paris)" or "BETWEEN
+// 0D_NW_ACTCMON AND 0D_NW_ACTCMON") into a human-readable string. Prefers
+// each token's fromValueDesc/toValueDesc human text over the raw code
+// value when present. keyFigure-selectionType tokens are skipped — those
+// are surfaced separately as their own KEY_FIGURE ref, not a filter value.
+// Shape confirmed against test/testdata/bw/live_query_0D_FC_NW_C01_Q0007.xml.
+std::string RenderFilterValues(const tinyxml2::XMLElement* selections) {
+    if (selections == nullptr) return "";
+    std::vector<std::string> parts;
+    for (auto* tok = selections->FirstChildElement(); tok != nullptr;
+         tok = tok->NextSiblingElement()) {
+        if (LocalName(tok->Name()) != "tokens") continue;
+        if (xml_utils::Attr(tok, "selectionType") == "keyFigure") continue;
+        const bool is_range = xml_utils::Attr(tok, "operator") == "Between";
+        const bool exclude = xml_utils::Attr(tok, "exclude") == "true";
+
+        auto* from_el = FirstChildByLocalName(tok, "fromValue");
+        auto from_desc = xml_utils::Attr(tok, "fromValueDesc");
+        auto from_val = ChildTextByLocalName(from_el, "value");
+        auto from_text = !from_desc.empty() ? from_desc : from_val;
+        if (from_text.empty()) continue;
+
+        std::string part;
+        if (is_range) {
+            auto* to_el = FirstChildByLocalName(tok, "toValue");
+            auto to_desc = xml_utils::Attr(tok, "toValueDesc");
+            auto to_val = ChildTextByLocalName(to_el, "value");
+            auto to_text = !to_desc.empty() ? to_desc : to_val;
+            part = "BETWEEN " + from_text + " AND " + (to_text.empty() ? from_text : to_text);
+        } else {
+            part = from_text;
+        }
+        if (exclude) part = "NOT " + part;
+        parts.push_back(std::move(part));
+    }
+    if (parts.empty()) return "";
+    if (parts.size() == 1) return parts[0];
+    std::string out = "IN (";
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) out += ", ";
+        out += parts[i];
+    }
+    out += ")";
+    return out;
+}
+
+// Renders a Qry:member[xsi:type=MemberSelection] (a restricted key figure's
+// definition) into a human-readable restriction string, e.g.
+// "0TCTLPROOCC WHERE 0TCTBWOTYPE = AINX". The first Qry:groups whose tokens
+// carry selectionType="keyFigure" names the base key figure being
+// restricted; every other group is a characteristic-value restriction.
+// Shape confirmed against test/testdata/bw/bw_object_query_rkf.xml.
+std::string RenderRestriction(const tinyxml2::XMLElement* member_selection) {
+    if (member_selection == nullptr) return "";
+    std::string base_key_figure;
+    std::vector<std::string> restrictions;
+    for (auto* group = member_selection->FirstChildElement(); group != nullptr;
+         group = group->NextSiblingElement()) {
+        if (LocalName(group->Name()) != "groups") continue;
+        const auto info_object = xml_utils::Attr(group, "infoObject");
+        auto* tokens = FirstChildByLocalName(group, "tokens");
+        const auto sel_type = tokens ? xml_utils::Attr(tokens, "selectionType") : "";
+        auto* from_value = tokens ? FirstChildByLocalName(tokens, "fromValue") : nullptr;
+        const auto value = ChildTextByLocalName(from_value, "value");
+        if (value.empty()) continue;
+        if (sel_type == "keyFigure") {
+            base_key_figure = value;
+        } else if (!info_object.empty()) {
+            restrictions.push_back(info_object + " = " + value);
+        }
+    }
+    if (base_key_figure.empty()) return "";
+    if (restrictions.empty()) return base_key_figure;
+    std::string out = base_key_figure + " WHERE ";
+    for (size_t i = 0; i < restrictions.size(); ++i) {
+        if (i > 0) out += " AND ";
+        out += restrictions[i];
+    }
+    return out;
+}
+
 void CollectQueryResourceReferences(const tinyxml2::XMLElement* root,
                                     BwQueryComponentDetail& detail) {
     if (root == nullptr) return;
@@ -230,6 +382,9 @@ void CollectQueryResourceReferences(const tinyxml2::XMLElement* root,
     for (const auto& ref : detail.references) {
         seen.insert(ref.type + "|" + ref.role + "|" + ref.name);
     }
+
+    std::map<std::string, std::string> id_index;
+    BuildIdIndex(root, id_index);
 
     // Subcomponents (variables/rkf/ckf/filter/structure etc.).
     for (auto* sub = root->FirstChildElement(); sub != nullptr;
@@ -240,6 +395,74 @@ void CollectQueryResourceReferences(const tinyxml2::XMLElement* root,
         ref.type = NormalizeTypeToken(AttrAny(sub, "xsi:type", "type"));
         ref.role = "subcomponent";
         CollectAttributes(sub, ref.attributes);
+        if (ref.type == "CALCULATEDMEASURE" || ref.type == "RESTRICTEDMEASURE") {
+            if (auto* member = FirstChildByLocalName(sub, "member")) {
+                const auto member_type = NormalizeTypeToken(AttrAny(member, "xsi:type", "type"));
+                std::string formula;
+                if (member_type == "MEMBERFORMULA") {
+                    if (auto* def = FirstChildByLocalName(member, "formulaDefinition")) {
+                        if (auto* token = FirstChildByLocalName(def, "formulaToken")) {
+                            formula = RenderFormulaToken(token, id_index);
+                        }
+                    }
+                } else if (member_type == "MEMBERSELECTION") {
+                    formula = RenderRestriction(member);
+                }
+                // Exception aggregation: a different aggregation behavior
+                // than the query's own drill-down — silently getting this
+                // wrong (e.g. summing in SQL what SAP would exception-
+                // aggregate) changes result totals, so surface it even
+                // though it's sibling data to the formula/restriction, not
+                // part of it structurally.
+                if (auto* exc_agg = FirstChildByLocalName(member, "exceptionAggregation")) {
+                    auto agg_type = xml_utils::Attr(exc_agg, "type");
+                    if (!agg_type.empty()) {
+                        auto ref_char = ChildTextByLocalName(exc_agg, "referenceCharacteristic");
+                        std::string suffix = " [exception: " + agg_type;
+                        if (!ref_char.empty() && ref_char != "0") {
+                            suffix += " by " + ref_char;
+                        }
+                        suffix += "]";
+                        formula += suffix;
+                    }
+                }
+                if (!formula.empty()) {
+                    ref.attributes["formula"] = formula;
+                }
+            }
+        } else if (ref.type.find("VARIABLE") != std::string::npos) {
+            // Variable semantics (procType/inputType/represents/default) live
+            // as child elements of the subComponents entry itself, not
+            // attributes — CollectAttributes above only reads own-attributes
+            // and misses all of these. Composed into the same reused
+            // "formula" slot as the CKF/RKF branch above, e.g.
+            // "SAPExit, optional, default: 1". Shape confirmed against
+            // test/testdata/bw/live_query_0D_FC_NW_C01_Q0007.xml.
+            std::vector<std::string> parts;
+            auto proc_type = ChildTextByLocalName(sub, "procType");
+            if (!proc_type.empty()) parts.push_back(proc_type);
+            auto input_type = ChildTextByLocalName(sub, "inputType");
+            if (!input_type.empty()) {
+                std::string lower = input_type;
+                std::transform(lower.begin(), lower.end(), lower.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                parts.push_back(lower);
+            }
+            auto represents = ChildTextByLocalName(sub, "represents");
+            if (!represents.empty()) parts.push_back(represents);
+            if (auto* hint = FirstChildByLocalName(sub, "defaultHint")) {
+                auto default_value = ChildTextByLocalName(hint, "value");
+                if (!default_value.empty()) parts.push_back("default: " + default_value);
+            }
+            if (!parts.empty()) {
+                std::string joined;
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    if (i > 0) joined += ", ";
+                    joined += parts[i];
+                }
+                ref.attributes["formula"] = joined;
+            }
+        }
         AddReferenceDedup(detail.references, seen, std::move(ref));
     }
 
@@ -272,6 +495,8 @@ void CollectQueryResourceReferences(const tinyxml2::XMLElement* root,
                 ref.type = "FILTER_FIELD";
                 ref.role = "filter";
                 CollectAttributes(element, ref.attributes);
+                auto values = RenderFilterValues(element);
+                if (!values.empty()) ref.attributes["formula"] = values;
                 AddReferenceDedup(detail.references, seen, std::move(ref));
             } else if (lname == "tokens") {
                 // Key figure selections: <tokens selectionType="keyFigure">

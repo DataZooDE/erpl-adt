@@ -349,6 +349,67 @@ Result<BwAdsoDetail, Error> BwReadAdsoDetail(
 }
 
 // ---------------------------------------------------------------------------
+// BwReadInfoProviderDetail
+// ---------------------------------------------------------------------------
+Result<BwInfoProviderDetail, Error> BwReadInfoProviderDetail(
+    IAdtSession& session,
+    const std::string& name,
+    const std::string& version) {
+    // Not GetDefaultAcceptType("INFOPROV")'s generic guess — this endpoint's
+    // real vendor content type doesn't follow the "adso"/"trfn"/"dtpa"
+    // pattern (confirmed by probing the live system: the server's own 415
+    // error names the exact type it wants).
+    auto xml_result = FetchObjectXml(session, "INFOPROV", name, version,
+                                     "BwReadInfoProviderDetail",
+                                     "application/vnd.sap.bw.modeling.iprov-v1_13_0+xml");
+    if (xml_result.IsErr()) {
+        return Result<BwInfoProviderDetail, Error>::Err(std::move(xml_result).Error());
+    }
+
+    const auto& xml = xml_result.Value();
+    tinyxml2::XMLDocument doc;
+    if (auto parse_error = adt_utils::ParseXmlOrError(
+            doc, xml, "BwReadInfoProviderDetail", "",
+            "Failed to parse InfoProvider XML")) {
+        return Result<BwInfoProviderDetail, Error>::Err(std::move(*parse_error));
+    }
+
+    auto* root = doc.RootElement();
+    if (!root) {
+        return Result<BwInfoProviderDetail, Error>::Err(Error{
+            "BwReadInfoProviderDetail", "", std::nullopt,
+            "Empty InfoProvider response", std::nullopt, ErrorCategory::NotFound});
+    }
+
+    BwInfoProviderDetail detail;
+    if (auto* texts = root->FirstChildElement("endUserTexts")) {
+        detail.description = xml_utils::Attr(texts, "label");
+    }
+
+    for (auto* el = root->FirstChildElement("element"); el;
+         el = el->NextSiblingElement("element")) {
+        BwInfoProviderField field;
+        field.name = xml_utils::Attr(el, "name");
+        field.info_object = xml_utils::Attr(el, "infoObjectName");
+        field.description = xml_utils::Attr(el, "shortDescription");
+        if (field.description.empty()) {
+            if (auto* texts = el->FirstChildElement("endUserTexts")) {
+                field.description = xml_utils::Attr(texts, "label");
+            }
+        }
+        if (auto* type_el = el->FirstChildElement("inlineType")) {
+            field.data_type = xml_utils::Attr(type_el, "name");
+            field.length = xml_utils::AttrIntOr(type_el, "length", 0);
+        }
+        if (!field.name.empty()) {
+            detail.fields.push_back(std::move(field));
+        }
+    }
+
+    return Result<BwInfoProviderDetail, Error>::Ok(std::move(detail));
+}
+
+// ---------------------------------------------------------------------------
 // BwReadDtpDetail
 // ---------------------------------------------------------------------------
 Result<BwDtpDetail, Error> BwReadDtpDetail(

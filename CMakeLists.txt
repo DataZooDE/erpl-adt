@@ -36,6 +36,7 @@ find_package(argparse CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(ftxui CONFIG REQUIRED)
+find_package(DuckDB CONFIG REQUIRED)
 
 # --- Shared DataZoo telemetry library (git submodule) ---
 # Built from third_party/posthog-telemetry. It expects a `duckdb_httplib_openssl`
@@ -72,6 +73,42 @@ else()
     set(ERPL_ADT_HAVE_TELEMETRY FALSE)
 endif()
 
+# --- Embedded web UI (Flutter web build baked into the binary via CMakeRC) ---
+# Optional: the C++ build must not require the Flutter/Dart toolchain. If
+# `make webui` (flutter build web) hasn't been run, WEBUI_WEB_DIR won't
+# contain index.html and we skip the resource library entirely — `erpl-adt
+# catalog webui` still builds, it just serves an instructional message
+# instead of the app. See ERPL_ADT_HAVE_WEBUI below.
+set(WEBUI_WEB_DIR "${CMAKE_SOURCE_DIR}/flutter/erpl_catalog_kit/example/build/web")
+if(EXISTS "${WEBUI_WEB_DIR}/index.html")
+    # CMakeRC.cmake's own cmake_minimum_required(3.12) predates CMP0091 — same
+    # issue as the posthog-telemetry submodule above — so force the policy NEW
+    # here too, otherwise the generated webui_resources target ignores our /MT
+    # override below and defaults to /MD, failing to link with LNK2038.
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+    include(${CMAKE_SOURCE_DIR}/third_party/cmrc/CMakeRC.cmake)
+    file(GLOB_RECURSE WEBUI_WEB_FILES CONFIGURE_DEPENDS "${WEBUI_WEB_DIR}/*")
+    cmrc_add_resource_library(webui_resources
+        ALIAS webui::rc
+        NAMESPACE webui
+        WHENCE "${WEBUI_WEB_DIR}"
+        ${WEBUI_WEB_FILES}
+    )
+    if(MSVC)
+        # Match erpl-adt's static CRT (/MT) — CMakeRC's generated target
+        # doesn't set this, so it defaults to /MD and fails linking with
+        # LNK2038 (RuntimeLibrary mismatch), same fix as posthog_telemetry.
+        set_property(TARGET webui_resources PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+    set(ERPL_ADT_HAVE_WEBUI TRUE)
+    message(STATUS "Web UI: embedding ${WEBUI_WEB_DIR} into the binary")
+else()
+    set(ERPL_ADT_HAVE_WEBUI FALSE)
+    message(STATUS "Web UI: no build output at ${WEBUI_WEB_DIR} — run 'make webui' to embed it. "
+                    "'erpl-adt catalog webui' will build but serve an instructional message instead of the app.")
+endif()
+
 # --- Static library (everything except main.cpp) ---
 file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main\\.cpp$")
@@ -91,10 +128,18 @@ if(LIB_SOURCES)
         OpenSSL::Crypto
         nlohmann_json::nlohmann_json
         ftxui::component
+        $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>
     )
     if(ERPL_ADT_HAVE_TELEMETRY)
         target_link_libraries(erpl_adt_lib PRIVATE posthog_telemetry)
         target_compile_definitions(erpl_adt_lib PRIVATE ERPL_ADT_TELEMETRY_ENABLED=1)
+    endif()
+    if(ERPL_ADT_HAVE_WEBUI)
+        target_link_libraries(erpl_adt_lib PRIVATE webui::rc)
+        # PUBLIC (not PRIVATE like ERPL_ADT_TELEMETRY_ENABLED above): the test
+        # target needs to know at compile time which serving behavior to
+        # assert on (real embedded app vs. instructional fallback).
+        target_compile_definitions(erpl_adt_lib PUBLIC ERPL_ADT_HAVE_WEBUI=1)
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_options(erpl_adt_lib PUBLIC -static-libgcc -static-libstdc++)
@@ -123,6 +168,7 @@ else()
         OpenSSL::Crypto
         nlohmann_json::nlohmann_json
         ftxui::component
+        $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>
     )
 endif()
 
