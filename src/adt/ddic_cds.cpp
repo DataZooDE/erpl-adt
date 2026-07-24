@@ -11,6 +11,31 @@ namespace erpl_adt {
 
 namespace {
 
+// Normalizes all line-ending conventions to a single '\n'. CDS source can
+// reach us with CRLF ("\r\n", captured from ADT on a Windows host or checked
+// out with git's autocrlf), lone-CR ("\r"), or plain LF. The downstream
+// parsing relies on std::getline (which splits only on '\n') and on
+// character scans that test for '\n' explicitly — a stray '\r', or an input
+// with no '\n' at all, otherwise collapses the whole source into one logical
+// line, at which point a trailing "//" line-comment swallows the closing
+// brace and the field list is lost. Normalizing up front makes the parse
+// byte-identical on every platform and independent of how the caller read
+// the bytes (e.g. MSVC's text-mode CRT translation vs. POSIX).
+std::string NormalizeNewlines(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (c == '\r') {
+            out += '\n';
+            if (i + 1 < s.size() && s[i + 1] == '\n') ++i;  // consume "\r\n" as one
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 std::string Trim(const std::string& s) {
     auto begin = s.find_first_not_of(" \t\r\n");
     if (begin == std::string::npos) return "";
@@ -285,7 +310,7 @@ CdsField ParseFieldSegment(const std::string& segment) {
 
 CdsViewInfo ParseCdsSource(const std::string& ddl_source) {
     CdsViewInfo info;
-    auto clean = StripLineComments(ddl_source);
+    auto clean = StripLineComments(NormalizeNewlines(ddl_source));
 
     size_t brace_pos = std::string::npos;
     ParseHeader(clean, info, brace_pos);
