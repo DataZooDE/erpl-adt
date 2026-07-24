@@ -57,6 +57,9 @@ erpl-adt login --host sap.example.com --port 44300 --https --user DEVELOPER
 # Search for classes matching a pattern
 erpl-adt search ZCL_MY_* --type CLAS --max 20
 
+# Connect in a specific logon language (descriptions come back translated)
+erpl-adt --language DE search T000 --max 1     # -> description "Mandanten"
+
 # Read object metadata and source code
 erpl-adt object read /sap/bc/adt/oo/classes/zcl_my_class
 erpl-adt source read /sap/bc/adt/oo/classes/zcl_my_class/source/main
@@ -169,6 +172,7 @@ PACKAGE — List contents and check package existence
 
 GLOBAL FLAGS
   --host, --port, --user, --password, --client
+  --language <iso>                        SAP logon language (ISO, e.g. EN, DE; default: EN)
   --https, --insecure
   --json                                  Machine-readable JSON output
   --color / --no-color

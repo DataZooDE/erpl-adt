@@ -207,6 +207,7 @@ struct SavedCredentials {
     std::string password;
     std::string client;
     bool use_https = false;
+    std::string language;  // SAP logon language (ISO, e.g. "EN"); empty = default
 };
 
 bool SaveCredentials(const SavedCredentials& creds) {
@@ -217,6 +218,9 @@ bool SaveCredentials(const SavedCredentials& creds) {
     j["password"] = creds.password;
     j["client"] = creds.client;
     j["use_https"] = creds.use_https;
+    if (!creds.language.empty()) {
+        j["language"] = creds.language;
+    }
 
     std::ofstream ofs(kCredsFile);
     if (!ofs) {
@@ -251,6 +255,7 @@ std::optional<SavedCredentials> LoadCredentials() {
         creds.password = j.value("password", "");
         creds.client = j.value("client", "001");
         creds.use_https = j.value("use_https", false);
+        creds.language = j.value("language", "");
         return creds;
     } catch (const nlohmann::json::exception&) {
         return std::nullopt;
@@ -379,6 +384,17 @@ Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args
     auto sap_client = std::move(client_result).Value();
 
     AdtSessionOptions opts;
+    // SAP logon language: explicit --language flag > saved creds > default (EN).
+    auto language_str = GetFlag(args, "language",
+                                creds ? creds->language : "");
+    if (!language_str.empty()) {
+        auto lang_result = SapLanguage::Create(language_str);
+        if (lang_result.IsErr()) {
+            return Result<std::unique_ptr<AdtSession>, Error>::Err(
+                MakeValidationError("Invalid --language: " + lang_result.Error()));
+        }
+        opts.language = std::move(lang_result).Value();
+    }
     if (HasFlag(args, "timeout")) {
         auto timeout_result = ParseIntInRange(
             GetFlag(args, "timeout"),
@@ -6841,6 +6857,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"--password <pass>",       "SAP password"},
         {"--password-env <var>",    "Read password from env var (default: SAP_PASSWORD)"},
         {"--client <num>",          "SAP client (default: 001)"},
+        {"--language <iso>",        "SAP logon language (ISO, e.g. EN, DE; default: EN)"},
         {"--https",                 "Use HTTPS"},
         {"--insecure",              "Skip TLS verification (with --https)"},
         {"--json",                  "JSON output"},
@@ -6894,6 +6911,7 @@ void PrintLoginHelp(std::ostream& out, bool color) {
     out << "  --password-env <var>  Read password from env var (default: SAP_PASSWORD)\n";
     out << "  --port <port>         SAP port (default: 50000)\n";
     out << "  --client <num>        SAP client (default: 001)\n";
+    out << "  --language <iso>      SAP logon language (ISO, e.g. EN, DE; default: EN)\n";
     out << "  --https               Use HTTPS\n";
     out << "\n";
     a.Bold("EXAMPLES").Nl();
@@ -8844,6 +8862,10 @@ int HandleLogin(int argc, const char* const* argv) {
         creds.password = result->password;
         creds.client = result->client;
         creds.use_https = result->use_https;
+        // The wizard doesn't prompt for language; keep any previously saved one.
+        if (existing) {
+            creds.language = existing->language;
+        }
         if (!SaveCredentials(creds)) {
             std::cerr << "Error: failed to write " << kCredsFile << "\n";
             return 99;
@@ -8892,6 +8914,16 @@ int HandleLogin(int argc, const char* const* argv) {
         return 99;
     }
 
+    auto language = get("language");
+    if (!language.empty()) {
+        auto lang_result = SapLanguage::Create(language);
+        if (lang_result.IsErr()) {
+            std::cerr << "Error: Invalid --language: " << lang_result.Error() << "\n";
+            return 99;
+        }
+        language = std::move(lang_result).Value().Value();
+    }
+
     SavedCredentials creds;
     creds.host = host;
     creds.port = port_result.Value();
@@ -8899,6 +8931,7 @@ int HandleLogin(int argc, const char* const* argv) {
     creds.password = password;
     creds.client = std::move(client_result).Value().Value();
     creds.use_https = use_https;
+    creds.language = language;
 
     if (!SaveCredentials(creds)) {
         std::cerr << "Error: failed to write " << kCredsFile << "\n";

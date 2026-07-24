@@ -250,6 +250,32 @@ TEST_CASE("AdtSession: GET sends SAP headers", "[adt][session][live]") {
     CHECK_FALSE(received_auth.empty()); // Basic Auth header present
 }
 
+TEST_CASE("AdtSession: GET sends the configured logon language (#26)",
+          "[adt][session][live]") {
+    httplib::Server svr;
+
+    std::string received_accept_lang;
+    svr.Get("/sap/bc/adt/test", [&](const httplib::Request& req,
+                                     httplib::Response& res) {
+        if (req.has_header("Accept-Language")) {
+            received_accept_lang = req.get_header_value("Accept-Language");
+        }
+        res.set_content("<ok/>", "text/xml");
+    });
+
+    LocalServer server(svr);
+
+    AdtSessionOptions opts;
+    opts.language = SapLanguage::Create("DE").Value();
+    auto session = MakeTestSession(server.Port(), opts);
+
+    auto result = session->Get("/sap/bc/adt/test");
+    REQUIRE(result.IsOk());
+    // SAP logon language is selected via the Accept-Language header; the ISO
+    // code is sent lower-cased per HTTP convention (e.g. "de", not "DE").
+    CHECK(received_accept_lang == "de");
+}
+
 TEST_CASE("AdtSession: BW requests inject bwmt-level by default", "[adt][session][live]") {
     httplib::Server svr;
     std::string received_bwmt_level;

@@ -125,6 +125,8 @@ Async ops (pull, activation): return `202 Accepted` + `Location` header. Poll un
 
 Stateful sessions: `X-sap-adt-sessiontype: stateful` header + `sap-contextid` cookie for locking/write operations. `LockGuard` RAII class manages the lifecycle.
 
+Logon language: the connection language is chosen with the global `--language <iso>` flag (2-letter ISO, e.g. `EN`, `DE`; default `EN`). It is sent as the `Accept-Language` header (lower-cased), which SAP maps to the logon language — language-dependent text (object descriptions) then comes back translated. Threaded via `AdtSessionOptions::language` (a `std::optional<SapLanguage>`); also settable in YAML config (`connection.language`) and persisted in `.adt.creds`.
+
 ## Catalog Web UI
 
 `flutter/erpl_catalog_kit` is a Flutter web client for the `catalog_*` MCP tools (search, browse, lineage, curate, sync status, feed export). Its compiled web build can be embedded directly into the `erpl-adt` binary via CMakeRC (vendored as the `third_party/cmrc` submodule) and served same-origin with the JSON-RPC catalog API — no separate static file server, no CORS setup.
