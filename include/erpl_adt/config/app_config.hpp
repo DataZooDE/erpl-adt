@@ -17,6 +17,7 @@ struct ConnectionConfig {
     std::string user;
     std::string password;
     std::optional<std::string> password_env; // env var name to read password from
+    std::optional<SapLanguage> language;     // SAP logon language; defaults to EN
 };
 
 struct RepoConfig {

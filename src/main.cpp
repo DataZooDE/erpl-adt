@@ -98,6 +98,7 @@ void PrintMcpHelp(std::ostream& out) {
     out << "  --password <pass>    SAP password\n";
     out << "  --password-env <var> Read password from env var (default: SAP_PASSWORD)\n";
     out << "  --client <num>       SAP client (default: 001)\n";
+    out << "  --language <iso>     SAP logon language (2-letter ISO, e.g. EN, DE; default: EN)\n";
     out << "  --https              Use HTTPS\n";
     out << "  --insecure           Skip TLS verification (with --https)\n";
     out << "  --timeout <sec>      Request timeout in seconds\n";
@@ -403,6 +404,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
     // Load saved credentials as fallback.
     constexpr const char* kCredsFile = ".adt.creds";
     std::string saved_host, saved_user, saved_password, saved_client = "001";
+    std::string saved_language;
     uint16_t saved_port = 50000;
     bool saved_https = false;
     {
@@ -416,6 +418,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
                 saved_password = j.value("password", "");
                 saved_client = j.value("client", "001");
                 saved_https = j.value("use_https", false);
+                saved_language = j.value("language", "");
             } catch (const nlohmann::json::exception&) {
                 // Ignore malformed creds file.
             }
@@ -458,6 +461,16 @@ int HandleMcpServer(int argc, const char* const* argv) {
     auto sap_client = std::move(client_result).Value();
 
     AdtSessionOptions opts;
+    // SAP logon language: explicit --language flag > saved creds > default (EN).
+    auto language_str = get("language", saved_language);
+    if (!language_str.empty()) {
+        auto lang_result = SapLanguage::Create(language_str);
+        if (lang_result.IsErr()) {
+            std::cerr << "Error: Invalid --language: " << lang_result.Error() << "\n";
+            return kExitInternal;
+        }
+        opts.language = std::move(lang_result).Value();
+    }
     if (!get("timeout").empty()) {
         int timeout_seconds = 0;
         if (!ParseIntInRange(get("timeout"),
@@ -724,6 +737,7 @@ int main(int argc, const char* argv[]) {
         SapClient::Create("001").Value());
     AdtSessionOptions session_opts;
     session_opts.read_timeout = std::chrono::seconds(config.timeout_seconds);
+    session_opts.language = config.connection.language;
 
     auto session = std::make_unique<AdtSession>(
         config.connection.host,

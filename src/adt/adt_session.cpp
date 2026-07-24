@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <map>
 #include <thread>
@@ -58,6 +59,20 @@ ErrorCategory CategoryFromHttpTransportError(httplib::Error error) {
     }
 }
 
+// Resolve the Accept-Language header value from an optional SAP logon
+// language. SAP selects the logon language from this header; the 2-letter
+// ISO code is sent lower-cased per HTTP convention (e.g. "de"). Defaults to
+// English when unset.
+std::string ResolveAcceptLanguage(const std::optional<SapLanguage>& language) {
+    if (!language.has_value()) {
+        return "en";
+    }
+    std::string lang = language->Value();
+    std::transform(lang.begin(), lang.end(), lang.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lang;
+}
+
 // Convert httplib::Headers to our HttpHeaders map.
 HttpHeaders ToHttpHeaders(const httplib::Headers& hdrs) {
     HttpHeaders result;
@@ -71,12 +86,13 @@ HttpHeaders ToHttpHeaders(const httplib::Headers& hdrs) {
 httplib::Headers BuildRequestHeaders(
     const HttpHeaders& extra,
     const std::string& sap_client,
+    const std::string& accept_language,
     const std::optional<std::string>& csrf_token,
     const std::map<std::string, std::string>& cookies = {},
     bool stateful_mode = false) {
     httplib::Headers hdrs;
     hdrs.emplace("sap-client", sap_client);
-    hdrs.emplace("Accept-Language", "en");
+    hdrs.emplace("Accept-Language", accept_language);
     if (csrf_token.has_value()) {
         hdrs.emplace("x-csrf-token", *csrf_token);
     }
@@ -133,6 +149,7 @@ httplib::Headers BuildRequestHeaders(
 struct AdtSession::Impl {
     std::unique_ptr<httplib::Client> client;
     std::string sap_client;
+    std::string accept_language;                 // resolved SAP logon language
     std::optional<std::string> csrf_token;       // ADT paths (/sap/bc/adt/)
     std::optional<std::string> bw_csrf_token_;   // BW paths (/sap/bw/modeling/)
     AdtSessionOptions options;
@@ -147,7 +164,9 @@ struct AdtSession::Impl {
          const std::string& password,
          const std::string& sap_client_value,
          const AdtSessionOptions& opts)
-        : sap_client(sap_client_value), options(opts) {
+        : sap_client(sap_client_value),
+          accept_language(ResolveAcceptLanguage(opts.language)),
+          options(opts) {
         auto base_url = (use_https ? "https://" : "http://") + host + ":" +
                         std::to_string(port);
         client = std::make_unique<httplib::Client>(base_url);
@@ -265,7 +284,7 @@ struct AdtSession::Impl {
     // Execute a GET, returning our HttpResponse.
     Result<HttpResponse, Error> DoGet(std::string_view path,
                                       const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
         InjectStatefulHeaders(hdrs);
@@ -293,7 +312,7 @@ struct AdtSession::Impl {
                                        std::string_view body,
                                        std::string_view content_type,
                                        const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
         InjectStatefulHeaders(hdrs);
@@ -322,7 +341,7 @@ struct AdtSession::Impl {
                                       std::string_view body,
                                       std::string_view content_type,
                                       const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
         InjectStatefulHeaders(hdrs);
@@ -349,7 +368,7 @@ struct AdtSession::Impl {
     // Execute a DELETE, returning our HttpResponse.
     Result<HttpResponse, Error> DoDelete(std::string_view path,
                                          const HttpHeaders& extra_headers) {
-        auto hdrs = BuildRequestHeaders(extra_headers, sap_client,
+        auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
         InjectStatefulHeaders(hdrs);
@@ -382,7 +401,7 @@ struct AdtSession::Impl {
         const auto fetch_from = [&](const std::string& fetch_path) -> Result<std::string, Error> {
             HttpHeaders extra;
             extra["x-csrf-token"] = "fetch";
-            auto hdrs = BuildRequestHeaders(extra, sap_client, std::nullopt,
+            auto hdrs = BuildRequestHeaders(extra, sap_client, accept_language, std::nullopt,
                                             cookies_, stateful_);
             InjectStatefulHeaders(hdrs);
             InjectBwHeaders(fetch_path, hdrs);
