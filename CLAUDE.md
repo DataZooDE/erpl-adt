@@ -125,6 +125,8 @@ Async ops (pull, activation): return `202 Accepted` + `Location` header. Poll un
 
 Stateful sessions: `X-sap-adt-sessiontype: stateful` header + `sap-contextid` cookie for locking/write operations. `LockGuard` RAII class manages the lifecycle.
 
+Logon language: the connection language is chosen with the global `--language <iso>` flag (2-letter ISO, e.g. `EN`, `DE`; default `EN`). It is sent as the `Accept-Language` header (lower-cased), which SAP maps to the logon language — language-dependent text (object descriptions) then comes back translated. Threaded via `AdtSessionOptions::language` (a `std::optional<SapLanguage>`); also settable in YAML config (`connection.language`) and persisted in `.adt.creds`.
+
 ## CLI Verbosity
 
 - Default: warnings only (quiet)

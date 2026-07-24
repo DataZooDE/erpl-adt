@@ -120,6 +120,15 @@ Result<AppConfig, Error> LoadFromYaml(std::string_view file_path) {
             }
             config.connection.client = std::move(client_result).Value();
         }
+        if (conn["language"]) {
+            auto lang_str = conn["language"].as<std::string>();
+            auto lang_result = SapLanguage::Create(lang_str);
+            if (lang_result.IsErr()) {
+                return Result<AppConfig, Error>::Err(
+                    MakeConfigError("Invalid SAP language: " + lang_result.Error()));
+            }
+            config.connection.language = std::move(lang_result).Value();
+        }
         if (conn["user"]) {
             config.connection.user = conn["user"].as<std::string>();
         }
@@ -180,6 +189,8 @@ Result<AppConfig, Error> LoadFromCli(int argc, const char* const* argv) {
         .implicit_value(true);
     program.add_argument("--client")
         .help("SAP client (3 digits)");
+    program.add_argument("--language")
+        .help("SAP logon language (2-letter ISO code, e.g. EN, DE; default EN)");
     program.add_argument("--user")
         .help("SAP username");
     program.add_argument("--password")
@@ -246,6 +257,14 @@ Result<AppConfig, Error> LoadFromCli(int argc, const char* const* argv) {
                 MakeConfigError("Invalid --client: " + client_result.Error()));
         }
         config.connection.client = std::move(client_result).Value();
+    }
+    if (auto val = program.present("--language")) {
+        auto lang_result = SapLanguage::Create(*val);
+        if (lang_result.IsErr()) {
+            return Result<AppConfig, Error>::Err(
+                MakeConfigError("Invalid --language: " + lang_result.Error()));
+        }
+        config.connection.language = std::move(lang_result).Value();
     }
     if (auto val = program.present("--user")) {
         config.connection.user = *val;

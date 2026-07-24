@@ -18,6 +18,10 @@ struct AdtSessionOptions {
     std::chrono::seconds read_timeout{120};
     bool disable_tls_verify = false;
     std::chrono::seconds poll_interval{2};
+    // SAP logon language for the connection. Sent as the Accept-Language
+    // header (SAP maps it to the logon language). Defaults to English (EN)
+    // when unset.
+    std::optional<SapLanguage> language;
 };
 
 // ---------------------------------------------------------------------------

@@ -145,6 +145,46 @@ TEST_CASE("LoadFromCli: minimal args", "[config][cli]") {
     CHECK(config.repos[0].activate == true);
 }
 
+TEST_CASE("LoadFromCli: --language sets the connection language (#26)",
+          "[config][cli]") {
+    const char* argv[] = {
+        "erpl-adt",
+        "--language", "DE",
+        "--repo", "https://github.com/test/repo.git"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    auto result = LoadFromCli(argc, argv);
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().connection.language.has_value());
+    CHECK(result.Value().connection.language->Value() == "DE");
+}
+
+TEST_CASE("LoadFromCli: language defaults to unset (#26)", "[config][cli]") {
+    const char* argv[] = {
+        "erpl-adt",
+        "--repo", "https://github.com/test/repo.git"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    auto result = LoadFromCli(argc, argv);
+    REQUIRE(result.IsOk());
+    CHECK_FALSE(result.Value().connection.language.has_value());
+}
+
+TEST_CASE("LoadFromCli: invalid --language is rejected (#26)", "[config][cli]") {
+    const char* argv[] = {
+        "erpl-adt",
+        "--language", "XYZ",
+        "--repo", "https://github.com/test/repo.git"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    auto result = LoadFromCli(argc, argv);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("Invalid --language") != std::string::npos);
+}
+
 TEST_CASE("LoadFromCli: no-activate flag", "[config][cli]") {
     const char* argv[] = {
         "erpl-adt",
