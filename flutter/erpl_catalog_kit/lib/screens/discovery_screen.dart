@@ -216,7 +216,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 displayName: hit.entity.displayName,
                 packageOrInfoarea: hit.entity.packageOrInfoarea,
                 isCurated: hit.entity.isCurated,
-                onTap: () => context.push('/entity/${hit.entity.id}'),
+                // go (not push) so the entity's URL is reflected in the
+                // address bar and is copy-pastable; browser back returns to
+                // this search (its state is URL-serialized above).
+                onTap: () => context.go('/entity/${hit.entity.id}'),
               );
             },
           ),

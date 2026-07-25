@@ -100,7 +100,7 @@ class _Header extends StatelessWidget {
               ProvenanceBadge(curated: entity.isCurated),
               const SizedBox(width: 8),
               FilledButton.tonalIcon(
-                onPressed: () => context.push('/curate/${entity.id}'),
+                onPressed: () => context.go('/curate/${entity.id}'),
                 icon: const Icon(Icons.edit_note),
                 label: const Text('Curate'),
               ),
@@ -197,7 +197,7 @@ class _OverviewTab extends ConsumerWidget {
             OutlinedButton.icon(
               onPressed: () {
                 ref.read(exportScopeProvider.notifier).state = entity.packageOrInfoarea;
-                context.push('/admin/feed');
+                context.go('/admin/feed');
               },
               icon: const Icon(Icons.download_outlined, size: 16),
               label: Text('Export ${entity.packageOrInfoarea}'),
@@ -264,19 +264,19 @@ class _RelationshipSummary extends ConsumerWidget {
           label: 'Used by',
           value: whereUsed.value?.length,
           icon: Icons.arrow_back,
-          onTap: () => context.push('/entity/$entityId/relate?lens=whereUsed'),
+          onTap: () => context.go('/entity/$entityId/relate?lens=whereUsed'),
         ),
         _SummaryCard(
           label: 'Downstream hops',
           value: lineage.value?.length,
           icon: Icons.arrow_forward,
-          onTap: () => context.push('/entity/$entityId/relate?lens=lineage'),
+          onTap: () => context.go('/entity/$entityId/relate?lens=lineage'),
         ),
         _SummaryCard(
           label: 'Driver formulas',
           value: driverTree.value?.length,
           icon: Icons.functions,
-          onTap: () => context.push('/entity/$entityId/relate?lens=driverTree'),
+          onTap: () => context.go('/entity/$entityId/relate?lens=driverTree'),
         ),
       ],
     );
@@ -453,7 +453,7 @@ class _BusinessContextTab extends StatelessWidget {
           ]),
           const SizedBox(height: 20),
           OutlinedButton.icon(
-            onPressed: () => context.push('/curate/${entity.id}'),
+            onPressed: () => context.go('/curate/${entity.id}'),
             icon: const Icon(Icons.edit_note),
             label: Text(entity.isCurated ? 'Edit business context' : 'Curate this entity'),
           ),

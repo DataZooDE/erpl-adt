@@ -148,7 +148,7 @@ class _EdgeTile extends StatelessWidget {
       // was tapped and reads as "this goes nowhere." The entity's
       // Relationships tab (or the summary cards on its Overview) is one
       // tap away from there if the user wants to keep exploring outward.
-      onTap: () => context.push('/entity/$targetId'),
+      onTap: () => context.go('/entity/$targetId'),
     );
 
     if (!_isUnresolved) {

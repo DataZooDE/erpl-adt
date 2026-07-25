@@ -34,7 +34,7 @@ class _RelationshipScreenState extends State<RelationshipScreen> {
             padding: const EdgeInsets.only(right: 8),
             child: Center(
               child: TextButton.icon(
-                onPressed: () => context.push('/entity/${widget.entityId}'),
+                onPressed: () => context.go('/entity/${widget.entityId}'),
                 icon: const Icon(Icons.info_outline, size: 16),
                 label: const Text('Entity detail'),
               ),
@@ -53,7 +53,17 @@ class _RelationshipScreenState extends State<RelationshipScreen> {
                   ButtonSegment(value: lens, label: Text(lens.label)),
               ],
               selected: {_lens},
-              onSelectionChanged: (s) => setState(() => _lens = s.first),
+              onSelectionChanged: (s) {
+                final lens = s.first;
+                setState(() => _lens = lens);
+                // Reflect the active lens in the URL so each relationship
+                // view (where-used / lineage / driver tree) is its own
+                // stable, copy-pastable link.
+                final target = '/entity/${widget.entityId}/relate?lens=${lens.name}';
+                if (GoRouterState.of(context).uri.toString() != target) {
+                  context.go(target);
+                }
+              },
             ),
           ),
           if (_lens == RelationshipLens.lineage)
