@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <map>
 #include <sstream>
+#include <unordered_set>
 
 namespace erpl_adt {
 
@@ -343,7 +344,13 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
 
         {
             duckdb::Appender app(con, "entities");
+            // The `id` column is the PRIMARY KEY; a feed that carries the same
+            // entity twice (e.g. an object surfaced under two scoped packages)
+            // would otherwise abort the whole append with a constraint
+            // violation. Skip duplicates by id — first occurrence wins.
+            std::unordered_set<std::string> seen_entity_ids;
             for (const auto& e : feed.entities) {
+                if (!seen_entity_ids.insert(e.id.Value()).second) continue;
                 app.BeginRow();
                 app.Append<const char*>(e.id.Value().c_str());
                 app.Append<const char*>(e.system_sid.c_str());
@@ -376,7 +383,14 @@ Result<void, Error> DuckDbCatalogStore::WriteFeed(const CatalogFeed& feed) {
 
         {
             duckdb::Appender app(con, "fields");
+            // The field `id` (entity_id + "#" + field_name) is the PRIMARY KEY.
+            // Some SAP objects expose two fields that normalize to the same id
+            // (e.g. duplicate or empty field names); appending both would abort
+            // the whole write with a UNIQUE constraint violation. Skip
+            // duplicates by id — first occurrence wins.
+            std::unordered_set<std::string> seen_field_ids;
             for (const auto& f : feed.fields) {
+                if (!seen_field_ids.insert(f.id).second) continue;
                 app.BeginRow();
                 app.Append<const char*>(f.id.c_str());
                 app.Append<const char*>(f.entity_id.Value().c_str());
@@ -1097,7 +1111,10 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
 
         {
             duckdb::Appender app(con, "entities");
+            // Skip duplicate entity ids (PRIMARY KEY) — see WriteFeed.
+            std::unordered_set<std::string> seen_entity_ids;
             for (const auto& e : merged_entities) {
+                if (!seen_entity_ids.insert(e.id.Value()).second) continue;
                 app.BeginRow();
                 app.Append<const char*>(e.id.Value().c_str());
                 app.Append<const char*>(e.system_sid.c_str());
@@ -1129,7 +1146,10 @@ Result<void, Error> DuckDbCatalogStore::UpsertEntitiesAndFields(
         }
         {
             duckdb::Appender app(con, "fields");
+            // Skip duplicate field ids (PRIMARY KEY) — see WriteFeed.
+            std::unordered_set<std::string> seen_field_ids;
             for (const auto& f : fields) {
+                if (!seen_field_ids.insert(f.id).second) continue;
                 app.BeginRow();
                 app.Append<const char*>(f.id.c_str());
                 app.Append<const char*>(f.entity_id.Value().c_str());
