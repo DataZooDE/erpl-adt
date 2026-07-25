@@ -231,6 +231,115 @@ TEST_CASE("DuckDbCatalogStore: GetFields returns an entity's fields", "[storage]
     CHECK(found_price);
 }
 
+TEST_CASE("DuckDbCatalogStore: WriteFeed tolerates a feed with duplicate field "
+          "ids (dedupes instead of aborting the whole write)",
+          "[storage][duckdb]") {
+    // Regression: some SAP objects expose two fields that normalize to the
+    // same field id (entity_id + "#" + field_name) — e.g. duplicate or
+    // empty field names. The field `id` is the PRIMARY KEY, so appending
+    // both used to abort the entire WriteFeed with a UNIQUE constraint
+    // violation, failing a whole `catalog build`/`sync` on one bad object.
+    // The store must dedupe by id and still persist the rest of the feed.
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    auto tabl_id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    feed.built_at = "2026-07-19T10:00:00Z";
+
+    CatalogEntity tabl(tabl_id);
+    tabl.system_sid = "A4H";
+    tabl.domain = CatalogDomain::Ddic;
+    tabl.object_type = "TABL";
+    tabl.technical_name = "SFLIGHT";
+    tabl.display_name = "Flight schedule";
+    tabl.extracted_at = "2026-07-19T10:00:00Z";
+    feed.entities.push_back(tabl);
+
+    // Two fields with the SAME id (both empty-named -> "<id>#").
+    CatalogField f1(tabl_id);
+    f1.id = tabl_id.Value() + "#";
+    f1.name = "";
+    f1.data_type = "S_CARR_ID";
+    feed.fields.push_back(std::move(f1));
+
+    CatalogField f2(tabl_id);
+    f2.id = tabl_id.Value() + "#";  // collides with f1
+    f2.name = "";
+    f2.data_type = "S_PRICE";
+    feed.fields.push_back(std::move(f2));
+
+    auto write_result = store->WriteFeed(feed);
+    REQUIRE(write_result.IsOk());  // must not abort on the duplicate
+
+    // The entity is persisted, and the colliding field is stored exactly once.
+    auto entity = store->GetEntity(tabl_id);
+    REQUIRE(entity.IsOk());
+    REQUIRE(entity.Value().has_value());
+
+    auto fields = store->GetFields(tabl_id);
+    REQUIRE(fields.IsOk());
+    CHECK(fields.Value().size() == 1);
+}
+
+TEST_CASE("DuckDbCatalogStore: WriteFeed tolerates a feed with duplicate entity "
+          "ids (dedupes instead of aborting the whole write)",
+          "[storage][duckdb]") {
+    // Same class of bug on the entities table: an object surfaced under two
+    // scoped packages arrives twice with the same entity id (PRIMARY KEY).
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    auto id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    CatalogFeed feed;
+    feed.system_sid = "A4H";
+    feed.built_at = "2026-07-19T10:00:00Z";
+
+    for (int i = 0; i < 2; ++i) {
+        CatalogEntity e(id);
+        e.system_sid = "A4H";
+        e.domain = CatalogDomain::Ddic;
+        e.object_type = "TABL";
+        e.technical_name = "SFLIGHT";
+        e.display_name = "Flight schedule";
+        e.extracted_at = "2026-07-19T10:00:00Z";
+        feed.entities.push_back(std::move(e));
+    }
+
+    REQUIRE(store->WriteFeed(feed).IsOk());
+    auto count = store->EntityCount();
+    REQUIRE(count.IsOk());
+    CHECK(count.Value() == 1);
+}
+
+TEST_CASE("DuckDbCatalogStore: UpsertEntitiesAndFields tolerates duplicate field "
+          "ids",
+          "[storage][duckdb]") {
+    auto store = DuckDbCatalogStore::Open(":memory:").Value();
+
+    auto id = DeriveEntityId("A4H", CatalogDomain::Ddic, "TABL", "SFLIGHT");
+    CatalogEntity e(id);
+    e.system_sid = "A4H";
+    e.domain = CatalogDomain::Ddic;
+    e.object_type = "TABL";
+    e.technical_name = "SFLIGHT";
+    e.display_name = "Flight schedule";
+    e.extracted_at = "2026-07-19T10:00:00Z";
+
+    CatalogField f1(id);
+    f1.id = id.Value() + "#";
+    f1.name = "";
+    CatalogField f2(id);
+    f2.id = id.Value() + "#";  // duplicate id
+    f2.name = "";
+
+    auto result = store->UpsertEntitiesAndFields({e}, {f1, f2});
+    REQUIRE(result.IsOk());
+
+    auto fields = store->GetFields(id);
+    REQUIRE(fields.IsOk());
+    CHECK(fields.Value().size() == 1);
+}
+
 TEST_CASE("DuckDbCatalogStore: EntityCount reflects a written feed", "[storage][duckdb]") {
     auto store = DuckDbCatalogStore::Open(":memory:").Value();
     auto feed = MakeSampleFeed();
