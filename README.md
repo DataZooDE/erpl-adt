@@ -282,6 +282,8 @@ erpl-adt mcp --catalog-db catalog.duckdb --http     # JSON-RPC over HTTP
 
 The web UI ([`flutter/erpl_catalog_kit`](flutter/erpl_catalog_kit), compiled and embedded straight into the `erpl-adt` binary — see [Building from source](#building-from-source)) is **read-only against the cache except for curation**: Search, Browse, Entity Detail, Lineage, and Driver Tree all query the same fast `catalog_*` MCP tools the CLI and AI agents use; the Curate screen is the only one that writes, via `catalog_annotate`. There's no build/sync button — `catalog webui` doesn't hold a live SAP connection, so building, exporting, and syncing stay CLI-only operations. The Sync Status screen shows past sync runs and cache health, and Feed Export surfaces the exact `erpl-adt catalog build --format ...` command to run for each format, rather than re-implementing either client-side.
 
+![catalog explorer](docs/demos/catalog-explorer.png)
+
 ## Deploy workflow
 
 erpl-adt also includes the original `deploy` workflow for automated abapGit package deployment via YAML configuration:
