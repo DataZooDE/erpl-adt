@@ -196,6 +196,12 @@ void OutputFormatter::PrintJson(const std::string& json) const {
     out_ << json << "\n";
 }
 
+// Every human-readable CLI failure funnels through PrintError, which makes it
+// the one place worth naming the issue tracker. JSON mode returns before this
+// is used -- appending prose to parseable output would break callers.
+static constexpr const char* kIssueHint =
+    "  Unexpected? Please report it: https://github.com/DataZooDE/erpl-adt/issues";
+
 void OutputFormatter::PrintError(const Error& error) const {
     if (json_mode_) {
         err_ << error.ToJson() << "\n";
@@ -218,6 +224,7 @@ void OutputFormatter::PrintError(const Error& error) const {
             err_ << "  " << kYellow << "Hint: " << kReset
                  << error.hint.value() << "\n";
         }
+        err_ << kDim << kIssueHint << kReset << "\n";
         return;
     }
 
@@ -234,6 +241,7 @@ void OutputFormatter::PrintError(const Error& error) const {
     if (error.hint.has_value() && !error.hint->empty()) {
         err_ << "  Hint: " << error.hint.value() << "\n";
     }
+    err_ << kIssueHint << "\n";
 }
 
 void OutputFormatter::PrintSuccess(const std::string& message) const {

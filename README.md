@@ -353,6 +353,20 @@ Or use Docker Compose for end-to-end provisioning with a SAP ABAP Cloud Develope
 docker compose up
 ```
 
+## Feedback
+
+If `erpl-adt` misbehaves or does something surprising, please
+[open an issue](https://github.com/DataZooDE/erpl-adt/issues). ADT talks to real SAP
+systems whose configurations we cannot reproduce here, so a report with your setup is
+the fastest path to a fix — every human-readable error ends with that link for exactly
+this reason.
+
+If it saved you a trip through Eclipse, a star on the repo helps other people find it.
+
+The first time you run `erpl-adt` interactively each day, a small banner says the same
+thing. It never prints when output is piped, under `--json` or `--quiet`, or in CI.
+Silence it with `DATAZOO_NO_BANNER=1`.
+
 ## Telemetry
 
 erpl-adt collects anonymous, aggregate usage telemetry (feature usage, outcomes,

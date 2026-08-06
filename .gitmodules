@@ -4,3 +4,6 @@
 [submodule "third_party/cmrc"]
 	path = third_party/cmrc
 	url = https://github.com/vector-of-bool/cmrc.git
+[submodule "third_party/datazoo-banner"]
+	path = third_party/datazoo-banner
+	url = https://github.com/DataZooDE/duckdb-extension-banner.git

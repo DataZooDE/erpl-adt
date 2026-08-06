@@ -73,6 +73,21 @@ else()
     set(ERPL_ADT_HAVE_TELEMETRY FALSE)
 endif()
 
+# Feedback banner (header-only, no dependencies of its own). Its banner_shown
+# event goes through posthog-telemetry, so the flag has to follow whether that
+# submodule is actually present -- otherwise the banner header would include a
+# telemetry.hpp that is not there.
+set(DATAZOO_BANNER_TELEMETRY ${ERPL_ADT_HAVE_TELEMETRY} CACHE BOOL "" FORCE)
+add_subdirectory(third_party/datazoo-banner EXCLUDE_FROM_ALL)
+if(ERPL_ADT_HAVE_TELEMETRY)
+    # The banner's telemetry branch includes telemetry.hpp directly, and here
+    # posthog_telemetry is linked PRIVATE into erpl_adt_lib -- so its include
+    # path does not reach the translation units that include the banner header.
+    # Carry it on the banner's own INTERFACE instead.
+    target_include_directories(datazoo_banner INTERFACE
+        ${CMAKE_SOURCE_DIR}/third_party/posthog-telemetry/include)
+endif()
+
 # --- Embedded web UI (Flutter web build baked into the binary via CMakeRC) ---
 # Optional: the C++ build must not require the Flutter/Dart toolchain. If
 # `make webui` (flutter build web) hasn't been run, WEBUI_WEB_DIR won't
@@ -130,6 +145,7 @@ if(LIB_SOURCES)
         ftxui::component
         $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>
     )
+    target_link_libraries(erpl_adt_lib PUBLIC datazoo_banner)
     if(ERPL_ADT_HAVE_TELEMETRY)
         target_link_libraries(erpl_adt_lib PRIVATE posthog_telemetry)
         target_compile_definitions(erpl_adt_lib PRIVATE ERPL_ADT_TELEMETRY_ENABLED=1)

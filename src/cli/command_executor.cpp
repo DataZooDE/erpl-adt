@@ -6888,6 +6888,11 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
 
     out << "\n";
     a.Dim("  Use \"erpl-adt <command> --help\" for examples and workflows.").Nl();
+
+    // Permanent, not rate-limited: help output is already a "where do I go
+    // next" surface, and someone reading it is exactly who we want reporting
+    // what did not work.
+    a.Dim("  Bugs, feedback and stars: https://github.com/DataZooDE/erpl-adt").Nl();
 }
 
 // ---------------------------------------------------------------------------
