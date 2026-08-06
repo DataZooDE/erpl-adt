@@ -28,6 +28,7 @@
 #include <string_view>
 #include <csignal>
 #include <vector>
+#include "datazoo_banner.hpp"
 
 namespace {
 
@@ -271,11 +272,21 @@ std::vector<const char*> StripSubcommand(int argc, const char* const* argv,
     return stripped;
 }
 
+// Identity for the feedback banner and the issue-link footer on failures.
+static constexpr datazoo::BannerInfo kBanner {"erpl-adt", erpl_adt::kVersion,
+                                              "https://github.com/DataZooDE/erpl-adt"};
+
 void PrintError(const erpl_adt::Error& error, bool json_output) {
     if (json_output) {
+        // JSON output is parsed by other programs; appending prose to it would
+        // break them. Machine consumers get the error unchanged.
         std::cerr << error.ToJson() << "\n";
     } else {
         std::cerr << "Error: " << error.ToString() << "\n";
+        // Every human-readable failure names the tracker. This is the single
+        // choke point all error exits funnel through, which is why the hint
+        // lives here rather than at each of the ~20 return sites.
+        std::cerr << datazoo::IssueHint(kBanner).substr(1) << "\n";
     }
 }
 
@@ -621,6 +632,22 @@ int main(int argc, const char* argv[]) {
                                                : InstallKind::Cli;
         Telemetry::Initialize(no_telemetry, kVersion, kind);
         std::atexit([] { Telemetry::Flush(); });
+    }
+
+    // Once-a-day feedback nudge. Silent unless both streams are terminals and
+    // the ~/.duckdb stamp is over a day old, so piped and scripted invocations
+    // -- the overwhelming majority for a CLI -- see nothing. Machine-readable
+    // and quiet runs suppress it outright.
+    {
+        bool machine_readable = false;
+        for (int i = 1; i < argc; ++i) {
+            auto arg = std::string_view{argv[i]};
+            if (arg == "--json" || arg == "--quiet" || arg == "-q" || arg == "--no-banner") {
+                machine_readable = true;
+                break;
+            }
+        }
+        datazoo::ShowBannerStandalone(kBanner, machine_readable);
     }
 
     // login/logout: special top-level commands.
