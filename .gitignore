@@ -1,6 +1,3 @@
-# bv (beads viewer) local config and caches
-.bv/
-
 # Build
 build/
 vcpkg_installed/
@@ -15,7 +12,7 @@ compile_commands.json
 # Codex delegation data (AI review responses)
 .codex-delegate/
 
-# SQLite (beads)
+# Local databases
 *.db
 *.db-shm
 *.db-wal
@@ -29,6 +26,3 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
-
-# Dolt database files (added by bd init)
-.dolt/
