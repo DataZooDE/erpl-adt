@@ -28,6 +28,11 @@ class CliRunner:
 
     def __init__(self, binary_path, host, port, user, password, client):
         self.binary = str(binary_path)
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+        self.client = client
         self.base_args = [
             "--host", host,
             "--port", str(port),

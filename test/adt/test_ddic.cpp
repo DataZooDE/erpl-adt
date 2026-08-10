@@ -75,20 +75,55 @@ TEST_CASE("ListPackageContents: sends POST with correct params", "[adt][ddic]") 
     CHECK(call.path.find("withShortDescriptions=true") != std::string::npos);
 }
 
-TEST_CASE("ListPackageContents: empty-body + 404 on package probe = NotFound",
+TEST_CASE("ListPackageContents: empty-body + proven absence = NotFound",
           "[adt][ddic]") {
     // SAP's nodestructure returns HTTP 200 with an empty body for BOTH
-    // "package empty" and "package missing". When empty, we probe
-    // /sap/bc/adt/packages/<n>; a 404 there means the package is missing.
+    // "package empty" and "package missing". When empty, existence is checked
+    // separately: 404 from the package resource AND no search hit = missing.
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         R"(<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>)"}));
 
     auto result = ListPackageContents(mock, "ZGHOST_PKG");
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::NotFound);
     CHECK(result.Error().message.find("does not exist") != std::string::npos);
     CHECK(result.Error().message.find("ZGHOST_PKG") != std::string::npos);
+}
+
+TEST_CASE("ListPackageContents: empty package on 7.40 is empty, not missing",
+          "[adt][ddic]") {
+    // GitHub issue #35: SAP_BASIS 7.40 has no /sap/bc/adt/packages/{name}
+    // resource, so its 404 must not turn a childless package into
+    // "does not exist". The search hit proves the package is there.
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         R"(<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">)"
+         R"(<adtcore:objectReference adtcore:type="DEVC/K" adtcore:name="ZEMPTY_PKG"/>)"
+         R"(</adtcore:objectReferences>)"}));
+
+    auto result = ListPackageContents(mock, "ZEMPTY_PKG");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().empty());
+}
+
+TEST_CASE("ListPackageContents: existence check skipped when not requested",
+          "[adt][ddic]") {
+    // Packages discovered from a parent listing provably exist; re-verifying
+    // each empty leaf would cost a round trip per package.
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = ListPackageContents(mock, "ZKNOWN_PKG", /*verify_existence=*/false);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().empty());
+    CHECK(mock.GetCallCount() == 0);
 }
 
 TEST_CASE("ListPackageContents: empty-body + 200 on package probe = empty list",

@@ -150,6 +150,15 @@ Both `.github/workflows/release.yaml` and `.github/workflows/build.yaml` run `ma
 - `-vv`: DEBUG-level logging (request/response headers, cookies, CSRF tokens)
 - Logging uses `core/log.hpp` global logger (`LogInfo`, `LogDebug`, etc.) writing to stderr
 
+Package existence (release-dependent): `/sap/bc/adt/packages/{name}` does not exist on
+SAP_BASIS 7.40 — it answers 404 for *every* package there, so a 404 from it proves
+nothing. `ResolvePackageExistence()` falls back to the repository information system
+search (`objectType=DEVC/K`, exact name match), which is available on every release, and
+reports which oracle answered via `resolved_via`. Never map that 404 straight to "does
+not exist". Related: `nodestructure` answers HTTP 200 with an *empty body* for both
+"package is empty" and "package does not exist", so it cannot serve as the oracle either
+— those two states must be distinguished separately.
+
 Key endpoints:
 - `/sap/bc/adt/discovery` — service discovery
 - `/sap/bc/adt/repository/informationsystem/search` — object search
@@ -171,8 +180,8 @@ Protocol is undocumented. Ground truth comes from captured Eclipse ADT traffic i
 **Integration tests:** Python/pytest in `test/integration_py/`. Run against a live SAP ABAP Cloud Developer Trial (Docker). Test the actual ADT REST API endpoints. Every test logs the exact CLI command invoked, making the test suite executable CLI documentation.
 
 **Execution cadence (required for refactoring work):**
-- Run integration tests after each completed beads task, not only at the end of an epic.
-- Minimum cadence: run `make test-integration-py-smoke` after each task; run full `make test-integration-py` for task DoD and before closing related beads issues.
+- Run integration tests after each completed task, not only at the end of an epic.
+- Minimum cadence: run `make test-integration-py-smoke` after each task; run full `make test-integration-py` for task DoD and before closing the related GitHub issue.
 - If the live SAP system is unavailable, record the connectivity blocker immediately and rerun as soon as connectivity is restored.
 
 ```bash
@@ -301,12 +310,5 @@ docker exec a4h bash -c "su - a4hadm -c 'sapcontrol -nr 00 -function WaitforStar
 
 ## Issue Tracking
 
-This project uses `bd` (beads) for issue tracking. See `AGENTS.md` for workflow.
-
-```bash
-bd ready                          # Find available work
-bd show <id>                      # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>                     # Complete work
-bd sync --flush-only              # Export to JSONL
-```
+GitHub Issues (`gh issue list`, `gh issue view <n>`) is the issue tracker for this
+project. There is no local issue database.

@@ -13,6 +13,21 @@ PackageName MakePackage(const char* name) {
     return PackageName::Create(name).Value();
 }
 
+// Minimal shape of a repository information system quickSearch response.
+const char* kEmptySearchXml =
+    R"(<?xml version="1.0" encoding="utf-8"?>)"
+    R"(<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>)";
+
+std::string SearchXmlFor(const std::string& package_name) {
+    return
+        R"(<?xml version="1.0" encoding="utf-8"?>)"
+        R"(<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">)"
+        R"(<adtcore:objectReference adtcore:uri="/sap/bc/adt/packages/)" +
+        package_name + R"(" adtcore:type="DEVC/K" adtcore:name=")" +
+        package_name + R"("/>)"
+        R"(</adtcore:objectReferences>)";
+}
+
 } // namespace
 
 // ===========================================================================
@@ -34,17 +49,121 @@ TEST_CASE("PackageExists: returns true on 200", "[adt][packages]") {
     CHECK(session.GetCalls()[0].path == "/sap/bc/adt/packages/ZTEST");
 }
 
-TEST_CASE("PackageExists: returns false on 404", "[adt][packages]") {
+TEST_CASE("PackageExists: returns false on 404 with no search hit", "[adt][packages]") {
     MockAdtSession session;
     MockXmlCodec codec;
 
     session.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {404, {}, "Not Found"}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, kEmptySearchXml}));
 
     auto result = PackageExists(session, codec, MakePackage("ZNOTFOUND"));
 
     REQUIRE(result.IsOk());
     CHECK(result.Value() == false);
+}
+
+// ---------------------------------------------------------------------------
+// GitHub issue #35: SAP_BASIS 7.40 has no /sap/bc/adt/packages/{name}
+// resource, so a 404 from it proves nothing about the package's existence.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("PackageExists: falls back to search when the package resource 404s",
+          "[adt][packages]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {404, {}, "Not Found"}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, SearchXmlFor("SABAPDEMOS")}));
+
+    auto result = PackageExists(session, codec, MakePackage("SABAPDEMOS"));
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value() == true);
+    REQUIRE(session.GetCallCount() == 2);
+    CHECK(session.GetCalls()[1].path.find(
+        "/sap/bc/adt/repository/informationsystem/search") == 0);
+    CHECK(session.GetCalls()[1].path.find("objectType=DEVC%2FK") !=
+          std::string::npos);
+}
+
+TEST_CASE("PackageExists: search fallback matches case-insensitively",
+          "[adt][packages]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, SearchXmlFor("sabapdemos")}));
+
+    auto result = PackageExists(session, codec, MakePackage("SABAPDEMOS"));
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value() == true);
+}
+
+TEST_CASE("PackageExists: search fallback requires an exact name match",
+          "[adt][packages]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    // quickSearch matches by prefix: "SMOI" must not be satisfied by "SMOI_EN".
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, SearchXmlFor("SMOI_EN")}));
+
+    auto result = PackageExists(session, codec, MakePackage("SMOI"));
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value() == false);
+}
+
+TEST_CASE("PackageExists: a failing search is an error, not 'does not exist'",
+          "[adt][packages]") {
+    MockAdtSession session;
+    MockXmlCodec codec;
+
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {500, {}, "Internal Server Error"}));
+
+    auto result = PackageExists(session, codec, MakePackage("ZTEST"));
+
+    REQUIRE(result.IsErr());
+}
+
+TEST_CASE("ResolvePackageExistence: reports how existence was established",
+          "[adt][packages]") {
+    SECTION("package resource") {
+        MockAdtSession session;
+        session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+            {200, {}, "<package-xml/>"}));
+
+        auto result = ResolvePackageExistence(session, MakePackage("ZTEST"));
+
+        REQUIRE(result.IsOk());
+        CHECK(result.Value().exists);
+        CHECK(result.Value().resolved_via == PackageResolution::PackageResource);
+        CHECK(std::string(ToString(result.Value().resolved_via)) ==
+              "package_resource");
+    }
+
+    SECTION("search fallback") {
+        MockAdtSession session;
+        session.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+        session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+            {200, {}, SearchXmlFor("ZTEST")}));
+
+        auto result = ResolvePackageExistence(session, MakePackage("ZTEST"));
+
+        REQUIRE(result.IsOk());
+        CHECK(result.Value().exists);
+        CHECK(result.Value().resolved_via == PackageResolution::Search);
+        CHECK(std::string(ToString(result.Value().resolved_via)) == "search");
+    }
 }
 
 TEST_CASE("PackageExists: returns error on unexpected status", "[adt][packages]") {
@@ -193,9 +312,12 @@ TEST_CASE("EnsurePackage: creates when package does not exist", "[adt][packages]
     MockAdtSession session;
     MockXmlCodec codec;
 
-    // PackageExists check -> 404
+    // PackageExists check -> 404 from the package resource, then no search hit
+    // (absence has to be proven before creating).
     session.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {404, {}, "Not Found"}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, kEmptySearchXml}));
     // CreatePackage flow
     session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
     codec.SetBuildPackageCreateXmlResponse(

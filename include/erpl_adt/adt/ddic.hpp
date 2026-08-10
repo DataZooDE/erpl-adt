@@ -27,10 +27,17 @@ struct PackageEntry {
 //
 // Endpoint: POST /sap/bc/adt/repository/nodestructure
 //           ?parent_type=DEVC/K&parent_name={pkg}&withShortDescriptions=true
+//
+// SAP answers 200 with an empty body for both "package is empty" and "package
+// does not exist". When `verify_existence` is set, an empty body triggers a
+// separate existence check so the two states can be told apart; pass false for
+// packages already known to exist (e.g. discovered from a parent listing) to
+// skip that round trip.
 // ---------------------------------------------------------------------------
 [[nodiscard]] Result<std::vector<PackageEntry>, Error> ListPackageContents(
     IAdtSession& session,
-    const std::string& package_name);
+    const std::string& package_name,
+    bool verify_existence = true);
 
 // ---------------------------------------------------------------------------
 // ListPackageTree — recursively list all objects in a package hierarchy.
