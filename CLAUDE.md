@@ -150,6 +150,15 @@ Both `.github/workflows/release.yaml` and `.github/workflows/build.yaml` run `ma
 - `-vv`: DEBUG-level logging (request/response headers, cookies, CSRF tokens)
 - Logging uses `core/log.hpp` global logger (`LogInfo`, `LogDebug`, etc.) writing to stderr
 
+Package existence (release-dependent): `/sap/bc/adt/packages/{name}` does not exist on
+SAP_BASIS 7.40 — it answers 404 for *every* package there, so a 404 from it proves
+nothing. `ResolvePackageExistence()` falls back to the repository information system
+search (`objectType=DEVC/K`, exact name match), which is available on every release, and
+reports which oracle answered via `resolved_via`. Never map that 404 straight to "does
+not exist". Related: `nodestructure` answers HTTP 200 with an *empty body* for both
+"package is empty" and "package does not exist", so it cannot serve as the oracle either
+— those two states must be distinguished separately.
+
 Key endpoints:
 - `/sap/bc/adt/discovery` — service discovery
 - `/sap/bc/adt/repository/informationsystem/search` — object search

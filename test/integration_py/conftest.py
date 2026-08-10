@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from adt_proxy import Sap740Proxy
 from cli_runner import CliRunner
 
 
@@ -69,6 +70,70 @@ def cli(sap_config):
         pytest.fail("SAP system not reachable after 5 minutes")
 
     return runner
+
+
+# ---------------------------------------------------------------------------
+# SAP_BASIS 7.40 emulation (GitHub issue #35)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def cli_740(sap_config, cli):
+    """A CliRunner talking to the live SAP system through the 7.40 proxy.
+
+    The proxy forwards everything to the real system except
+    `GET /sap/bc/adt/packages/<name>`, which it answers with 404 — exactly what
+    a 7.40 ICF tree does, because the per-package object resource does not
+    exist there. All other responses are real SAP data.
+    """
+    with Sap740Proxy(sap_config["host"], sap_config["port"]) as proxy:
+        yield CliRunner(
+            binary_path=cli.binary,
+            host="127.0.0.1",
+            port=proxy.port,
+            user=sap_config["user"],
+            password=sap_config["password"],
+            client=sap_config["client"],
+        )
+
+
+@pytest.fixture(scope="session")
+def cli_740_no_collection(sap_config, cli):
+    """Like `cli_740`, but also hides the bare `/sap/bc/adt/packages` collection.
+
+    Emulates the 7.40 discovery document, where the Packages workspace lists
+    only the `settings` service.
+    """
+    with Sap740Proxy(sap_config["host"], sap_config["port"],
+                     strip_packages_collection=True) as proxy:
+        yield CliRunner(
+            binary_path=cli.binary,
+            host="127.0.0.1",
+            port=proxy.port,
+            user=sap_config["user"],
+            password=sap_config["password"],
+            client=sap_config["client"],
+        )
+
+
+@pytest.fixture(scope="session")
+def empty_package(cli):
+    """Create an existing-but-empty local package; delete it on teardown.
+
+    "Empty" and "non-existent" are different states, and SAP's nodestructure
+    endpoint answers HTTP 200 with an empty body for both — which is why
+    package existence needs a separate oracle.
+    """
+    name = f"$ZEMPTY_{random.randint(10000, 99999)}"
+    cli.run_ok(
+        "object", "create",
+        "--type", "DEVC/K",
+        "--name", name,
+        "--package", "$TMP",
+        "--description", "Integration test empty package",
+        "--responsible", cli.user,
+    )
+    yield name
+    cli.run("object", "delete", f"/sap/bc/adt/packages/{name.lower()}")
 
 
 # ---------------------------------------------------------------------------

@@ -343,6 +343,13 @@ Result<uint16_t, Error> ParsePort(std::string_view raw) {
         static_cast<uint16_t>(std::move(result).Value()));
 }
 
+// Resolve the effective logon user the same way CreateSession does:
+// explicit flag > saved credentials > default.
+std::string ResolveUserName(const CommandArgs& args) {
+    auto creds = LoadCredentials();
+    return GetFlag(args, "user", creds ? creds->user : "DEVELOPER");
+}
+
 // Create an AdtSession from CommandArgs flags.
 Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args) {
     auto creds = LoadCredentials();
@@ -1103,6 +1110,14 @@ int HandleObjectCreate(const CommandArgs& args) {
     params.description = description;
     if (HasFlag(args, "transport")) {
         params.transport_number = GetFlag(args, "transport");
+    }
+    if (HasFlag(args, "responsible")) {
+        params.responsible = GetFlag(args, "responsible");
+    } else if (obj_type == "DEVC/K") {
+        // SAP rejects package creation without a person responsible
+        // ("Enter a valid user, not , as the person responsible"), so default
+        // it to the logon user rather than failing.
+        params.responsible = ResolveUserName(args);
     }
 
     auto session = RequireSession(args, fmt);
@@ -2975,8 +2990,7 @@ int HandlePackageExists(const CommandArgs& args) {
     if (!session) {
         return 99;
     }
-    XmlCodec codec;
-    auto result = PackageExists(*session, codec, pkg_result.Value());
+    auto result = ResolvePackageExistence(*session, pkg_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -2984,11 +2998,12 @@ int HandlePackageExists(const CommandArgs& args) {
 
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
-        j["exists"] = result.Value();
+        j["exists"] = result.Value().exists;
         j["package"] = args.positional[0];
+        j["resolved_via"] = ToString(result.Value().resolved_via);
         fmt.PrintJson(j.dump());
     } else {
-        if (result.Value()) {
+        if (result.Value().exists) {
             fmt.PrintSuccess("Package exists: " + args.positional[0]);
         } else {
             std::cout << "Package not found: " << args.positional[0] << "\n";
@@ -7307,8 +7322,11 @@ void RegisterAllCommands(CommandRouter& router) {
             {"package", "<pkg>", "Target package", true},
             {"description", "<text>", "Object description", false},
             {"transport", "<id>", "Transport request number", false},
+            {"responsible", "<user>", "Person responsible (defaults to the logon user)", false},
         };
         help.long_description =
+            "For DEVC/K (packages): SAP requires a person responsible; it defaults to the "
+            "logon user and can be overridden with --responsible.\n"
             "For TABL/DT (transparent tables): after create, write CDS source including "
             "@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE, "
             "@AbapCatalog.tableCategory : #TRANSPARENT, "

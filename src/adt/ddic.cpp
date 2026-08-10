@@ -2,6 +2,7 @@
 
 #include "adt_utils.hpp"
 #include "xml_utils.hpp"
+#include <erpl_adt/adt/packages.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
@@ -391,7 +392,8 @@ std::string ParseDeliveryClassFromDdl(const std::string& ddl) {
 // ---------------------------------------------------------------------------
 Result<std::vector<PackageEntry>, Error> ListPackageContents(
     IAdtSession& session,
-    const std::string& package_name) {
+    const std::string& package_name,
+    bool verify_existence) {
     auto url = "/sap/bc/adt/repository/nodestructure"
                "?parent_type=DEVC/K&parent_name=" + package_name +
                "&withShortDescriptions=true";
@@ -409,23 +411,29 @@ Result<std::vector<PackageEntry>, Error> ListPackageContents(
     }
 
     // SAP's nodestructure endpoint returns HTTP 200 with an empty body for
-    // BOTH "package is empty" and "package does not exist". Disambiguate by
-    // probing the /sap/bc/adt/packages/<n> endpoint when the body is empty
-    // — a 404 there means the package is orphaned (e.g. its TADIR record
-    // was deleted but some objects' package refs were not cleaned up).
-    // Without this check, `package list X` silently returns [] when X is
-    // missing, which is indistinguishable from a real "empty package" — a
-    // #9-class failure mode.
-    if (http.body.empty()) {
-        auto probe = session.Get("/sap/bc/adt/packages/" + UrlEncode(package_name));
-        if (probe.IsOk() && probe.Value().status_code == 404) {
-            return Result<std::vector<PackageEntry>, Error>::Err(Error{
-                "ListPackageContents", url, 404,
-                "Package " + package_name + " does not exist",
-                std::nullopt, ErrorCategory::NotFound});
+    // BOTH "package is empty" and "package does not exist". Disambiguate with
+    // a real existence check. Without it, `package list X` silently returns []
+    // when X is missing, which is indistinguishable from a real "empty
+    // package" — a #9-class failure mode.
+    //
+    // The check must not be a bare /sap/bc/adt/packages/<n> probe: SAP_BASIS
+    // 7.40 has no such resource and 404s for every package, which turned every
+    // childless package into "does not exist" (GitHub issue #35).
+    if (http.body.empty() && verify_existence) {
+        auto name = PackageName::Create(package_name);
+        if (name.IsOk()) {
+            auto existence = ResolvePackageExistence(session, name.Value());
+            if (existence.IsOk() && !existence.Value().exists) {
+                return Result<std::vector<PackageEntry>, Error>::Err(Error{
+                    "ListPackageContents", url, 404,
+                    "Package " + package_name + " does not exist",
+                    std::nullopt, ErrorCategory::NotFound});
+            }
+            // Existence confirmed, or could not be determined → the package is
+            // empty as far as we can tell; fall through to the empty vector.
+            // "Empty" and "non-existent" are different states, and only a
+            // proven absence may be reported as one.
         }
-        // Probe failed or returned 200 → assume the package exists but is
-        // genuinely empty; fall through to return the empty vector.
     }
 
     return ParseNodeStructure(http.body);
@@ -451,7 +459,11 @@ Result<std::vector<PackageEntry>, Error> ListPackageTree(
         auto [pkg_name, depth] = queue.front();
         queue.pop();
 
-        auto contents = ListPackageContents(session, pkg_name);
+        // Only the root needs an existence check — every other package in the
+        // queue was listed as a child of one we just read, so it provably
+        // exists and re-verifying it would cost a round trip per empty leaf.
+        const bool verify = (depth == 0);
+        auto contents = ListPackageContents(session, pkg_name, verify);
         if (contents.IsErr()) {
             return Result<std::vector<PackageEntry>, Error>::Err(
                 std::move(contents).Error());

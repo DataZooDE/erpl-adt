@@ -524,13 +524,15 @@ ToolResult HandlePackageExists(IAdtSession& session,
         return MakeParamError("Invalid package name: " + pkg_result.Error());
     }
 
-    XmlCodec codec;
-    auto result = PackageExists(session, codec, pkg_result.Value());
+    auto result = ResolvePackageExistence(session, pkg_result.Value());
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     nlohmann::json j;
-    j["exists"] = result.Value();
+    j["exists"] = result.Value().exists;
     j["package"] = *name;
+    // How the answer was established, so a caller can tell a real "absent"
+    // from an answer that leaned on an endpoint this release may not have.
+    j["resolved_via"] = ToString(result.Value().resolved_via);
     return MakeOkResult(j);
 }
 
@@ -969,7 +971,11 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "adt_package_exists",
-        "Check if a package exists in the ABAP system.",
+        "Check if a package exists in the ABAP system. Returns exists (bool) and "
+        "resolved_via (\"package_resource\" or \"search\"), which reports how the "
+        "answer was established — releases without a package object resource "
+        "(e.g. SAP_BASIS 7.40) are resolved through the repository information "
+        "system instead.",
         MakeSchema(
             {{"package_name", StringProp("Package name (e.g., ZTEST)")}},
             {"package_name"}),

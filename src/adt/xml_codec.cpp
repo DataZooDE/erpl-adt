@@ -271,7 +271,10 @@ Result<DiscoveryResult, Error> XmlCodec::ParseDiscoveryResponse(
             if (service.href.find("/abapgit/repos") != std::string::npos) {
                 result.has_abapgit_support = true;
             }
-            if (service.href.find("/packages") != std::string::npos) {
+            // Only the collection itself means package support. Sub-resources
+            // such as /packages/settings are present on releases that have no
+            // package object resource at all (GitHub issue #35).
+            if (service.href == "/sap/bc/adt/packages") {
                 result.has_packages_support = true;
             }
             if (service.href == "/sap/bc/adt/activation") {
