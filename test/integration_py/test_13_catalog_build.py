@@ -85,8 +85,16 @@ class TestCatalogBuildFieldDescriptions:
 
 @pytest.mark.catalog
 @pytest.mark.bw
+@pytest.mark.usefixtures("bw_has_search")
 class TestCatalogBuildBw:
-    """catalog build --infoarea <ia> covers the BW domain."""
+    """catalog build --infoarea <ia> covers the BW domain.
+
+    Gated on bw_has_search like the other BW suites: `catalog build --infoarea`
+    enumerates the area through /sap/bw/modeling/repo/is/bwsearch, so it needs
+    both the BW Modeling API and BW Search. The @pytest.mark.bw marker alone
+    selects tests, it does not skip them — without the fixture these failed
+    outright on systems where BW is not activated.
+    """
 
     def test_build_yields_bw_entities(self, cli):
         data = cli.run_ok(
