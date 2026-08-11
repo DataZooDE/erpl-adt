@@ -194,7 +194,14 @@ Integration tests require `SAP_PASSWORD` env var. Defaults: localhost:50000, DEV
 
 **Acceptance criteria:** Integration tests are complete when `SAP_PASSWORD=... uv run pytest -v` in `test/integration_py/` passes all tests against a real SAP system.
 
-Exit codes: 0=success, 1=connection/auth, 2=package/notfound, 3=clone, 4=pull, 5=activation, 6=lock conflict, 7=test failure, 8=ATC check error, 9=transport error, 10=timeout, 99=internal.
+Exit codes: 0=success, 1=connection/auth/authorization, 2=package/notfound, 3=clone, 4=pull, 5=activation, 6=lock conflict, 7=test failure, 8=ATC check error, 9=transport error, 10=timeout, 99=internal.
+
+HTTP 403 is classified by evidence, not by status alone: a 403 carrying a SAP
+application error is not a CSRF problem — "currently editing"/"locked by" is a
+`lock_conflict` (exit 6), anything else is `authorization` (exit 1). Only a bare 403
+with no SAP payload is treated as `csrf_token`, which is also the shape the session
+layer retries once. A 403 raised while *fetching* a token is never `csrf_token` —
+there was no token yet.
 
 Test directory structure:
 - `test/core/` — types, result
@@ -250,9 +257,25 @@ Versioning: `v{YYYY}.{MM}.{DD}` date-based tags. Bugfix same-day releases append
 After a container restart, the BW Modeling REST API and BW Search are **not active**.
 They must be activated by writing directly to HANA tables, then restarting the SAP instance.
 
+The Python integration suite does this for you: `pytest_sessionstart` probes BW with
+`erpl-adt bw discover` and, when it is down, runs the steps below and waits for SAP to
+come back (several minutes). Because that writes to HANA system tables and restarts the
+instance, it only fires on a system identifiable as the local throwaway trial — SAP host
+local *and* the Docker container running. Override with `SAP_BW_AUTOACTIVATE=never`
+(skip BW suites instead) or `=always` (disposable systems only), and point it at another
+container with `SAP_DOCKER_CONTAINER`. Anything remote is refused outright, so the suite
+can never restart a real BW system. See `test/integration_py/bw_activation.py`.
+
+The manual steps remain below, for doing it by hand.
+
 The CLI shows actionable hints when services are missing:
 - HTTP 404 on any `/sap/bw/modeling/` path → SICF not activated
+- HTTP 403 on any `/sap/bw/modeling/` path (including the CSRF fetch, which is where
+  an inactive node usually bites first) → SICF not activated, or missing authorization
 - HTTP 500 "not activated" on `/bwsearch` → BW Search not activated
+
+Hints are attached in the session layer too, not only in the BW modules, so failures
+raised below them (a rejected CSRF fetch) still carry one.
 
 ### Step 1 — Activate /sap/bw/ and /sap/bw/modeling/ in ICFSERVLOC
 
@@ -305,8 +328,10 @@ docker exec a4h bash -c "su - a4hadm -c 'sapcontrol -nr 00 -function WaitforStar
 - The GUID constants (`DFFAEATGKMFLCDXQ04F0J7FXK`, `3FWVDBADCM6B4KLQKF4R70SS5`) are stable across
   restarts on the same a4h image — they are part of the delivered content, not generated at runtime.
 - `ICFSERVLOC` is client-dependent (SAP client 001). If you switch clients, re-check.
-- The standard `sapse/abap-cloud-developer-trial` image is ABAP Cloud only — no BW Modeling API.
-  These steps apply to a full SAP BW/4HANA system (on-prem or a4h with BW add-on).
+- These steps work on the standard `sapse/abap-cloud-developer-trial:2023` image, verified:
+  after activation `bw search '*'` returns delivered BW content (`0BCT_CB`, `0BW`, …) and the
+  BW integration suites pass against infoareas such as `0BWTCT`. This note previously said
+  that image has no BW Modeling API — it does; the ICF nodes just ship inactive.
 
 ## Issue Tracking
 

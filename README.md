@@ -126,6 +126,7 @@ OBJECT — Read, create, delete, lock/unlock ABAP objects
   object create                           Create an ABAP object
       --type, --name, --package           (required)
       --description, --transport
+      --responsible <user>                Person responsible (default: logon user)
   object delete <uri>                     Delete an ABAP object
   object lock <uri>                       Lock an object for editing
   object read <name-or-uri>               Read object structure
@@ -142,6 +143,8 @@ SOURCE — Read, write, and check ABAP source code
   source write <name-or-uri>              Write source code
       --file <path>                       Path to local source file  (required)
       --activate                          Activate the object after writing
+                                          (not combinable with --handle: SAP
+                                          refuses to activate a locked object)
       --optimistic                        Try lockless write first (pre-7.51 SAP)
 
 ACTIVATE — Activate inactive ABAP objects
@@ -181,7 +184,7 @@ GLOBAL FLAGS
   -v / -vv                                INFO / DEBUG logging
 
 EXIT CODES
-  0  Success   1  Connection/auth   2  Not found   5  Activation error
+  0  Success   1  Connection/auth/authorization   2  Not found   5  Activation error
   6  Lock conflict   7  Test failure   8  ATC check error   99  Internal error
 ```
 

@@ -170,6 +170,10 @@ private:
 enum class ErrorCategory {
     Connection,
     Authentication,
+    // Forbidden for a reason that is not a CSRF token problem — the service is
+    // not activated on this release, or the user lacks the authorization. Kept
+    // separate from CsrfToken so a 403 is not blamed on a stale token.
+    Authorization,
     CsrfToken,
     NotFound,
     PackageError,
@@ -207,6 +211,7 @@ struct Error {
         switch (category) {
             case ErrorCategory::Connection:      return 1;
             case ErrorCategory::Authentication:  return 1;
+            case ErrorCategory::Authorization:   return 1;
             case ErrorCategory::CsrfToken:       return 1;
             case ErrorCategory::NotFound:        return 2;
             case ErrorCategory::PackageError:    return 2;
@@ -227,6 +232,7 @@ struct Error {
         switch (category) {
             case ErrorCategory::Connection:      return "connection";
             case ErrorCategory::Authentication:  return "authentication";
+            case ErrorCategory::Authorization:   return "authorization";
             case ErrorCategory::CsrfToken:       return "csrf_token";
             case ErrorCategory::NotFound:        return "not_found";
             case ErrorCategory::PackageError:    return "package";

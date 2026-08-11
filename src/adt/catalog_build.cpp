@@ -90,6 +90,11 @@ bool IsFatalForWholeBuild(const Error& error) {
     switch (error.category) {
         case ErrorCategory::Connection:
         case ErrorCategory::Authentication:
+        // A service that is not activated, or that this user may not reach, is
+        // systemic in the same way — every later lookup hits the same wall.
+        // These used to arrive as CsrfToken (every 403 did) and were fatal
+        // then; keeping them fatal preserves that behaviour.
+        case ErrorCategory::Authorization:
         case ErrorCategory::CsrfToken:
             return true;
         default:

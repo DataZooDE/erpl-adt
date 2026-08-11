@@ -87,17 +87,31 @@ erpl-adt --host localhost --port 50000 --user DEVELOPER --password 'ABAPtr2023#0
     --client 001 bw search '*' --max 5
 ```
 
-`bw discover` should return a table of BW Modeling service URIs. If it returns HTTP 403 or
-the misleading "CSRF token may be invalid" error, the ICF service cache was not flushed —
-confirm the instance fully restarted (all four processes GREEN) and retry.
+`bw discover` should return a table of BW Modeling service URIs. If it still fails with
+
+```json
+{"category":"authorization","operation":"FetchCsrfToken","http_status":403,
+ "hint":"Access denied — activate /sap/bw/modeling/ in transaction SICF ..."}
+```
+
+the ICF service cache was not flushed — confirm the instance fully restarted (all four
+processes GREEN) and retry. (Before v2026.08.11 this surfaced as a misleading
+`csrf_token` / "CSRF token may be invalid" error, which sent you looking at
+authentication rather than at the inactive service.)
 
 ## Notes
 
 - The GUID constants are stable on the same a4h image across restarts. They are delivered
   content, not generated at runtime.
 - `ICFSERVLOC` is client-dependent (SAP client 001). If you switch clients, re-check.
-- These steps apply to a full SAP BW/4HANA system with the BW add-on. The standard
-  `sapse/abap-cloud-developer-trial` image is ABAP Cloud only and does not include the BW
-  Modeling API.
+- The steps above were verified on the standard `sapse/abap-cloud-developer-trial:2023`
+  image: after activation `bw search '*'` returns delivered BW content (`0BCT_CB`, `0BW`,
+  …) and the BW integration suites pass against infoareas such as `0BWTCT`. An earlier
+  version of this note claimed that image has no BW Modeling API; that is not the case —
+  the services are present but their ICF nodes ship inactive.
 - This activation does **not** persist across Docker image recreations — only across
   container restarts (the HANA data volume is preserved).
+- The Python integration suite performs these steps automatically when it finds BW down
+  (`test/integration_py/bw_activation.py`), so you rarely need to run them by hand. It
+  only does so for a system it can identify as the local throwaway trial; set
+  `SAP_BW_AUTOACTIVATE=never` to turn that off.

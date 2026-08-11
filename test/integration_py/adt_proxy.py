@@ -1,4 +1,4 @@
-"""Transparent ADT proxy that emulates one SAP_BASIS 7.40 routing difference.
+"""Transparent ADT proxy that emulates release/activation differences.
 
 Background (GitHub issue #35): on SAP_BASIS 7.40 the ADT discovery document
 exposes only ``/sap/bc/adt/packages/settings`` — there is no per-package object
@@ -14,8 +14,12 @@ collection from the discovery document. Every other request — search,
 nodestructure, CSRF, object CRUD — is forwarded to the live system untouched
 and answered with real SAP data.
 
-It is deliberately *not* a mock: no SAP response is synthesised except the 404
-that a 7.40 ICF tree would produce by itself.
+`bw_status` additionally short-circuits `/sap/bw/*` with a fixed status,
+emulating a system whose BW ICF nodes were never activated (SAP answers 403
+there, including on the CSRF fetch).
+
+It is deliberately *not* a mock: no SAP response is synthesised except the
+statuses an ICF tree would produce by itself for a route it does not serve.
 """
 
 import http.client
@@ -52,11 +56,24 @@ class _Handler(BaseHTTPRequestHandler):
     upstream_host = ""
     upstream_port = 0
     strip_packages_collection = False
+    # When set, every /sap/bw/ request is answered with this status instead of
+    # being forwarded — emulating a system whose BW ICF nodes were never
+    # activated. SAP answers 403 there, including on the CSRF fetch.
+    bw_status = None
 
     def log_message(self, format, *args):  # noqa: A002 — silence stderr spam
         pass
 
     def _handle(self):
+        if self.bw_status is not None and self.path.startswith("/sap/bw/"):
+            body = b"Forbidden"
+            self.send_response(self.bw_status)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if self.command == "GET" and _is_package_object_resource(self.path):
             body = b"Not Found"
             self.send_response(404)
@@ -125,13 +142,14 @@ class Sap740Proxy:
     """Context manager exposing a local port that emulates 7.40 package routing."""
 
     def __init__(self, upstream_host, upstream_port,
-                 strip_packages_collection=False):
+                 strip_packages_collection=False, bw_status=None):
         handler = type(
             "BoundHandler", (_Handler,),
             {
                 "upstream_host": upstream_host,
                 "upstream_port": upstream_port,
                 "strip_packages_collection": strip_packages_collection,
+                "bw_status": bw_status,
             },
         )
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
