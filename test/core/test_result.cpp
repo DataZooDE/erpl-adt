@@ -345,19 +345,66 @@ TEST_CASE("FromHttpStatus: 401 maps to Authentication", "[error]") {
     CHECK(e.message.find("login") != std::string::npos);
 }
 
-TEST_CASE("FromHttpStatus: 403 maps to CsrfToken", "[error]") {
+// ---------------------------------------------------------------------------
+// 403 classification.
+//
+// A bare 403 is the shape of a genuine CSRF token expiry. A 403 that carries a
+// SAP application error is not a token problem at all, and labelling it
+// "csrf_token" sent callers chasing the wrong cause — a lock conflict and an
+// unactivated service both reported themselves as CSRF failures.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FromHttpStatus: bare 403 maps to CsrfToken", "[error]") {
     auto e = Error::FromHttpStatus("Op", "/ep", 403);
     CHECK(e.category == ErrorCategory::CsrfToken);
     CHECK(e.message.find("Forbidden") != std::string::npos);
 }
 
-TEST_CASE("FromHttpStatus: 403 includes SAP message when available", "[error]") {
+TEST_CASE("FromHttpStatus: 403 with a SAP error is not a CSRF problem", "[error]") {
     std::string body = R"(<exc:exception><exc:message>Package $DEMO_SOI_DRAFT does not exist</exc:message></exc:exception>)";
     auto e = Error::FromHttpStatus("Lock", "/ep", 403, body);
-    CHECK(e.category == ErrorCategory::CsrfToken);
+    CHECK(e.category == ErrorCategory::Authorization);
+    CHECK(e.ExitCode() == 1);
     CHECK(e.message.find("Package $DEMO_SOI_DRAFT does not exist") != std::string::npos);
     REQUIRE(e.sap_error.has_value());
     CHECK(e.sap_error.value() == "Package $DEMO_SOI_DRAFT does not exist");
+}
+
+TEST_CASE("FromHttpStatus: 403 'currently editing' is a lock conflict", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>User DEVELOPER is currently editing ZCL_FOO</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("ActivateObject", "/ep", 403, body);
+    CHECK(e.category == ErrorCategory::LockConflict);
+    CHECK(e.ExitCode() == 6);
+    CHECK(e.message.find("currently editing") != std::string::npos);
+}
+
+TEST_CASE("FromHttpStatus: 403 'locked by' is a lock conflict", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>Object is locked by user SMITH</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("LockObject", "/ep", 403, body);
+    CHECK(e.category == ErrorCategory::LockConflict);
+    CHECK(e.ExitCode() == 6);
+}
+
+TEST_CASE("FromHttpStatus: lock phrase match is case-insensitive", "[error]") {
+    std::string body = R"(<exc:exception><exc:message>USER DEVELOPER IS CURRENTLY EDITING ZCL_FOO</exc:message></exc:exception>)";
+    auto e = Error::FromHttpStatus("ActivateObject", "/ep", 403, body);
+    CHECK(e.category == ErrorCategory::LockConflict);
+}
+
+TEST_CASE("FromHttpStatus: 403 on a CSRF fetch is never a token problem", "[error]") {
+    // We were fetching the token — there was no token to be invalid. This is
+    // the shape an unactivated ICF service returns.
+    auto e = Error::FromHttpStatus("FetchCsrfToken", "/sap/bw/modeling/discovery", 403);
+    CHECK(e.category == ErrorCategory::Authorization);
+    CHECK(e.ExitCode() == 1);
+    CHECK(e.message.find("CSRF token may be invalid") == std::string::npos);
+}
+
+TEST_CASE("Authorization category serializes and maps to exit 1", "[error]") {
+    Error e{"Op", "/ep", 403, "Forbidden", std::nullopt,
+            ErrorCategory::Authorization};
+    CHECK(e.ExitCode() == 1);
+    CHECK(e.CategoryName() == "authorization");
 }
 
 TEST_CASE("FromHttpStatus: 400 includes SAP message when available", "[error]") {

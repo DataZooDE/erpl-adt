@@ -177,6 +177,42 @@ TEST_CASE("source write: missing --file returns 99",
     CHECK(router.Dispatch(6, argv) == 99);
 }
 
+TEST_CASE("source write: --activate with --handle is rejected before writing",
+          "[cli][executor]") {
+    // SAP refuses to activate an object under an editing lock, so the
+    // combination can never succeed. Rejecting it up front avoids writing the
+    // source and then failing activation, which left the object inactive and
+    // the lock still held.
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "write",
+                          "/sap/bc/adt/oo/classes/foo/source/main",
+                          "--file", "/tmp/does-not-matter.abap",
+                          "--handle", "abc123", "--activate"};
+    const auto result = DispatchCaptureBoth(router, 9, argv);
+    CHECK(result.exit_code == 99);
+    const auto combined = result.stdout_text + result.stderr_text;
+    CHECK(combined.find("--activate") != std::string::npos);
+    CHECK(combined.find("--handle") != std::string::npos);
+    // Points at the way out, not just the refusal.
+    CHECK(combined.find("object unlock") != std::string::npos);
+}
+
+TEST_CASE("source write: --activate without --handle is accepted",
+          "[cli][executor]") {
+    // Auto-lock mode unlocks before activating, so the flag is fine there.
+    // Missing --file is what stops this one, not the activate/handle rule.
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "source", "write",
+                          "/sap/bc/adt/oo/classes/foo/source/main",
+                          "--activate"};
+    const auto result = DispatchCaptureBoth(router, 5, argv);
+    CHECK(result.exit_code == 99);
+    const auto combined = result.stdout_text + result.stderr_text;
+    CHECK(combined.find("--file") != std::string::npos);
+}
+
 TEST_CASE("object delete: invalid URI returns 99",
           "[cli][executor]") {
     CommandRouter router;

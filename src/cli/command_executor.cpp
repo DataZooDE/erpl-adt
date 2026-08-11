@@ -1644,6 +1644,20 @@ int HandleSourceWrite(const CommandArgs& args) {
         return 99;
     }
 
+    // --activate cannot work while the caller holds the lock: SAP refuses to
+    // activate an object under an editing lock ("User X is currently editing
+    // ..."). Rejected up front rather than after the write, which would leave
+    // the source written, the object inactive and the lock still held.
+    if (HasFlag(args, "activate") && !GetFlag(args, "handle").empty()) {
+        fmt.PrintError(MakeValidationError(
+            "--activate cannot be combined with --handle: SAP refuses to "
+            "activate an object while your lock is held. Unlock first "
+            "(erpl-adt object unlock <uri> --handle <handle>), then activate "
+            "(erpl-adt activate <uri>). Omit --handle to let erpl-adt "
+            "lock, write, unlock and activate in one step."));
+        return 99;
+    }
+
     auto section = GetFlag(args, "section", "main");
     static const std::vector<std::string> kValidWriteSections = {
         "main", "localdefinitions", "localimplementations", "testclasses"};
