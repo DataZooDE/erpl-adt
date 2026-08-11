@@ -257,6 +257,17 @@ Versioning: `v{YYYY}.{MM}.{DD}` date-based tags. Bugfix same-day releases append
 After a container restart, the BW Modeling REST API and BW Search are **not active**.
 They must be activated by writing directly to HANA tables, then restarting the SAP instance.
 
+The Python integration suite does this for you: `pytest_sessionstart` probes BW with
+`erpl-adt bw discover` and, when it is down, runs the steps below and waits for SAP to
+come back (several minutes). Because that writes to HANA system tables and restarts the
+instance, it only fires on a system identifiable as the local throwaway trial — SAP host
+local *and* the Docker container running. Override with `SAP_BW_AUTOACTIVATE=never`
+(skip BW suites instead) or `=always` (disposable systems only), and point it at another
+container with `SAP_DOCKER_CONTAINER`. Anything remote is refused outright, so the suite
+can never restart a real BW system. See `test/integration_py/bw_activation.py`.
+
+The manual steps remain below, for doing it by hand.
+
 The CLI shows actionable hints when services are missing:
 - HTTP 404 on any `/sap/bw/modeling/` path → SICF not activated
 - HTTP 403 on any `/sap/bw/modeling/` path (including the CSRF fetch, which is where
