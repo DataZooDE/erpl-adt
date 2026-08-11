@@ -504,7 +504,7 @@ class TestBwLineage:
             for r in data["references"]
         )
 
-    def test_read_query_nonexistent_returns_not_found(self, cli):
+    def test_read_query_nonexistent_returns_not_found(self, cli, bw_has_search):
         """read-query for nonexistent object returns a clear not-found error."""
         result = cli.run("bw", "read-query", "query", "ZZZZZ_NONEXISTENT_Q_99999")
         assert result.returncode == 2

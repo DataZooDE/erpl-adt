@@ -72,24 +72,31 @@ class TestAbapUnit:
 
         source_uri = uri + "/source/main"
         try:
-            cli.run("source", "write", source_uri,
-                    "--file", src_file,
-                    "--handle", handle,
-                    session_file=session_file)
+            cli.run_ok("source", "write", source_uri,
+                       "--file", src_file,
+                       "--handle", handle,
+                       session_file=session_file)
         finally:
             os.unlink(src_file)
 
-        cli.run("object", "unlock", uri,
-                "--handle", handle,
-                session_file=session_file)
+        cli.run_ok("object", "unlock", uri,
+                   "--handle", handle,
+                   session_file=session_file)
+
+        # Activation must come after the unlock — SAP refuses to activate an
+        # object the session is still holding a lock on ("User X is currently
+        # editing ..."). It is required: ABAP Unit only discovers test methods
+        # in the *active* version, so skipping it leaves SAP with nothing to
+        # run. run_ok so a failed activation fails here, loudly, instead of
+        # surfacing later as a silently empty test run.
+        cli.run_ok("activate", uri)
 
         # Run tests.
         data = cli.run_ok("test", "run", uri)
-        # We just wrote a class with one FOR TESTING method that asserts
-        # 1 == 2. The test runner MUST detect it. A silently-zero
-        # total_methods would mean either the writer didn't activate the
-        # source or the runner is silently skipping the inactive version —
-        # both are #9-style "command succeeded but did nothing" bugs.
+        # We just wrote and activated a class with one FOR TESTING method that
+        # asserts 1 == 2. The test runner MUST detect it. A silently-zero
+        # total_methods would mean the runner is skipping methods it should
+        # find — a #9-style "command succeeded but did nothing" bug.
         assert data.get("total_methods", 0) > 0, (
             "test run returned total_methods=0 after writing a class with "
             "a FOR TESTING method — runner is likely skipping inactive "
