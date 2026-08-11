@@ -328,8 +328,10 @@ docker exec a4h bash -c "su - a4hadm -c 'sapcontrol -nr 00 -function WaitforStar
 - The GUID constants (`DFFAEATGKMFLCDXQ04F0J7FXK`, `3FWVDBADCM6B4KLQKF4R70SS5`) are stable across
   restarts on the same a4h image — they are part of the delivered content, not generated at runtime.
 - `ICFSERVLOC` is client-dependent (SAP client 001). If you switch clients, re-check.
-- The standard `sapse/abap-cloud-developer-trial` image is ABAP Cloud only — no BW Modeling API.
-  These steps apply to a full SAP BW/4HANA system (on-prem or a4h with BW add-on).
+- These steps work on the standard `sapse/abap-cloud-developer-trial:2023` image, verified:
+  after activation `bw search '*'` returns delivered BW content (`0BCT_CB`, `0BW`, …) and the
+  BW integration suites pass against infoareas such as `0BWTCT`. This note previously said
+  that image has no BW Modeling API — it does; the ICF nodes just ship inactive.
 
 ## Issue Tracking
 

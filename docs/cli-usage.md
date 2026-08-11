@@ -135,7 +135,10 @@ erpl-adt transport release NPLK900001
 # List package contents
 erpl-adt package list ZTEST_PKG
 
-# Check if package exists
+# Check if package exists. The result carries `resolved_via`
+# ("package_resource" or "search") reporting how existence was
+# established -- releases without a per-package object resource
+# (e.g. SAP_BASIS 7.40) are resolved through the information system.
 erpl-adt package exists ZTEST_PKG
 
 # Recursively list all objects in a package hierarchy
@@ -145,6 +148,10 @@ erpl-adt package tree ZTEST_PKG --max-depth 10
 ```
 
 **API:** `ListPackageContents(session, name)` -- `POST /sap/bc/adt/repository/nodestructure`
+
+Note: SAP answers that endpoint with HTTP 200 and an empty body for both "the
+package is empty" and "the package does not exist", so `package list` runs a
+separate existence check before reporting a package as missing.
 
 ### ddic -- Data Dictionary operations
 
@@ -211,7 +218,7 @@ The deploy workflow is an idempotent state machine: `discover → create package
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Connection / Authentication / CSRF error |
+| 1 | Connection / Authentication / Authorization / CSRF error |
 | 2 | Package / NotFound error |
 | 3 | Clone error |
 | 4 | Pull error |
@@ -222,6 +229,11 @@ The deploy workflow is an idempotent state machine: `discover → create package
 | 9 | Transport error |
 | 10 | Timeout |
 | 99 | Internal error |
+
+HTTP 403 is classified by what the response carries, not by the status alone: a
+403 with a SAP application error is not a token problem -- "currently
+editing"/"locked by" is a lock conflict (6), anything else is an authorization
+error (1). Only a bare 403 is treated as a CSRF failure.
 
 ## JSON Output
 
