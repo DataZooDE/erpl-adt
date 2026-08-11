@@ -194,7 +194,14 @@ Integration tests require `SAP_PASSWORD` env var. Defaults: localhost:50000, DEV
 
 **Acceptance criteria:** Integration tests are complete when `SAP_PASSWORD=... uv run pytest -v` in `test/integration_py/` passes all tests against a real SAP system.
 
-Exit codes: 0=success, 1=connection/auth, 2=package/notfound, 3=clone, 4=pull, 5=activation, 6=lock conflict, 7=test failure, 8=ATC check error, 9=transport error, 10=timeout, 99=internal.
+Exit codes: 0=success, 1=connection/auth/authorization, 2=package/notfound, 3=clone, 4=pull, 5=activation, 6=lock conflict, 7=test failure, 8=ATC check error, 9=transport error, 10=timeout, 99=internal.
+
+HTTP 403 is classified by evidence, not by status alone: a 403 carrying a SAP
+application error is not a CSRF problem — "currently editing"/"locked by" is a
+`lock_conflict` (exit 6), anything else is `authorization` (exit 1). Only a bare 403
+with no SAP payload is treated as `csrf_token`, which is also the shape the session
+layer retries once. A 403 raised while *fetching* a token is never `csrf_token` —
+there was no token yet.
 
 Test directory structure:
 - `test/core/` — types, result
@@ -252,7 +259,12 @@ They must be activated by writing directly to HANA tables, then restarting the S
 
 The CLI shows actionable hints when services are missing:
 - HTTP 404 on any `/sap/bw/modeling/` path → SICF not activated
+- HTTP 403 on any `/sap/bw/modeling/` path (including the CSRF fetch, which is where
+  an inactive node usually bites first) → SICF not activated, or missing authorization
 - HTTP 500 "not activated" on `/bwsearch` → BW Search not activated
+
+Hints are attached in the session layer too, not only in the BW modules, so failures
+raised below them (a rejected CSRF fetch) still carry one.
 
 ### Step 1 — Activate /sap/bw/ and /sap/bw/modeling/ in ICFSERVLOC
 

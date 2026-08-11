@@ -1,5 +1,9 @@
 #include <erpl_adt/core/result.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <iterator>
+
 namespace erpl_adt {
 
 namespace {
@@ -60,6 +64,25 @@ std::optional<std::string> ExtractSapError(const std::string& body) {
     return std::nullopt;
 }
 
+// SAP reports an enqueue conflict as a 403 with an application error rather
+// than a 409/423, e.g. "User DEVELOPER is currently editing ZCL_FOO".
+bool IsLockConflictText(const std::string& text) {
+    std::string lower;
+    lower.reserve(text.size());
+    std::transform(text.begin(), text.end(), std::back_inserter(lower),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    static const char* kPhrases[] = {
+        "currently editing",
+        "locked by",
+        "is being edited",
+        "currently being edited",
+    };
+    for (const char* phrase : kPhrases) {
+        if (lower.find(phrase) != std::string::npos) return true;
+    }
+    return false;
+}
+
 } // anonymous namespace
 
 Error Error::FromHttpStatus(const std::string& operation,
@@ -83,10 +106,26 @@ Error Error::FromHttpStatus(const std::string& operation,
             message = "Authentication failed — check credentials or run 'erpl-adt login'";
             break;
         case 403:
-            category = ErrorCategory::CsrfToken;
-            message = sap_error.has_value()
-                ? "Forbidden: " + *sap_error
-                : "Forbidden — CSRF token may be invalid";
+            // A 403 is only a CSRF problem when there is nothing else to
+            // explain it. SAP returns 403 for lock conflicts and for services
+            // that are not activated on this release; blaming those on a stale
+            // token sends callers after the wrong cause.
+            if (sap_error.has_value()) {
+                category = IsLockConflictText(*sap_error)
+                    ? ErrorCategory::LockConflict
+                    : ErrorCategory::Authorization;
+                message = "Forbidden: " + *sap_error;
+            } else if (operation == "FetchCsrfToken") {
+                // We were fetching the token, so there was no token to be
+                // invalid. This is the shape an unactivated ICF node returns.
+                category = ErrorCategory::Authorization;
+                message = "Forbidden: CSRF token fetch rejected — the service "
+                          "may not be activated, or the user may lack "
+                          "authorization for it";
+            } else {
+                category = ErrorCategory::CsrfToken;
+                message = "Forbidden — CSRF token may be invalid";
+            }
             break;
         case 404:
             category = ErrorCategory::NotFound;

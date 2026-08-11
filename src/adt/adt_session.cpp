@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/adt_session.hpp>
 #include "adt_utils.hpp"
+#include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/log.hpp>
 
 #include <httplib.h>
@@ -20,12 +21,29 @@ namespace erpl_adt {
 
 namespace {
 
+// Errors built down here escape the per-operation AddBwHint() calls in the BW
+// modules, so a failure the session layer raises for a BW path (a rejected CSRF
+// fetch against an unactivated service, say) would otherwise arrive with no
+// hint at all. AddBwHint self-gates on the endpoint, so calling it on every
+// session error is safe.
 Error MakeSessionError(const std::string& operation,
                        const std::string& endpoint,
                        std::optional<int> http_status,
                        const std::string& message,
                        ErrorCategory category = ErrorCategory::Connection) {
-    return Error{operation, endpoint, http_status, message, std::nullopt, category};
+    Error error{operation, endpoint, http_status, message, std::nullopt, category};
+    AddBwHint(error);
+    return error;
+}
+
+// Same, for errors derived from an HTTP status.
+Error MakeSessionHttpError(const std::string& operation,
+                           const std::string& endpoint,
+                           int status_code,
+                           const std::string& body) {
+    auto error = Error::FromHttpStatus(operation, endpoint, status_code, body);
+    AddBwHint(error);
+    return error;
 }
 
 // Check if a 403 response body contains a SAP application error (XML).
@@ -421,7 +439,7 @@ struct AdtSession::Impl {
             LogResponse(res->status, res->headers, res->body);
             if (res->status != 200) {
                 return Result<std::string, Error>::Err(
-                    Error::FromHttpStatus("FetchCsrfToken", fetch_path, res->status, res->body));
+                    MakeSessionHttpError("FetchCsrfToken", fetch_path, res->status, res->body));
             }
 
             // Capture session cookies and context ID from the CSRF fetch response.
