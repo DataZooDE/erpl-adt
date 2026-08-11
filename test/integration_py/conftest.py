@@ -3,12 +3,48 @@
 import os
 import random
 import socket
+import sys
 import time
 
 import pytest
 
 from adt_proxy import Sap740Proxy
+from bw_activation import ensure_bw_activated
 from cli_runner import CliRunner
+
+
+# ---------------------------------------------------------------------------
+# Session start: make sure BW is up before anything runs
+# ---------------------------------------------------------------------------
+
+def pytest_sessionstart(session):
+    """Probe the BW Modeling API and activate it if it is down.
+
+    Runs here rather than in a fixture because switching BW on restarts the SAP
+    instance, which takes minutes — far past the per-test `--timeout`, which
+    also covers fixture setup. `pytest_sessionstart` is outside that clock.
+
+    Best-effort by design: on any system that cannot or must not be modified
+    this is a single HTTP probe and the BW suites skip exactly as before. See
+    bw_activation.py for the guard rails.
+    """
+    password = os.getenv("SAP_PASSWORD")
+    if not password:
+        return  # No SAP system configured — every test skips anyway.
+
+    # Don't restart a system for BW tests that were deselected.
+    markexpr = session.config.getoption("-m", default="") or ""
+    if "not bw" in markexpr:
+        return
+
+    ensure_bw_activated(
+        host=os.getenv("SAP_HOST", "localhost"),
+        port=int(os.getenv("SAP_PORT", "50000")),
+        user=os.getenv("SAP_USER", "DEVELOPER"),
+        password=password,
+        client=os.getenv("SAP_CLIENT", "001"),
+        log=lambda message: print(f"[bw] {message}", file=sys.stderr, flush=True),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +251,12 @@ import json as _json  # noqa: E402 — local alias to avoid polluting namespace
 
 @pytest.fixture(scope="session")
 def bw_available(cli):
-    """Probe BW discovery endpoint once. Skip all BW tests if unavailable."""
+    """Probe BW discovery endpoint once. Skip all BW tests if unavailable.
+
+    `pytest_sessionstart` has already tried to switch BW on by this point, so
+    reaching the skip means BW is genuinely out of reach — a remote system, no
+    Docker, or SAP_BW_AUTOACTIVATE=never.
+    """
     result = cli.run("bw", "discover")
     if result.returncode != 0:
         pytest.skip("BW Modeling API not available on this system")
