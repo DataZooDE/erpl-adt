@@ -2963,6 +2963,13 @@ paths:
         name. The target package travels in the body as `<adtcore:packageRef>`.
 
 
+        The verb depends on the type: ADSO creates with POST, while InfoObject
+
+        answers 404 "Resource IOBJ <name> does not exist" to a POST and creates with
+
+        PUT on the same URI and body.
+
+
         Requires CSRF token; mutating requests use a stateful session. On success
 
         the new object URI is returned in the `Location` header (a 202 indicates

@@ -73,6 +73,45 @@ class TestBwCreate:
         read = cli.run_ok("bw", "read", "ADSO", name, "--version", "m")
         assert read["name"] == name
 
+    def test_create_iobj_by_copy(self, cli, bw_available):
+        """InfoObject creation goes through PUT, not POST (issue #44 follow-up).
+
+        The IOBJ resource controller implements only get(), so a POST for a
+        name that does not exist yet answers 404 "Resource IOBJ ... does not
+        exist"; the client retries with PUT.
+        """
+        sources = cli.run_ok("bw", "search", "0CALMONTH", "--max", "1", "--type", "IOBJ")
+        if not sources:
+            pytest.skip("No delivered IOBJ available to copy from")
+        source = sources[0]["name"]
+
+        name = ("ZTIO" + uuid.uuid4().hex[:4]).upper()
+        result = cli.run("bw", "create", "IOBJ", name,
+                         "--copy-from-name", source, "--copy-from-type", "IOBJ")
+        assert result.returncode == 0, result.stderr
+        assert "does not exist" not in result.stderr
+
+        read = cli.run_ok("bw", "read", "IOBJ", name, "--version", "m")
+        assert read["name"] == name
+
+    def test_copy_does_not_rename_a_longer_neighbour(self, cli, bw_available):
+        """Copying 0CALMONTH must leave a referenced 0CALMONTH2 alone."""
+        sources = cli.run_ok("bw", "search", "0CALMONTH", "--max", "1", "--type", "IOBJ")
+        if not sources:
+            pytest.skip("No delivered IOBJ available to copy from")
+
+        name = ("ZTIO" + uuid.uuid4().hex[:4]).upper()
+        created = cli.run("bw", "create", "IOBJ", name,
+                          "--copy-from-name", "0CALMONTH", "--copy-from-type", "IOBJ")
+        if created.returncode != 0:
+            pytest.skip("IOBJ copy-create unavailable on this system")
+
+        # A substring rename produced references to "<name>2", an object that
+        # does not exist; activation then reported it as missing.
+        activated = cli.run("bw", "activate", "IOBJ", name)
+        combined = activated.stdout + activated.stderr
+        assert name + "2" not in combined
+
     def test_create_without_body_reports_a_usable_error(self, cli, bw_has_adso):
         """A type with no built-in template fails before the wire, with a hint."""
         result = cli.run("bw", "create", "TRFN", _unique_name())

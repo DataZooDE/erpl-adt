@@ -195,6 +195,17 @@ right there over ADT. `erpl-adt search 'CL_RSO_RES*'` finds the resource control
 local classes) shows exactly what the deserializer expects — that is how the shape above
 was established rather than guessed.
 
+The create *verb* depends on the object type. ADSO creates with POST; the InfoObject
+resource controller (`CL_RSO_RES_INFO_OBJECT`) implements only `get()`, so POSTing a name
+that does not exist yet answers HTTP 404 "Resource IOBJ &lt;name&gt; does not exist" and PUT is
+the create verb there — while PUT on a *new* ADSO answers 400 "Parameter version could not
+be found". `BwCreateObject` therefore tries POST and retries with PUT on a 404, which reads
+the answer off the system instead of hard-coding a verb for each of the 40-odd types.
+
+Renaming a copied object must match whole names only: copying `0CALMONTH` with a plain
+substring replace also renamed the referenced `0CALMONTH2`, and the copy then failed
+activation with "Attribute ...2 not (actively) available".
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested
