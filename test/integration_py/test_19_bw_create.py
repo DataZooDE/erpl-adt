@@ -100,3 +100,58 @@ class TestBwReadVersion:
         assert requests, result.stderr
         assert any(line.rstrip().endswith("/m") for line in requests), \
             "the requested version never reached the URL:\n" + "\n".join(requests)
+
+
+@pytest.mark.bw
+class TestBwActivate:
+    """Activation over the real endpoint (issue #44).
+
+    Every `bw activate` call used to answer HTTP 500 "Request cannot be
+    deserialized" — the payload was a `bwActivation:objects` document the
+    backend never accepted. It takes an Atom feed with one entry instead.
+    """
+
+    def test_activate_reports_check_messages(self, cli, bw_has_adso, adso_cleanup):
+        """Activating an incomplete object returns its check errors, not a 500."""
+        name = _unique_name()
+        created = cli.run("bw", "create", "ADSO", name, "--package", "$TMP")
+        if created.returncode != 0:
+            pytest.skip("bw create unavailable; activation has nothing to act on")
+        adso_cleanup.append(name)
+
+        result = cli.run("bw", "activate", "ADSO", name)
+        combined = result.stdout + result.stderr
+        # A minimal ADSO has no fields, so activation legitimately fails — but
+        # it must fail with the backend's modelling messages, not a protocol
+        # error.
+        assert "cannot be deserialized" not in combined
+        assert '"http_status":500' not in combined
+        if result.returncode == 0:
+            data = json.loads(result.stdout.strip())
+            assert "messages" in data
+        else:
+            assert "message" in combined.lower() or "consistent" in combined.lower()
+
+    def test_validate_a_consistent_object_succeeds(self, cli, bw_available):
+        """A check run against delivered content reports success."""
+        objects = cli.run_ok("bw", "search", "0CALMONTH", "--max", "1", "--type", "IOBJ")
+        if not objects:
+            pytest.skip("No delivered IOBJ available for a check run")
+        name = objects[0]["name"]
+
+        # --validate goes to /checkruns: it checks and changes nothing, which
+        # is why it is safe to point at delivered content.
+        data = cli.run_ok("bw", "activate", "IOBJ", name, "--validate")
+        assert data["success"] is True
+        assert not [m for m in data.get("messages", []) if m["severity"] == "E"]
+
+    def test_validate_does_not_activate(self, cli, bw_available):
+        """--validate must reach the checkruns endpoint, not the activation one."""
+        objects = cli.run_ok("bw", "search", "0CALMONTH", "--max", "1", "--type", "IOBJ")
+        if not objects:
+            pytest.skip("No delivered IOBJ available for a check run")
+
+        result = cli.run_no_json("-v", "bw", "activate", "IOBJ", objects[0]["name"],
+                                 "--validate")
+        assert "/sap/bw/modeling/checkruns" in result.stderr
+        assert "POST /sap/bw/modeling/activation" not in result.stderr

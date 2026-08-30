@@ -176,6 +176,25 @@ the new name. The target package travels in the body as `<adtcore:packageRef>`, 
 need `schemaVersion=""` or the backend answers 500 "Attribute 'schemaVersion' expected".
 Created objects exist only in the inactive (`m`) version until activated.
 
+BW activation (`POST /sap/bw/modeling/activation`, or `/checkruns` to check without
+activating) takes an **Atom feed with exactly one entry** — `CL_RSO_RES_ACTIVATION`
+deserializes the body with `cl_atom_feed_prov->get_feed()`. The entry's `rel="self"` link
+names the object; its `<atom:content>` must hold a `bwModel:checkProperties` element
+(namespace `http://www.sap.com/bw/modeling`) whose `version`, `modelContent` and
+`lockHandle` attributes are mandatory — `RSO_RES_ST_BW_CHECKRUN` is the transformation
+that maps them. The mode comes from the *path*, not a query parameter, and there is no
+async variant. The **type segment of the object URI must be lower case**:
+`/sap/bw/modeling/ADSO/...` makes the backend dump with HTTP 500, `/adso/...` works.
+Anything else answers HTTP 500 "Request cannot be deserialized". The response is an Atom
+feed of check messages: severity in `bwModel:checkresult/@messageType`, text in the
+entry's `<atom:title>`.
+
+Reading the backend is the fastest way to settle a payload question: the ABAP source is
+right there over ADT. `erpl-adt search 'CL_RSO_RES*'` finds the resource controllers, and
+`GET /sap/bc/adt/oo/classes/<name>/source/main` (plus `/includes/implementations` for the
+local classes) shows exactly what the deserializer expects — that is how the shape above
+was established rather than guessed.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested

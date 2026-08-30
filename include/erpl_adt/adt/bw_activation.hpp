@@ -44,12 +44,19 @@ struct BwActivationResult {
 };
 
 // ---------------------------------------------------------------------------
-// BwActivateObjects — activate (or validate/simulate) BW objects.
+// BwActivateObjects — activate (or check) BW objects.
 //
-// Endpoint: POST {activation_endpoint}?mode=...
-// Content-Type: application/vnd.sap-bw-modeling.massact+xml
+// Endpoint: POST /sap/bw/modeling/activation   (activate)
+//           POST /sap/bw/modeling/checkruns    (check only)
+// Content-Type: application/vnd.sap.bw.modeling.activation-v1_0_0+xml
 //
-// Modes: activate, validate, simulate, background
+// The body is an Atom feed carrying exactly ONE entry: the backend
+// (CL_RSO_RES_ACTIVATION) deserializes it with cl_atom_feed_prov and rejects
+// a feed with any other number of entries. The entry's rel="self" link names
+// the object; its content is a {http://www.sap.com/bw/modeling}
+// checkProperties element, whose attributes the RSO_RES_ST_BW_CHECKRUN
+// transformation maps to the check-run parameters. The mode comes from the
+// path, not from a query parameter. Several objects are several requests.
 // ---------------------------------------------------------------------------
 
 enum class BwActivationMode {
@@ -68,7 +75,8 @@ struct BwActivateOptions {
     bool sort = false;                      // validate: sort
     bool only_inactive = false;             // validate: onlyina
     std::optional<std::string> endpoint_override;  // Full endpoint URL override
-    std::optional<std::string> transport;   // CORRNR for activation
+    std::optional<std::string> transport;   // transportId in checkProperties
+    std::string lock_handle;                // From a prior bw lock, when held
 };
 
 [[nodiscard]] Result<BwActivationResult, Error> BwActivateObjects(

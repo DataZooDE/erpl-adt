@@ -3691,14 +3691,30 @@ int HandleBwActivate(const CommandArgs& args) {
     if (HasFlag(args, "transport")) {
         opts.transport = GetFlag(args, "transport");
     }
+    // Pass a lock we already hold, so the backend does not have to take its
+    // own (and fail because we are holding it).
+    opts.lock_handle = GetFlag(args, "lock-handle");
+    if (opts.mode == BwActivationMode::Background) {
+        // The BW activation route has no async variant — it checks and
+        // activates in the request. Say so rather than pretending a job was
+        // started and returning an empty GUID.
+        std::cerr << "Note: this backend activates synchronously; "
+                     "--background has no effect.\n";
+    }
 
     {
+        // Resolve the endpoint that matches the mode: a check-only run has its
+        // own collection, and taking the activation one would activate the
+        // object the user asked us only to check.
+        const bool checks_only = opts.mode == BwActivationMode::Validate ||
+                                 opts.mode == BwActivationMode::Simulate;
         BwTemplateParams path_params;
         BwTemplateParams query_params;
         auto endpoint = TryResolveBwEndpoint(
             *session,
-            "http://www.sap.com/bw/modeling/activation",
-            "activate",
+            checks_only ? "http://www.sap.com/bw/modeling/checkrun"
+                        : "http://www.sap.com/bw/modeling/activation",
+            checks_only ? "check" : "activate",
             path_params,
             query_params);
         if (endpoint.has_value()) {
@@ -8515,23 +8531,29 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage = "erpl-adt bw activate <type> <name> [<name2> ...] [flags]";
         help.args_description = "<type>     Object type\n"
                                 "  <name>     Object name(s) to activate";
-        help.long_description = "Activate BW objects. Supports validate, simulate, "
-            "and background modes.";
+        help.long_description =
+            "Activate BW objects, reporting the backend's check messages. Each "
+            "object is one request: the API takes a single object at a time. "
+            "--validate (and --simulate) run the same checks against the "
+            "checkruns endpoint and stop short of activating. Activation is "
+            "synchronous — the backend has no async variant, so --background "
+            "behaves like a normal activation.";
         help.flags = {
-            {"validate", "", "Pre-check only, don't activate", false},
-            {"simulate", "", "Dry run of activation", false},
-            {"background", "", "Run as background job", false},
+            {"validate", "", "Run the checks only, don't activate", false},
+            {"simulate", "", "Dry run: same as --validate", false},
+            {"background", "", "Accepted for compatibility; runs synchronously", false},
             {"force", "", "Force activation even with warnings", false},
             {"exec-check", "", "Set execChk=true in activation payload", false},
             {"with-cto", "", "Set withCTO=true in activation payload", false},
             {"sort", "", "Validate mode: sort dependency order", false},
             {"only-ina", "", "Validate mode: only inactive objects", false},
             {"transport", "<corrnr>", "Transport request", false},
+            {"lock-handle", "<handle>", "Lock handle from a prior 'bw lock'", false},
         };
         help.examples = {
             "erpl-adt bw activate ADSO ZSALES_DATA",
             "erpl-adt bw activate ADSO ZSALES_DATA --validate",
-            "erpl-adt bw activate ADSO ZSALES_DATA --background --transport=K900001",
+            "erpl-adt bw activate ADSO ZSALES_DATA --transport=K900001",
         };
         router.Register("bw", "activate", "Activate BW objects",
                          HandleBwActivate, std::move(help));

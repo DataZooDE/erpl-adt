@@ -722,13 +722,15 @@ components:
           description: Object URI
     BwActivationRequest:
       type: object
-      description: 'Mass-activation worklist (`bwActivation:objects`,
+      description: 'Atom feed with exactly one entry. The entry''s `rel="self"` link
 
-        namespace http://www.sap.com/bw/massact). Top-level flags map to the
+        names the object (lower-case type segment), and its `<atom:content>` holds a
 
-        `forceAct`, `execChk`, `withCTO` attributes plus `bwChangeable` /
+        `bwModel:checkProperties` element with the mandatory `version`,
 
-        `basisChangeable`.
+        `modelContent` and `lockHandle` attributes and the optional `transportId`
+
+        and `packageName`. See the /activation description for the full contract.
 
         '
       properties:
@@ -3312,57 +3314,13 @@ paths:
       operationId: bwActivateObjects
       tags:
       - lifecycle
-      summary: Activate, simulate, or validate BW objects (mass activation)
-      description: "Mass-activation endpoint. The request body is a\n`<bwActivation:objects xmlns:bwActivation=\"\
-        http://www.sap.com/bw/massact\">`\ndocument listing each `<object>` (objectName, objectType, objectVersion,\n\
-        objectSubtype, objectStatus, corrnum, package, href, ...). Content-Type\nis `application/vnd.sap-bw-modeling.massact+xml`;\
-        \ requires a CSRF token.\n\nThe `mode` query parameter selects the operation:\n- `activate&simu=false`\
-        \ -- real activation (default)\n- `activate&simu=true` -- simulation (dry run)\n- `activate&asjob=true`\
-        \ -- background; returns 202 + `Location` to\n  `/jobs/{guid}`, poll until completed/failed\n\
-        - `validate&sort=...&onlyina=...` -- validation pass\n\nA synchronous result returns 200 with\
-        \ `<message>`/`<object>` children;\na background job returns 202. MUTATING -- shapes derived from\n\
-        `src/adt/bw_activation.cpp`; not executed against the live system.\n\nSource CLI command: `erpl-adt\
-        \ bw activate <tlogo> <name>\n[--simulate] [--validate] [--background] [--force] [--transport\
-        \ TR]`.\n"
+      summary: Activate a BW object (checks + activation)
+      description: "Activation endpoint. The request body is an **Atom feed** carrying\nexactly        \_one `<atom:entry>`: the backend (CL_RSO_RES_ACTIVATION) deserializes it\nwith `cl_atom_feed_prov->get_feed()`        \ and rejects any other number of\nentries. The entry's `rel=\"self\"` link names the object, and its        \n`<atom:content>` must hold a\n`<bwModel:checkProperties xmlns:bwModel=\"http://www.sap.com/bw/modeling\">`        \nelement whose `version`, `modelContent` and `lockHandle` attributes are\nmandatory (`transportId`        \ and `packageName` are optional). The type segment\nof the object URI **must be lower case** --        \ `/sap/bw/modeling/ADSO/...`\nmakes the backend dump with HTTP 500.\n\nContent-Type is        \n`application/vnd.sap.bw.modeling.activation-v1_0_0+xml`; requires a CSRF\ntoken.\n\nThe mode        \ comes from the **path**, not from a query parameter:\n`/sap/bw/modeling/activation` checks and activates,        \n`/sap/bw/modeling/checkruns` runs the same checks and stops. The former\n`mode`/`simu`/`asjob`/`sort`/`onlyina`/`corrnum`        \ parameters were never read\nby the backend. There is no asynchronous variant.\n\nThe response        \ is an Atom feed of check messages: one `<atom:entry>` per\nmessage, the severity in its        \n`<bwModel:checkresult messageType=\"Error|Warning|Info|Success\">` content\nand the text in its `<atom:title>`.        \nVerified against a live SAP_BW 758 system (issue #44).\n\nSource CLI command: `erpl-adt bw activate <tlogo> <name>\n[--validate]        \ [--transport TR] [--lock-handle H]`.\n"
       parameters:
-      - name: mode
-        in: query
-        required: true
-        description: Activation mode selector
-        schema:
-          type: string
-          enum:
-          - activate
-          - validate
-      - name: simu
-        in: query
-        description: 'When mode=activate: true for a dry-run simulation'
-        schema:
-          type: boolean
-      - name: asjob
-        in: query
-        description: 'When mode=activate: true to run as a background job (202)'
-        schema:
-          type: boolean
-      - name: sort
-        in: query
-        description: 'When mode=validate: sort the worklist'
-        schema:
-          type: boolean
-      - name: onlyina
-        in: query
-        description: 'When mode=validate: restrict to inactive objects'
-        schema:
-          type: boolean
-      - name: corrnum
-        in: query
-        description: Transport request (CORRNR) for the activation
-        schema:
-          type: string
       - $ref: '#/components/parameters/sapClient'
       - $ref: '#/components/parameters/csrfToken'
       requestBody:
-        description: Mass-activation worklist XML (bwActivation:objects).
+        description: Atom feed with exactly one entry (see the description above).
         required: true
         content:
           application/xml:

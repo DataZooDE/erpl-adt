@@ -1,93 +1,132 @@
 #include <erpl_adt/adt/bw_activation.hpp>
 
 #include "adt_utils.hpp"
+#include "atom_parser.hpp"
 #include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
+#include <erpl_adt/adt/bw_media_types.hpp>
 #include <tinyxml2.h>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
 
 namespace {
 
+// Activation runs the checks and commits; checkruns runs the same checks and
+// stops there. The backend picks between them by URI path — CL_RSO_RES_
+// ACTIVATION::get_activation_mode compares the path, and ignores query
+// parameters entirely.
 const char* kBwActivationPath = "/sap/bw/modeling/activation";
+const char* kBwCheckrunPath = "/sap/bw/modeling/checkruns";
 
-std::string BuildActivationXml(const BwActivateOptions& options) {
-    std::string xml = R"(<bwActivation:objects xmlns:bwActivation="http://www.sap.com/bw/massact")";
-    xml += R"( bwChangeable="" basisChangeable="")";
-    if (options.force) {
-        xml += R"( forceAct="true")";
-    }
-    if (options.exec_checks) {
-        xml += R"( execChk="true")";
-    }
-    if (options.with_cto) {
-        xml += R"( withCTO="true")";
-    }
-    xml += ">";
+// Advertised by the checkruns collection in the BW discovery document.
+const char* kActivationMediaType =
+    "application/vnd.sap.bw.modeling.activation-v1_0_0+xml";
 
-    for (const auto& obj : options.objects) {
-        xml += R"(<object objectName=")" + adt_utils::XmlEscape(obj.name) + R"(")";
-        xml += R"( objectType=")" + adt_utils::XmlEscape(obj.type) + R"(")";
-        xml += R"( objectVersion=")" + adt_utils::XmlEscape(obj.version) + R"(")";
-        xml += R"( technicalObjectName=")" + adt_utils::XmlEscape(obj.name) + R"(")";
-        xml += R"( objectSubtype=")" + adt_utils::XmlEscape(obj.subtype) + R"(")";
-        xml += R"( objectDesc=")" + adt_utils::XmlEscape(obj.description) + R"(")";
-        xml += R"( objectStatus=")" + adt_utils::XmlEscape(obj.status) + R"(")";
-        xml += R"( activateObj="true")";
-        xml += R"( associationType="")";
-        xml += R"( corrnum=")" + adt_utils::XmlEscape(obj.transport) + R"(")";
-        xml += R"( package=")" + adt_utils::XmlEscape(obj.package_name) + R"(")";
-        xml += R"( href=")" + adt_utils::XmlEscape(obj.uri) + R"(")";
-        xml += R"( hrefType=""/>)";
-    }
+std::string ToLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
 
-    xml += "</bwActivation:objects>";
+bool ChecksOnly(BwActivationMode mode) {
+    // Simulate has no counterpart on this API; a dry run is a check run,
+    // which is what the caller means by it.
+    return mode == BwActivationMode::Validate || mode == BwActivationMode::Simulate;
+}
+
+std::string BuildUrl(const BwActivateOptions& options) {
+    if (options.endpoint_override.has_value() &&
+        !options.endpoint_override->empty()) {
+        return *options.endpoint_override;
+    }
+    return ChecksOnly(options.mode) ? kBwCheckrunPath : kBwActivationPath;
+}
+
+// BW resolves the tlogo from the URI's type segment and only recognises it in
+// lower case: "/sap/bw/modeling/ADSO/..." makes the backend dump with an
+// HTTP 500 while "/sap/bw/modeling/adso/..." works. Callers spell the type the
+// way the user typed it, so normalise here rather than trusting every one of
+// them. Later segments are left alone — a source system like ECLCLNT100 is
+// case-sensitive.
+std::string NormalizeTypeSegment(const std::string& uri) {
+    constexpr const char* kBase = "/sap/bw/modeling/";
+    constexpr size_t kBaseLen = 17;
+    if (uri.compare(0, kBaseLen, kBase) != 0) {
+        return uri;
+    }
+    const auto end = uri.find('/', kBaseLen);
+    const auto type_end = (end == std::string::npos) ? uri.size() : end;
+    return std::string(kBase) + ToLower(uri.substr(kBaseLen, type_end - kBaseLen)) +
+           uri.substr(type_end);
+}
+
+std::string ObjectUri(const BwActivationObject& object) {
+    if (!object.uri.empty()) {
+        return NormalizeTypeSegment(object.uri);
+    }
+    return std::string("/sap/bw/modeling/") + ToLower(object.type) + "/" +
+           ToLower(object.name);
+}
+
+// One Atom feed, one entry — the backend rejects anything else with "not
+// acceptable". version, modelContent and lockHandle are unconditional in
+// RSO_RES_ST_BW_CHECKRUN; transportId and packageName are optional.
+std::string BuildActivationFeed(const BwActivationObject& object,
+                                const BwActivateOptions& options) {
+    const auto media_type = BwDefaultMediaType(object.type);
+    const auto transport = !object.transport.empty()
+        ? object.transport
+        : options.transport.value_or("");
+
+    std::string xml = R"(<?xml version="1.0" encoding="UTF-8"?>)";
+    xml += R"(<atom:feed xmlns:atom="http://www.w3.org/2005/Atom">)";
+    xml += R"(<atom:entry>)";
+    xml += R"(<atom:link href=")" + adt_utils::XmlEscape(ObjectUri(object)) +
+           R"(" rel="self" type=")" + adt_utils::XmlEscape(media_type) + R"("/>)";
+    xml += R"(<atom:content type="application/xml">)";
+    xml += R"(<bwModel:checkProperties xmlns:bwModel="http://www.sap.com/bw/modeling")";
+    xml += R"( version=")" + adt_utils::XmlEscape(object.version) + R"(")";
+    // modelContent carries an unsaved model inline; we always activate what is
+    // already on the server, so it stays empty.
+    xml += R"( modelContent="")";
+    xml += R"( lockHandle=")" + adt_utils::XmlEscape(options.lock_handle) + R"(")";
+    if (!transport.empty()) {
+        xml += R"( transportId=")" + adt_utils::XmlEscape(transport) + R"(")";
+    }
+    if (!object.package_name.empty()) {
+        xml += R"( packageName=")" + adt_utils::XmlEscape(object.package_name) + R"(")";
+    }
+    xml += R"(/>)";
+    xml += R"(</atom:content>)";
+    xml += R"(</atom:entry>)";
+    xml += R"(</atom:feed>)";
     return xml;
 }
 
-std::string BuildActivationUrl(const BwActivateOptions& options) {
-    std::string base = options.endpoint_override.has_value() &&
-                               !options.endpoint_override->empty()
-                           ? *options.endpoint_override
-                           : std::string(kBwActivationPath);
-    std::string url = std::move(base);
-    url += (url.find('?') == std::string::npos) ? "?mode=" : "&mode=";
-
-    switch (options.mode) {
-        case BwActivationMode::Validate:
-            url += "validate";
-            url += std::string("&sort=") + (options.sort ? "true" : "false");
-            url += std::string("&onlyina=") + (options.only_inactive ? "true" : "false");
-            break;
-        case BwActivationMode::Simulate:
-            url += "activate&simu=true";
-            break;
-        case BwActivationMode::Background:
-            url += "activate&asjob=true";
-            break;
-        case BwActivationMode::Activate:
-        default:
-            url += "activate&simu=false";
-            break;
-    }
-
-    if (options.transport.has_value()) {
-        url += "&corrnum=" + *options.transport;
-    }
-
-    return url;
+// SAP spells the severity out in messageType; the rest of erpl-adt uses the
+// single-letter ABAP convention.
+std::string SeverityFromMessageType(const std::string& message_type) {
+    if (message_type == "Error") return "E";
+    if (message_type == "Warning") return "W";
+    if (message_type == "Success") return "S";
+    if (message_type == "Info" || message_type == "Information") return "I";
+    return message_type.empty() ? "I" : message_type.substr(0, 1);
 }
 
+// The response is an Atom feed: one entry per check message, the severity in
+// the entry's bwModel:checkresult content and the human text in its title.
 Result<BwActivationResult, Error> ParseActivationResponse(
-    std::string_view xml, const HttpHeaders& response_headers) {
+    std::string_view xml, const HttpHeaders& response_headers,
+    const BwActivationObject& object, const std::string& url) {
     BwActivationResult result;
+    result.success = true;
 
-    // Check for job GUID in Location header (background mode)
     auto location = adt_utils::FindHeaderValueCi(response_headers, "Location");
     if (location.has_value()) {
-        // Extract GUID from URL like /sap/bw/modeling/jobs/ABC123...
         const auto& loc = *location;
         auto jobs_pos = loc.find("/jobs/");
         if (jobs_pos != std::string::npos) {
@@ -96,84 +135,56 @@ Result<BwActivationResult, Error> ParseActivationResponse(
     }
 
     if (xml.empty()) {
-        result.success = true;
         return Result<BwActivationResult, Error>::Ok(std::move(result));
     }
 
     tinyxml2::XMLDocument doc;
     if (auto parse_error = adt_utils::ParseXmlOrError(
-            doc, xml, "BwActivateObjects", kBwActivationPath,
+            doc, xml, "BwActivateObjects", url,
             "Failed to parse BW activation response XML")) {
-        // Non-parseable response but HTTP success — treat as OK
-        result.success = true;
+        // HTTP said it worked; an unreadable body is not evidence it did not.
         return Result<BwActivationResult, Error>::Ok(std::move(result));
     }
 
-    auto* root = doc.RootElement();
-    if (!root) {
-        result.success = true;
+    const auto* root = doc.RootElement();
+    if (root == nullptr) {
         return Result<BwActivationResult, Error>::Ok(std::move(result));
     }
 
-    // Check for error messages in the activation result
-    bool has_errors = false;
-    for (auto* el = root->FirstChildElement(); el; el = el->NextSiblingElement()) {
-        const char* el_name = el->Name();
-        if (!el_name) continue;
-        std::string name_str(el_name);
-
-        // Look for message elements
-        if (name_str == "message" || name_str.find(":message") != std::string::npos ||
-            name_str == "msg") {
-            BwActivationMessage msg;
-            msg.severity = xml_utils::AttrAny(el, "severity", "type");
-            if (msg.severity.empty()) msg.severity = "I";
-            msg.object_name = xml_utils::Attr(el, "objectName");
-            msg.object_type = xml_utils::Attr(el, "objectType");
-            if (el->GetText()) {
-                msg.text = el->GetText();
-            } else {
-                msg.text = xml_utils::Attr(el, "text");
-            }
-            if (msg.severity == "E") has_errors = true;
-            result.messages.push_back(std::move(msg));
+    for (const auto* entry = root->FirstChildElement(); entry != nullptr;
+         entry = entry->NextSiblingElement()) {
+        if (atom_parser::LocalName(entry->Name()) != "entry") {
+            continue;
         }
 
-        // Look for object elements with status
-        if (name_str == "object" || name_str.find(":object") != std::string::npos) {
-            const char* status = el->Attribute("objectStatus");
-            if (status && std::string(status) == "ACT") {
-                // Active means success
-            }
-            // Check for per-object messages
-            for (auto* msg_el = el->FirstChildElement(); msg_el;
-                 msg_el = msg_el->NextSiblingElement()) {
-                const char* msg_name = msg_el->Name();
-                if (!msg_name) continue;
-                std::string mn(msg_name);
-                if (mn == "message" || mn.find(":message") != std::string::npos) {
-                    BwActivationMessage msg;
-                    msg.severity = xml_utils::AttrAny(msg_el, "severity", "type");
-                    if (msg.severity.empty()) msg.severity = "I";
-                    msg.object_name = xml_utils::Attr(el, "objectName");
-                    msg.object_type = xml_utils::Attr(el, "objectType");
-                    if (msg_el->GetText()) {
-                        msg.text = msg_el->GetText();
-                    } else {
-                        msg.text = xml_utils::Attr(msg_el, "text");
-                    }
-                    if (msg.severity == "E") has_errors = true;
-                    result.messages.push_back(std::move(msg));
-                }
-            }
+        BwActivationMessage message;
+        message.object_name = object.name;
+        message.object_type = object.type;
+        message.text = atom_parser::ChildTextByLocalName(entry, "title");
+
+        const auto* content = atom_parser::FirstChildByLocalName(entry, "content");
+        const auto* checkresult =
+            content != nullptr
+                ? atom_parser::FirstChildByLocalName(content, "checkresult")
+                : nullptr;
+        if (checkresult != nullptr) {
+            message.severity =
+                SeverityFromMessageType(xml_utils::Attr(checkresult, "messageType"));
         }
+        if (message.severity.empty()) {
+            message.severity = "I";
+        }
+
+        if (message.severity == "E") {
+            result.success = false;
+        }
+        result.messages.push_back(std::move(message));
     }
 
-    result.success = !has_errors;
     return Result<BwActivationResult, Error>::Ok(std::move(result));
 }
 
-} // anonymous namespace
+}  // namespace
 
 Result<BwActivationResult, Error> BwActivateObjects(
     IAdtSession& session,
@@ -184,31 +195,53 @@ Result<BwActivationResult, Error> BwActivateObjects(
             "No objects specified for activation", std::nullopt});
     }
 
-    auto url = BuildActivationUrl(options);
-    auto body = BuildActivationXml(options);
+    const auto url = BuildUrl(options);
 
-    // Accept, not just Content-Type: BW routes content-negotiate strictly
-    // and answer HTTP 415 when the client asks for */* (issue #41).
+    // Accept as well as Content-Type: BW routes content-negotiate strictly
+    // and answer HTTP 415 for */* (issue #41).
     HttpHeaders headers;
-    headers["Accept"] = "application/vnd.sap-bw-modeling.massact+xml";
+    headers["Accept"] = kActivationMediaType;
 
-    auto response = session.Post(
-        url, body, "application/vnd.sap-bw-modeling.massact+xml", headers);
-    if (response.IsErr()) {
-        return Result<BwActivationResult, Error>::Err(
-            std::move(response).Error());
+    BwActivationResult combined;
+    combined.success = true;
+
+    // One request per object: the feed must carry exactly one entry.
+    for (const auto& object : options.objects) {
+        const auto body = BuildActivationFeed(object, options);
+
+        auto response = session.Post(url, body, kActivationMediaType, headers);
+        if (response.IsErr()) {
+            return Result<BwActivationResult, Error>::Err(
+                std::move(response).Error());
+        }
+
+        const auto& http = response.Value();
+        // 200 = result feed, 202 = async job started.
+        if (http.status_code != 200 && http.status_code != 202) {
+            auto error = Error::FromHttpStatus("BwActivateObjects", url,
+                                               http.status_code, http.body);
+            AddBwHint(error);
+            return Result<BwActivationResult, Error>::Err(std::move(error));
+        }
+
+        auto parsed =
+            ParseActivationResponse(http.body, http.headers, object, url);
+        if (parsed.IsErr()) {
+            return parsed;
+        }
+
+        const auto& value = parsed.Value();
+        if (!value.success) {
+            combined.success = false;
+        }
+        if (combined.job_guid.empty()) {
+            combined.job_guid = value.job_guid;
+        }
+        combined.messages.insert(combined.messages.end(), value.messages.begin(),
+                                 value.messages.end());
     }
 
-    const auto& http = response.Value();
-    // 200 = sync result, 202 = async job started
-    if (http.status_code != 200 && http.status_code != 202) {
-        auto error = Error::FromHttpStatus("BwActivateObjects", url,
-                                           http.status_code, http.body);
-        AddBwHint(error);
-        return Result<BwActivationResult, Error>::Err(std::move(error));
-    }
-
-    return ParseActivationResponse(http.body, http.headers);
+    return Result<BwActivationResult, Error>::Ok(std::move(combined));
 }
 
-} // namespace erpl_adt
+}  // namespace erpl_adt
