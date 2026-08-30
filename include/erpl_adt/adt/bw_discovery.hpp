@@ -16,6 +16,7 @@ struct BwServiceEntry {
     std::string term;
     std::string href;          // Base URI or template
     std::string content_type;  // Supported media type
+    std::string rel;           // Link relation ("self", "latest-version", ...)
 };
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,22 @@ struct BwDiscoveryResult {
     const BwDiscoveryResult& discovery,
     const std::string& scheme,
     const std::string& term);
+
+// ---------------------------------------------------------------------------
+// BwResolveEndpointByRel — find a service URI by scheme, term and relation.
+//
+// A type advertises several templates; the first one is rel="self", which for
+// object types carries no {version} segment.  Selecting by relation is how a
+// versioned read finds "/sap/bw/modeling/adso/{adsonm}/{version}"
+// (rel="latest-version").  Falls back to the first (scheme, term) match when
+// the requested relation is absent, so behaviour never regresses to an error
+// on systems that advertise fewer relations.
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<std::string, Error> BwResolveEndpointByRel(
+    const BwDiscoveryResult& discovery,
+    const std::string& scheme,
+    const std::string& term,
+    const std::string& rel);
 
 // ---------------------------------------------------------------------------
 // BwResolveContentType — find the Accept content type for a given tlogo.

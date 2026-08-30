@@ -8,9 +8,10 @@
 # Connection credentials:
 #   erpl-adt reads connection details from (in priority order):
 #     1. Flags after --  e.g. -- --host myhost --port 50000 --user DEV --client 001
-#     2. ~/.adt.creds    run: erpl-adt login  (saves credentials to .adt.creds)
-#     3. Defaults        localhost:50000, DEVELOPER, client 001
-#   SAP_PASSWORD env var is read by erpl-adt when --password is not given.
+#     2. Environment     ERPL_ADT_HOST / SAP_HOST, _PORT, _USER, _CLIENT,
+#                        _PASSWORD, _LANGUAGE  (ERPL_ADT_ wins over SAP_)
+#     3. .adt.creds      run: erpl-adt login  (saved in the current directory)
+#     4. Defaults        localhost:50000, DEVELOPER, client 001
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

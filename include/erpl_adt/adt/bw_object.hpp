@@ -86,6 +86,11 @@ struct BwCreateOptions {
     std::optional<std::string> copy_from_type;
     std::optional<std::string> content;
     std::optional<std::string> content_type;
+    // Creating an object implicitly locks it for the creating session, and
+    // the enqueue outlives that session: a later command — a delete included
+    // — then fails with "is locked by user ...".  Release it unless the caller
+    // holds a stateful session and means to keep editing.
+    bool keep_lock = false;
 };
 
 struct BwCreateResult {

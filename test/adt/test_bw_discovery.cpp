@@ -85,9 +85,9 @@ TEST_CASE("BwDiscover: connection error propagated", "[adt][bw][discovery]") {
 TEST_CASE("BwResolveEndpoint: finds matching service", "[adt][bw][discovery]") {
     BwDiscoveryResult disc;
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
-                              "/sap/bw/modeling/adso/{adsonm}/{version}", ""});
+                              "/sap/bw/modeling/adso/{adsonm}/{version}", "", ""});
     disc.services.push_back({"http://www.sap.com/bw/modeling/repo", "bwSearch",
-                              "/sap/bw/modeling/repo/is/bwsearch", ""});
+                              "/sap/bw/modeling/repo/is/bwsearch", "", ""});
 
     auto result = BwResolveEndpoint(disc, "http://www.sap.com/bw/modeling/repo", "bwSearch");
     REQUIRE(result.IsOk());
@@ -137,7 +137,7 @@ TEST_CASE("BwResolveEndpoint: finds service in real discovery", "[adt][bw][disco
 TEST_CASE("BwResolveEndpoint: not found returns error", "[adt][bw][discovery]") {
     BwDiscoveryResult disc;
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
-                              "/sap/bw/modeling/adso", ""});
+                              "/sap/bw/modeling/adso", "", ""});
 
     auto result = BwResolveEndpoint(disc, "http://www.sap.com/bw/modeling/iobj", "iobj");
     REQUIRE(result.IsErr());
@@ -152,10 +152,10 @@ TEST_CASE("BwResolveContentType: finds matching term case-insensitively", "[adt]
     BwDiscoveryResult disc;
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
                               "/sap/bw/modeling/adso/{adsonm}/{version}",
-                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml", ""});
     disc.services.push_back({"http://www.sap.com/bw/modeling/iobj", "iobj",
                               "/sap/bw/modeling/iobj/{iobjnm}/{version}",
-                              "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml"});
+                              "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml", ""});
 
     // Uppercase TLOGO matches lowercase term
     CHECK(BwResolveContentType(disc, "ADSO") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
@@ -169,7 +169,7 @@ TEST_CASE("BwResolveContentType: returns empty for unknown type", "[adt][bw][dis
     BwDiscoveryResult disc;
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
                               "/sap/bw/modeling/adso/{adsonm}/{version}",
-                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml", ""});
 
     CHECK(BwResolveContentType(disc, "UNKNOWN") == "");
     CHECK(BwResolveContentType(disc, "") == "");
@@ -179,10 +179,10 @@ TEST_CASE("BwResolveContentType: skips entries with empty content_type", "[adt][
     BwDiscoveryResult disc;
     // First entry has empty content_type, second has it set
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
-                              "/sap/bw/modeling/adso/{adsonm}/{version}", ""});
+                              "/sap/bw/modeling/adso/{adsonm}/{version}", "", ""});
     disc.services.push_back({"http://www.sap.com/bw/modeling/adso", "adso",
                               "/sap/bw/modeling/adso/{adsonm}/{version}",
-                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml"});
+                              "application/vnd.sap.bw.modeling.adso-v1_2_0+xml", ""});
 
     CHECK(BwResolveContentType(disc, "ADSO") == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
 }
@@ -212,4 +212,68 @@ TEST_CASE("BwResolveContentType: works with real discovery fixture", "[adt][bw][
     auto hcpr_ct = BwResolveContentType(disc, "HCPR");
     CHECK_FALSE(hcpr_ct.empty());
     CHECK(hcpr_ct.find("hcpr") != std::string::npos);
+}
+
+// ===========================================================================
+// Link relations (issue #41): the first template for a type is rel="self",
+// which carries no {version}.  Selecting by rel is what lets a versioned read
+// find "/sap/bw/modeling/adso/{adsonm}/{version}".
+// ===========================================================================
+
+TEST_CASE("BwDiscover: captures the rel of each template link", "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = BwDiscover(mock);
+    REQUIRE(result.IsOk());
+
+    bool found_self = false;
+    bool found_latest = false;
+    for (const auto& entry : result.Value().services) {
+        if (entry.term != "adso") continue;
+        if (entry.rel == "self") found_self = true;
+        if (entry.rel == "latest-version") {
+            found_latest = true;
+            CHECK(entry.href == "/sap/bw/modeling/adso/{adsonm}/{version}");
+        }
+    }
+    CHECK(found_self);
+    CHECK(found_latest);
+}
+
+TEST_CASE("BwResolveEndpointByRel: prefers the requested relation",
+          "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto disc = BwDiscover(mock);
+    REQUIRE(disc.IsOk());
+
+    auto versioned = BwResolveEndpointByRel(
+        disc.Value(), "http://www.sap.com/bw/modeling/adso", "adso",
+        "latest-version");
+    REQUIRE(versioned.IsOk());
+    CHECK(versioned.Value() == "/sap/bw/modeling/adso/{adsonm}/{version}");
+
+    auto self = BwResolveEndpointByRel(
+        disc.Value(), "http://www.sap.com/bw/modeling/adso", "adso", "self");
+    REQUIRE(self.IsOk());
+    CHECK(self.Value().find("{adsonm}") != std::string::npos);
+    CHECK(self.Value().find("{version}") == std::string::npos);
+}
+
+TEST_CASE("BwResolveEndpointByRel: falls back to the first match",
+          "[adt][bw][discovery]") {
+    MockAdtSession mock;
+    auto xml = LoadFixture("bw/bw_discovery_real.xml");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto disc = BwDiscover(mock);
+    REQUIRE(disc.IsOk());
+
+    auto result = BwResolveEndpointByRel(
+        disc.Value(), "http://www.sap.com/bw/modeling/adso", "adso",
+        "no-such-relation");
+    REQUIRE(result.IsOk());
+    CHECK(!result.Value().empty());
 }

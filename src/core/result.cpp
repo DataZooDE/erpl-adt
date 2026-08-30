@@ -165,7 +165,20 @@ Error Error::FromHttpStatus(const std::string& operation,
             break;
     }
 
-    return Error{operation, endpoint, status_code, message, sap_error, category};
+    Error error{operation, endpoint, status_code, message, sap_error, category};
+    if (category == ErrorCategory::Authentication) {
+        // The most common cause is a credential source the caller did not
+        // expect to be in play — a stale .adt.creds outliving a system
+        // restart, or an environment variable that is not one of the names
+        // actually read.
+        error.hint =
+            "Credentials resolve as: flags > --password-env > environment "
+            "(ERPL_ADT_USER/SAP_USER, ERPL_ADT_PASSWORD/SAP_PASSWORD, ...) > "
+            "the .adt.creds file in the current directory. Run 'erpl-adt "
+            "login' to refresh a stale .adt.creds, or 'erpl-adt logout' to "
+            "drop it.";
+    }
+    return error;
 }
 
 } // namespace erpl_adt

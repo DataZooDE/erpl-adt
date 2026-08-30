@@ -3,6 +3,7 @@
 #include <erpl_adt/cli/command_executor.hpp>
 #include <erpl_adt/cli/command_router.hpp>
 #include <erpl_adt/config/config_loader.hpp>
+#include <erpl_adt/core/connection_env.hpp>
 #include <erpl_adt/core/log.hpp>
 #include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/terminal.hpp>
@@ -440,9 +441,24 @@ int HandleMcpServer(int argc, const char* const* argv) {
         }
     }
 
-    auto host = get("host", saved_host.empty() ? "localhost" : saved_host);
-    auto port_str = get("port",
-                        saved_port != 50000 ? std::to_string(saved_port) : "50000");
+    // Connection settings: explicit flag > environment (ERPL_ADT_* / SAP_*) >
+    // saved credentials > default.
+    auto resolve = [&](const std::string& flag, const std::string& env_setting,
+                       const std::string& saved, const std::string& fallback) {
+        if (flags.count(flag)) {
+            return get(flag);
+        }
+        auto env = ConnectionEnvValue(env_setting);
+        if (env.has_value()) {
+            return *env;
+        }
+        return saved.empty() ? fallback : saved;
+    };
+
+    auto host = resolve("host", "HOST", saved_host, "localhost");
+    auto port_str = resolve(
+        "port", "PORT",
+        saved_port != 50000 ? std::to_string(saved_port) : "", "50000");
     uint16_t port = 0;
     std::string parse_error;
     if (!ParsePort(port_str, &port, &parse_error)) {
@@ -452,16 +468,22 @@ int HandleMcpServer(int argc, const char* const* argv) {
     auto use_https = flags.count("https")
                          ? get("https") == "true"
                          : saved_https;
-    auto user = get("user", saved_user.empty() ? "DEVELOPER" : saved_user);
-    auto client_str = get("client", saved_client);
+    auto user = resolve("user", "USER", saved_user, "DEVELOPER");
+    auto client_str = resolve("client", "CLIENT", saved_client, "001");
     auto password = get("password");
 
-    // Resolve password: explicit flag > env var > saved creds.
-    if (password.empty()) {
-        auto env_var = get("password-env", "SAP_PASSWORD");
-        const char* env_val = std::getenv(env_var.c_str());
+    // Resolve password: explicit flag > --password-env > ERPL_ADT_PASSWORD /
+    // SAP_PASSWORD > saved creds.
+    if (password.empty() && flags.count("password-env")) {
+        const char* env_val = std::getenv(get("password-env").c_str());
         if (env_val != nullptr) {
             password = env_val;
+        }
+    }
+    if (password.empty()) {
+        auto env = ConnectionEnvValue("PASSWORD");
+        if (env.has_value()) {
+            password = *env;
         }
     }
     if (password.empty()) {
@@ -477,7 +499,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
 
     AdtSessionOptions opts;
     // SAP logon language: explicit --language flag > saved creds > default (EN).
-    auto language_str = get("language", saved_language);
+    auto language_str = resolve("language", "LANGUAGE", saved_language, "");
     if (!language_str.empty()) {
         auto lang_result = SapLanguage::Create(language_str);
         if (lang_result.IsErr()) {

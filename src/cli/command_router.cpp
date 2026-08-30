@@ -48,7 +48,8 @@ bool CommandRouter::IsBooleanFlag(std::string_view arg) {
            arg == "--iobj-edges" || arg == "--editor" || arg == "--no-write" ||
            arg == "--optimistic" || arg == "--no-resolve-types" ||
            arg == "--no-telemetry" || arg == "--embed" || arg == "--resume" ||
-           arg == "--resolve-ddic-types" || arg == "--include-raw-source";
+           arg == "--resolve-ddic-types" || arg == "--include-raw-source" ||
+           arg == "--keep-lock";
 }
 
 void CommandRouter::Register(const std::string& group,

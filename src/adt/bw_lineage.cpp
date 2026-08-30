@@ -3,6 +3,7 @@
 #include "adt_utils.hpp"
 #include "xml_utils.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
+#include <erpl_adt/adt/bw_media_types.hpp>
 #include <tinyxml2.h>
 
 #include <algorithm>
@@ -26,12 +27,9 @@ std::string BuildObjectPath(const std::string& type, const std::string& name,
     return std::string(kBwModelingBase) + ToLower(type) + "/" + ToLower(name) + "/" + version;
 }
 
+// Shared with bw_object.cpp — one media-type catalog, not two.
 std::string GetDefaultAcceptType(const std::string& tlogo) {
-    auto lower = ToLower(tlogo);
-    if (lower == "adso") return "application/vnd.sap.bw.modeling.adso-v1_2_0+xml";
-    if (lower == "trfn") return "application/vnd.sap.bw.modeling.trfn-v1_0_0+xml";
-    if (lower == "dtpa") return "application/vnd.sap.bw.modeling.dtpa-v1_0_0+xml";
-    return "application/vnd.sap.bw.modeling." + lower + "+xml";
+    return BwDefaultMediaType(tlogo);
 }
 
 // Fetch object XML via GET.

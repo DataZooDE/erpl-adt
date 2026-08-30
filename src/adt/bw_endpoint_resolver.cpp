@@ -92,8 +92,10 @@ std::string BwExpandUriTemplate(std::string_view uri_template,
 Result<std::string, Error> BwResolveAndExpandEndpoint(
     const BwDiscoveryResult& discovery, const std::string& scheme,
     const std::string& term, const BwTemplateParams& path_params,
-    const BwTemplateParams& query_params) {
-    auto endpoint = BwResolveEndpoint(discovery, scheme, term);
+    const BwTemplateParams& query_params, const std::string& rel) {
+    auto endpoint = rel.empty()
+        ? BwResolveEndpoint(discovery, scheme, term)
+        : BwResolveEndpointByRel(discovery, scheme, term, rel);
     if (endpoint.IsErr()) {
         return Result<std::string, Error>::Err(std::move(endpoint).Error());
     }
@@ -104,14 +106,15 @@ Result<std::string, Error> BwResolveAndExpandEndpoint(
 
 Result<std::string, Error> BwDiscoverResolveAndExpandEndpoint(
     IAdtSession& session, const std::string& scheme, const std::string& term,
-    const BwTemplateParams& path_params, const BwTemplateParams& query_params) {
+    const BwTemplateParams& path_params, const BwTemplateParams& query_params,
+    const std::string& rel) {
     auto discovery = BwDiscover(session);
     if (discovery.IsErr()) {
         return Result<std::string, Error>::Err(std::move(discovery).Error());
     }
 
     return BwResolveAndExpandEndpoint(discovery.Value(), scheme, term,
-                                      path_params, query_params);
+                                      path_params, query_params, rel);
 }
 
 } // namespace erpl_adt

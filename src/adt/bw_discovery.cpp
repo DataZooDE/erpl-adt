@@ -131,6 +131,7 @@ Result<BwDiscoveryResult, Error> ParseDiscoveryResponse(std::string_view xml) {
                     entry.term = term;
                     entry.href = link_href ? link_href : std::string(href);
                     entry.content_type = link_type ? link_type : content_type;
+                    entry.rel = link_rel ? link_rel : "";
 
                     if (!entry.scheme.empty() || link_rel) {
                         if (link_rel && entry.scheme.empty()) {
@@ -158,6 +159,7 @@ Result<BwDiscoveryResult, Error> ParseDiscoveryResponse(std::string_view xml) {
                         entry.term = term;
                         entry.href = tl_href ? tl_href : std::string(href);
                         entry.content_type = tl_type ? tl_type : content_type;
+                        entry.rel = tl_rel ? tl_rel : "";
 
                         if (!entry.scheme.empty() || tl_rel) {
                             if (tl_rel && entry.scheme.empty()) {
@@ -223,6 +225,32 @@ Result<std::string, Error> BwResolveEndpoint(
     }
     return Result<std::string, Error>::Err(Error{
         "BwResolveEndpoint", "", std::nullopt,
+        "BW service not found: scheme=" + scheme + ", term=" + term,
+        std::nullopt, ErrorCategory::NotFound});
+}
+
+Result<std::string, Error> BwResolveEndpointByRel(
+    const BwDiscoveryResult& discovery,
+    const std::string& scheme,
+    const std::string& term,
+    const std::string& rel) {
+    const BwServiceEntry* first_match = nullptr;
+    for (const auto& entry : discovery.services) {
+        if (entry.scheme != scheme || entry.term != term) {
+            continue;
+        }
+        if (entry.rel == rel && !entry.href.empty()) {
+            return Result<std::string, Error>::Ok(entry.href);
+        }
+        if (first_match == nullptr && !entry.href.empty()) {
+            first_match = &entry;
+        }
+    }
+    if (first_match != nullptr) {
+        return Result<std::string, Error>::Ok(first_match->href);
+    }
+    return Result<std::string, Error>::Err(Error{
+        "BwResolveEndpointByRel", "", std::nullopt,
         "BW service not found: scheme=" + scheme + ", term=" + term,
         std::nullopt, ErrorCategory::NotFound});
 }

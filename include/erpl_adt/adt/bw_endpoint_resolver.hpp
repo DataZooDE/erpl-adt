@@ -19,12 +19,15 @@ using BwTemplateParams = std::map<std::string, std::string>;
     const BwTemplateParams& query_params);
 
 // Resolve endpoint from already-fetched discovery and expand it.
+// `rel` selects which of a type's templates to use ("self",
+// "latest-version"); empty means "first match", the historical behaviour.
 [[nodiscard]] Result<std::string, Error> BwResolveAndExpandEndpoint(
     const BwDiscoveryResult& discovery,
     const std::string& scheme,
     const std::string& term,
     const BwTemplateParams& path_params,
-    const BwTemplateParams& query_params);
+    const BwTemplateParams& query_params,
+    const std::string& rel = "");
 
 // Fetch discovery, resolve endpoint and expand it.
 [[nodiscard]] Result<std::string, Error> BwDiscoverResolveAndExpandEndpoint(
@@ -32,6 +35,7 @@ using BwTemplateParams = std::map<std::string, std::string>;
     const std::string& scheme,
     const std::string& term,
     const BwTemplateParams& path_params,
-    const BwTemplateParams& query_params);
+    const BwTemplateParams& query_params,
+    const std::string& rel = "");
 
 } // namespace erpl_adt

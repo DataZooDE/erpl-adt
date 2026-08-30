@@ -187,8 +187,13 @@ Result<BwActivationResult, Error> BwActivateObjects(
     auto url = BuildActivationUrl(options);
     auto body = BuildActivationXml(options);
 
+    // Accept, not just Content-Type: BW routes content-negotiate strictly
+    // and answer HTTP 415 when the client asks for */* (issue #41).
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.massact+xml";
+
     auto response = session.Post(
-        url, body, "application/vnd.sap-bw-modeling.massact+xml");
+        url, body, "application/vnd.sap-bw-modeling.massact+xml", headers);
     if (response.IsErr()) {
         return Result<BwActivationResult, Error>::Err(
             std::move(response).Error());

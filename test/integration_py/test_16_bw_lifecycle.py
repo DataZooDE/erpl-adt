@@ -30,9 +30,14 @@ class TestBwCreateLifecycle:
                          "--copy-from-type", "IOBJ")
         if create.returncode != 0:
             stderr = create.stderr.strip().lower()
+            # 415 and 400 are no longer skippable: HTTP 415 is the
+            # content-negotiation bug of issue #41, and skipping on it hid the
+            # defect for as long as it existed.
+            assert "415" not in stderr, (
+                "bw create sent a media type the backend rejects: " + stderr)
             if any(s in stderr for s in ("not activated", "not implemented", "forbidden",
-                                         "\"http_status\":400", "\"http_status\":403",
-                                         "\"http_status\":405", "\"http_status\":415")):
+                                         "\"http_status\":403",
+                                         "\"http_status\":405")):
                 pytest.skip("bw create not supported on this backend profile")
             assert create.returncode != 99
             return

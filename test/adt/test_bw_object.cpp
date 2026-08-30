@@ -693,9 +693,14 @@ TEST_CASE("BwSaveObject: content_type override is used as Content-Type", "[adt][
 
 TEST_CASE("BwCreateObject: sends create URL with options", "[adt][bw][object]") {
     MockAdtSession mock;
+    // Copy-create reads the source definition and sends it as the body: the
+    // copyFrom* query parameters alone produce an empty shell.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<adso:dataStore name=\"ZSOURCE\"/>"}));
     HttpHeaders headers;
     headers["Location"] = "/sap/bw/modeling/adso/ZNEW_ADSO";
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({201, headers, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
 
     BwCreateOptions opts;
     opts.object_type = "ADSO";
@@ -709,12 +714,20 @@ TEST_CASE("BwCreateObject: sends create URL with options", "[adt][bw][object]") 
     CHECK(result.Value().uri == "/sap/bw/modeling/adso/ZNEW_ADSO");
     CHECK(result.Value().http_status == 201);
 
-    REQUIRE(mock.PostCallCount() == 1);
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/adso/zsource/a");
+
+    REQUIRE(mock.PostCallCount() == 2);
     const auto& path = mock.PostCalls()[0].path;
     CHECK(path.find("/sap/bw/modeling/adso/znew_adso") != std::string::npos);
-    CHECK(path.find("package=ZPKG") != std::string::npos);
+    // The package travels in the body, not the query string.
+    CHECK(path.find("package=") == std::string::npos);
     CHECK(path.find("copyFromObjectName=ZSOURCE") != std::string::npos);
     CHECK(path.find("copyFromObjectType=ADSO") != std::string::npos);
+
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("ZNEW_ADSO") != std::string::npos);
+    CHECK(body.find("ZSOURCE") == std::string::npos);
 }
 
 TEST_CASE("BwCreateObject: non-success status returns error", "[adt][bw][object]") {
@@ -739,4 +752,271 @@ TEST_CASE("BwLockObject: captures foreign object locks header", "[adt][bw][objec
     auto result = BwLockObject(mock, "ADSO", "ZSALES");
     REQUIRE(result.IsOk());
     CHECK(result.Value().foreign_object_locks == "LOCKA,LOCKB");
+}
+
+// ===========================================================================
+// Content negotiation (issue #41): every BW request must send an explicit
+// Accept header.  Without one the backend sees */* and answers HTTP 415
+// ("Requested content type */* does not match back-end content type ...").
+// ===========================================================================
+
+TEST_CASE("BwCreateObject: sends Accept and Content-Type for the object type",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 2);
+    const auto& call = mock.PostCalls()[0];
+    CHECK(call.content_type == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+    auto accept = call.headers.find("Accept");
+    REQUIRE(accept != call.headers.end());
+    CHECK(accept->second == "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwCreateObject: discovery content type overrides the default",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+    opts.content_type = "application/vnd.sap.bw.modeling.adso-v9_9_9+xml";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& call = mock.PostCalls()[0];
+    CHECK(call.content_type == "application/vnd.sap.bw.modeling.adso-v9_9_9+xml");
+    CHECK(call.headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v9_9_9+xml");
+}
+
+TEST_CASE("BwCreateObject: requires a request body for types without a template",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+
+    BwCreateOptions opts;
+    opts.object_type = "TRFN";
+    opts.object_name = "ZNEW_TRFN";
+
+    // No --file and no copy source: the backend would answer HTTP 500
+    // "Object MODEL ZNEW_TRFN not found".  Fail before the wire, with a hint
+    // naming the flags that do work.
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsErr());
+    CHECK(mock.PostCallCount() == 0);
+    CHECK(result.Error().message.find("body") != std::string::npos);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--file") != std::string::npos);
+}
+
+TEST_CASE("BwCreateObject: package alone builds a minimal ADSO body",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.package_name = "$TMP";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 2);
+    const auto& body = mock.PostCalls()[0].body;
+    // Live a4h rejects a body without schemaVersion:
+    // "Attribute 'schemaVersion' expected".
+    CHECK(body.find("schemaVersion=\"\"") != std::string::npos);
+    CHECK(body.find("ZNEW_ADSO") != std::string::npos);
+    CHECK(body.find("$TMP") != std::string::npos);
+    // The package travels in the body, not as a query parameter: it is not
+    // among the query params the discovery template advertises.
+    CHECK(mock.PostCalls()[0].path.find("package=") == std::string::npos);
+}
+
+TEST_CASE("BwSaveObject: sends Accept for the object type", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    CHECK(mock.PutCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwDeleteObject: sends Accept for the object type", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueDelete(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwDeleteOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.lock_handle = "H1";
+
+    auto result = BwDeleteObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.DeleteCallCount() == 1);
+    CHECK(mock.DeleteCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwLockObject: sends the object type's Accept header", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<LOCK_HANDLE>H1</LOCK_HANDLE>"}));
+
+    auto result = BwLockObject(mock, "ADSO", "ZSALES");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& headers = mock.PostCalls()[0].headers;
+    // "application/xml" is not good enough here: the backend reads it as
+    // version 0.0.0 and answers "Your BW client is outdated".
+    REQUIRE(headers.find("Accept") != headers.end());
+    CHECK(headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwUnlockObject: sends the object type's Accept header", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    auto result = BwUnlockObject(mock, "ADSO", "ZSALES");
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& headers = mock.PostCalls()[0].headers;
+    // "application/xml" is not good enough here: the backend reads it as
+    // version 0.0.0 and answers "Your BW client is outdated".
+    REQUIRE(headers.find("Accept") != headers.end());
+    CHECK(headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.adso-v1_2_0+xml");
+}
+
+TEST_CASE("BwReadObject: a version-less URI does not override the version",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<adso:dataStore name=\"ZSALES\"/>"}));
+
+    // The discovery "self" template expands without a {version} segment.
+    // Requesting the modified version must still reach .../m.
+    BwReadOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.version = "m";
+    opts.uri = "/sap/bw/modeling/adso/ZSALES";
+
+    auto result = BwReadObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/adso/ZSALES/m");
+}
+
+
+// ---------------------------------------------------------------------------
+// Creating implicitly locks the new object, and the enqueue outlives the
+// session — every later command, delete included, would then fail with
+// "is locked by user ..." (found on a4h while fixing issue #41).
+// ---------------------------------------------------------------------------
+TEST_CASE("BwCreateObject: releases the implicit lock", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PostCallCount() == 2);
+    CHECK(mock.PostCalls()[1].path ==
+          "/sap/bw/modeling/adso/znew_adso?action=unlock");
+}
+
+TEST_CASE("BwCreateObject: keep_lock leaves the object locked",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+    opts.keep_lock = true;
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PostCallCount() == 1);
+}
+
+TEST_CASE("BwCreateObject: a failed unlock does not fail the create",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({403, {}, "nope"}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+
+    auto result = BwCreateObject(mock, opts);
+    CHECK(result.IsOk());
+}
+
+
+// ---------------------------------------------------------------------------
+// The live lock response is a full ASXML document with an XML declaration and
+// the values nested under asx:abap/asx:values/DATA.  Wrapping it in a
+// synthetic <root> without stripping the declaration made tinyxml2 reject it
+// ("XML_ERROR_PARSING_DECLARATION"), so every real lock was taken on the
+// server and then thrown away by the client, leaving the object stuck.
+// ---------------------------------------------------------------------------
+TEST_CASE("BwLockObject: parses the live ASXML lock response",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    const std::string body =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<asx:abap version=\"1.0\" xmlns:asx=\"http://www.sap.com/abapxml\">"
+        "<asx:values><DATA>"
+        "<LOCK_HANDLE>4B37DDF9D9BFC3D2</LOCK_HANDLE>"
+        "<CORRNR>K900042</CORRNR><CORRUSER>DEVELOPER</CORRUSER>"
+        "<CORRTEXT>Work</CORRTEXT><IS_LOCAL>X</IS_LOCAL>"
+        "</DATA></asx:values></asx:abap>";
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, body}));
+
+    auto result = BwLockObject(mock, "ADSO", "ZSALES");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().lock_handle == "4B37DDF9D9BFC3D2");
+    CHECK(result.Value().transport_number == "K900042");
+    CHECK(result.Value().transport_owner == "DEVELOPER");
+    CHECK(result.Value().is_local);
 }

@@ -417,8 +417,12 @@ Result<void, Error> BwCancelJob(
 
     auto url = JobUrl(job_guid, "interrupt");
 
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs.job+xml";
+
     auto response = session.Post(
-        url, "", "application/vnd.sap-bw-modeling.jobs.job.interrupt+xml");
+        url, "", "application/vnd.sap-bw-modeling.jobs.job.interrupt+xml",
+        headers);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
@@ -447,7 +451,10 @@ Result<void, Error> BwRestartJob(
 
     auto url = JobUrl(job_guid, "restart");
 
-    auto response = session.Post(url, "", "application/xml");
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs.job+xml";
+
+    auto response = session.Post(url, "", "application/xml", headers);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
@@ -476,7 +483,10 @@ Result<void, Error> BwCleanupJob(
 
     auto url = JobUrl(job_guid, "cleanup");
 
-    auto response = session.Delete(url);
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap-bw-modeling.jobs.job+xml";
+
+    auto response = session.Delete(url, headers);
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }

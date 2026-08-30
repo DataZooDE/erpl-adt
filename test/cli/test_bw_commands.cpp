@@ -664,3 +664,15 @@ TEST_CASE("bw read-trfn: --json flag does not consume positional name",
     const auto result = DispatchCapture(router, 5, argv);
     CHECK(result.stderr_text.find("Usage: erpl-adt bw read-trfn") == std::string::npos);
 }
+
+
+TEST_CASE("bw create: --keep-lock is a boolean flag (does not consume next arg)",
+          "[cli][executor][bw][flags]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    // If --keep-lock consumed "ZNEW" the handler would see one positional and
+    // print the usage hint instead of attempting the create.
+    const char* argv[] = {"erpl-adt", "bw", "create", "--keep-lock", "ADSO", "ZNEW"};
+    const auto result = DispatchCapture(router, 6, argv);
+    CHECK(result.stderr_text.find("Usage: erpl-adt bw create") == std::string::npos);
+}
