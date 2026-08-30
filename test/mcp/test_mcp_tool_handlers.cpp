@@ -2,6 +2,7 @@
 
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
+#include <erpl_adt/mcp/tool_metadata.hpp>
 #include <erpl_adt/mcp/tool_registry.hpp>
 #include "../../test/mocks/mock_adt_session.hpp"
 
@@ -1225,4 +1226,118 @@ TEST_CASE("MCP end-to-end: tools/call adt_search", "[mcp][handlers][e2e]") {
     auto results = nlohmann::json::parse(content[0]["text"].get<std::string>());
     CHECK(results.size() == 3);
     CHECK(results[0]["name"] == "ZCL_EXAMPLE");
+}
+
+// ===========================================================================
+// Tool metadata (issue #15 of the MCP backlog)
+//
+// A host decides how much ceremony a call deserves from these hints — a
+// confirmation in front of adt_delete_object, none in front of adt_search.
+// The classification is a human judgement kept in mcp/tool_metadata.cpp;
+// these tests make sure a new tool cannot ship without one.
+// ===========================================================================
+
+TEST_CASE("Every registered tool is classified in the metadata table",
+          "[mcp][tools][metadata]") {
+    MockAdtSession session;
+    ToolRegistry registry;
+    RegisterAdtTools(registry, session);
+
+    std::set<std::string> classified;
+    for (const auto& entry : ToolMetadataTable()) {
+        classified.insert(entry.name);
+    }
+
+    std::vector<std::string> unclassified;
+    for (const auto& tool : registry.Tools()) {
+        if (classified.count(tool.name) == 0) {
+            unclassified.push_back(tool.name);
+        }
+    }
+
+    INFO("Unclassified tools: " << [&] {
+        std::string names;
+        for (const auto& n : unclassified) names += n + " ";
+        return names;
+    }());
+    CHECK(unclassified.empty());
+}
+
+TEST_CASE("Every registered tool carries a title", "[mcp][tools][metadata]") {
+    MockAdtSession session;
+    ToolRegistry registry;
+    RegisterAdtTools(registry, session);
+
+    for (const auto& tool : registry.Tools()) {
+        INFO("tool: " << tool.name);
+        CHECK(!tool.title.empty());
+    }
+}
+
+TEST_CASE("The destructive tools are exactly the reviewed set",
+          "[mcp][tools][metadata]") {
+    // Spelled out rather than derived from a name prefix: this is the list a
+    // human signed off on, and it should change only deliberately.
+    const std::set<std::string> expected = {
+        "adt_write_source",   "adt_delete_object", "adt_release_transport",
+        "bw_save_object",     "bw_delete_object",  "bw_delete_lock",
+        "bw_clear_favorites", "bw_move_requests",
+    };
+
+    std::set<std::string> actual;
+    for (const auto& entry : ToolMetadataTable()) {
+        if (entry.annotations.destructive) {
+            actual.insert(entry.name);
+        }
+    }
+    CHECK(actual == expected);
+}
+
+TEST_CASE("Read-only tools are marked read-only and never destructive",
+          "[mcp][tools][metadata]") {
+    MockAdtSession session;
+    ToolRegistry registry;
+    RegisterAdtTools(registry, session);
+
+    for (const auto& tool : registry.Tools()) {
+        INFO("tool: " << tool.name);
+        if (tool.annotations.read_only) {
+            CHECK(!tool.annotations.destructive);
+        }
+    }
+
+    // Spot-check both ends of the spectrum reach the registry, not just the
+    // table.
+    for (const auto& tool : registry.Tools()) {
+        if (tool.name == "adt_search") {
+            CHECK(tool.annotations.read_only);
+            CHECK(!tool.annotations.destructive);
+        }
+        if (tool.name == "adt_delete_object") {
+            CHECK(!tool.annotations.read_only);
+            CHECK(tool.annotations.destructive);
+        }
+    }
+}
+
+TEST_CASE("The most-parsed tools declare an outputSchema",
+          "[mcp][tools][metadata]") {
+    MockAdtSession session;
+    ToolRegistry registry;
+    RegisterAdtTools(registry, session);
+
+    const std::set<std::string> want_schema = {
+        "adt_run_tests", "adt_run_atc", "adt_check_syntax", "adt_read_table"};
+
+    size_t found = 0;
+    for (const auto& tool : registry.Tools()) {
+        if (want_schema.count(tool.name) == 0) continue;
+        INFO("tool: " << tool.name);
+        REQUIRE(!tool.output_schema.is_null());
+        // Either an object shape or (for check_syntax) a bare array.
+        const auto type = tool.output_schema.value("type", "");
+        CHECK((type == "object" || type == "array"));
+        ++found;
+    }
+    CHECK(found == want_schema.size());
 }

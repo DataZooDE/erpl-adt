@@ -126,11 +126,24 @@ nlohmann::json McpServer::HandleToolsList(const nlohmann::json& id) {
     nlohmann::json tools = nlohmann::json::array();
 
     for (const auto& schema : registry_.Tools()) {
-        tools.push_back({
+        nlohmann::json tool{
             {"name", schema.name},
             {"description", schema.description},
-            {"inputSchema", schema.input_schema}
-        });
+            {"inputSchema", schema.input_schema},
+            // Behavioural hints so a host can put a confirmation in front of
+            // the destructive tools and not the read-only ones.
+            {"annotations",
+             {{"readOnlyHint", schema.annotations.read_only},
+              {"destructiveHint", schema.annotations.destructive},
+              {"idempotentHint", schema.annotations.idempotent}}},
+        };
+        if (!schema.title.empty()) {
+            tool["title"] = schema.title;
+        }
+        if (!schema.output_schema.is_null()) {
+            tool["outputSchema"] = schema.output_schema;
+        }
+        tools.push_back(std::move(tool));
     }
 
     return MakeResult(id, {{"tools", tools}});
@@ -176,6 +189,12 @@ nlohmann::json McpServer::HandleToolsCall(
 
     nlohmann::json response_result;
     response_result["content"] = result.content;
+    // Both, deliberately: the spec asks a tool returning structured content to
+    // also serialize it into a text block, so clients that predate
+    // structuredContent keep working unchanged.
+    if (!result.structured.is_null()) {
+        response_result["structuredContent"] = result.structured;
+    }
     if (result.is_error) {
         response_result["isError"] = true;
     }
