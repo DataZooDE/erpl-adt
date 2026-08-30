@@ -776,7 +776,11 @@ Result<void, Error> BwSaveObject(
             "Lock handle must not be empty", std::nullopt});
     }
 
-    auto path = BuildObjectPath(options.object_type, options.object_name);
+    // The version belongs in the path, not in a query parameter: a PUT to
+    // /sap/bw/modeling/{tlogo}/{name} answers HTTP 400 "Parameter version
+    // could not be found", and ?version=M does not satisfy it either.
+    const auto version = options.version.empty() ? std::string("m") : options.version;
+    auto path = BuildObjectPath(options.object_type, options.object_name, version);
     auto save_url = path + "?lockHandle=" + options.lock_handle;
     if (!options.transport.empty()) {
         save_url += "&corrNr=" + options.transport;

@@ -3579,13 +3579,25 @@ int HandleBwSave(const CommandArgs& args) {
         return 99;
     }
 
-    // Read content from stdin
+    // Content comes from --file or, as before, from stdin.
     std::string content;
-    std::ostringstream ss;
-    ss << std::cin.rdbuf();
-    content = ss.str();
+    if (HasFlag(args, "file")) {
+        std::ifstream ifs(GetFlag(args, "file"));
+        if (!ifs) {
+            fmt.PrintError(MakeValidationError("Unable to read --file path"));
+            return 99;
+        }
+        std::ostringstream buffer;
+        buffer << ifs.rdbuf();
+        content = buffer.str();
+    } else {
+        std::ostringstream ss;
+        ss << std::cin.rdbuf();
+        content = ss.str();
+    }
     if (content.empty()) {
-        fmt.PrintError(MakeValidationError("No content on stdin"));
+        fmt.PrintError(MakeValidationError(
+            "No content: pass --file <path> or pipe the XML on stdin"));
         return 99;
     }
 
@@ -3597,6 +3609,7 @@ int HandleBwSave(const CommandArgs& args) {
     opts.object_name = args.positional[1];
     opts.content = std::move(content);
     opts.lock_handle = lock_handle;
+    opts.version = GetFlag(args, "version", "m");
     opts.transport = GetFlag(args, "transport");
     opts.timestamp = GetFlag(args, "timestamp");
     opts.context_headers = ParseBwContextHeaders(args);
@@ -8485,9 +8498,14 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw save <type> <name> [flags]";
         help.args_description = "<type>    Object type\n  <name>    Object name";
-        help.long_description = "Save modified BW object XML. Reads content from stdin.";
+        help.long_description =
+            "Save modified BW object XML, read from --file or from stdin. The PUT "
+            "addresses a version segment (default: m, the inactive version) — the "
+            "backend rejects a save without one.";
         help.flags = {
             {"lock-handle", "<handle>", "Lock handle from bw lock", true},
+            {"file", "<path>", "XML payload file (default: read stdin)", false},
+            {"version", "<v>", "Version to write: m (default) or a", false},
             {"transport", "<corrnr>", "Transport request number", false},
             {"timestamp", "<ts>", "Server timestamp from lock response", false},
             {"transport-lock-holder", "<corrnr>", "Explicit Transport-Lock-Holder header", false},
@@ -8498,6 +8516,7 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         help.examples = {
             "erpl-adt bw save ADSO ZSALES --lock-handle=ABC123 < modified.xml",
+            "erpl-adt bw save ADSO ZSALES --lock-handle=ABC123 --file=modified.xml",
         };
         router.Register("bw", "save", "Save modified BW object",
                          HandleBwSave, std::move(help));

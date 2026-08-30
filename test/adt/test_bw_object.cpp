@@ -1124,3 +1124,67 @@ TEST_CASE("BwCreateObject: copying does not rename a longer name that starts the
     CHECK(body.find("0calmonth2") != std::string::npos);
     CHECK(body.find("ZTSTIO72") == std::string::npos);
 }
+
+
+// ===========================================================================
+// Saving addresses a version segment (found by sweeping the BW write surface
+// for the same defect as the IOBJ create verb).
+//
+// PUT /sap/bw/modeling/{tlogo}/{name} answers HTTP 400 "Parameter version
+// could not be found", and ?version=M does not satisfy it either — so every
+// bw save had failed, whatever the caller passed.
+// ===========================================================================
+
+TEST_CASE("BwSaveObject: puts to the versioned path", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    const auto& path = mock.PutCalls()[0].path;
+    CHECK(path.find("/sap/bw/modeling/adso/zsales/m") == 0);
+    CHECK(path.find("lockHandle=H1") != std::string::npos);
+    // Not a query parameter — the backend does not read it there.
+    CHECK(path.find("version=") == std::string::npos);
+}
+
+TEST_CASE("BwSaveObject: the version is selectable", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+    opts.version = "a";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCalls()[0].path.find("/sap/bw/modeling/adso/zsales/a") == 0);
+}
+
+TEST_CASE("BwSaveObject: an empty version falls back to the inactive one",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+    opts.version = "";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCalls()[0].path.find("/sap/bw/modeling/adso/zsales/m") == 0);
+}

@@ -147,6 +147,10 @@ struct BwSaveOptions {
     std::string object_type;
     std::string object_name;
     std::string content;             // Modified XML body
+    // The version segment the PUT addresses. Saving edits the inactive
+    // version, and the segment is mandatory: without it the backend answers
+    // HTTP 400 "Parameter version could not be found".
+    std::string version = "m";
     std::string lock_handle;
     std::string transport;           // CORRNR
     std::string timestamp;

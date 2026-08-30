@@ -142,6 +142,45 @@ class TestBwReadVersion:
 
 
 @pytest.mark.bw
+class TestBwSave:
+    """Saving addresses a version segment (issue #44 sweep).
+
+    `PUT /sap/bw/modeling/{tlogo}/{name}` answers HTTP 400 "Parameter version
+    could not be found", so every save had failed before this.
+    """
+
+    def test_lock_edit_save_round_trip(self, cli, bw_has_adso, adso_cleanup, tmp_path):
+        name = _unique_name()
+        created = cli.run("bw", "create", "ADSO", name, "--package", "$TMP")
+        if created.returncode != 0:
+            pytest.skip("bw create unavailable; nothing to save")
+        adso_cleanup.append(name)
+
+        session_file = str(tmp_path / "save_session.json")
+        lock = cli.run("bw", "lock", "ADSO", name, session_file=session_file)
+        assert lock.returncode == 0, lock.stderr
+        handle = json.loads(lock.stdout.strip())["lock_handle"]
+
+        raw = cli.run_no_json("bw", "read", "ADSO", name, "--version", "m", "--raw",
+                              session_file=session_file)
+        assert raw.returncode == 0
+        edited = raw.stdout.replace("<endUserTexts label=\"%s\"/>" % name,
+                                    "<endUserTexts label=\"edited by erpl-adt\"/>")
+        payload = tmp_path / "edited.xml"
+        payload.write_text(edited, encoding="utf-8")
+
+        saved = cli.run("bw", "save", "ADSO", name, "--lock-handle", handle,
+                        "--file", str(payload), session_file=session_file)
+        cli.run("bw", "unlock", "ADSO", name, session_file=session_file)
+
+        assert saved.returncode == 0, saved.stderr
+        assert "Parameter version" not in (saved.stdout + saved.stderr)
+
+        back = cli.run_no_json("bw", "read", "ADSO", name, "--version", "m", "--raw")
+        assert "edited by erpl-adt" in back.stdout
+
+
+@pytest.mark.bw
 class TestBwActivate:
     """Activation over the real endpoint (issue #44).
 

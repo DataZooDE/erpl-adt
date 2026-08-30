@@ -206,6 +206,10 @@ Renaming a copied object must match whole names only: copying `0CALMONTH` with a
 substring replace also renamed the referenced `0CALMONTH2`, and the copy then failed
 activation with "Attribute ...2 not (actively) available".
 
+Saving (`PUT`) addresses the **version segment**: `/sap/bw/modeling/{tlogo}/{name}/m`.
+Without it the backend answers HTTP 400 "Parameter version could not be found", and
+`?version=M` does not satisfy it either — which is why `bw save` had never worked.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested
