@@ -96,7 +96,7 @@ TEST_CASE("McpServer: tools/call executes tool", "[mcp][server]") {
     CHECK(content[0]["text"] == "hello world");
 }
 
-TEST_CASE("McpServer: tools/call unknown tool returns method-not-found", "[mcp][server]") {
+TEST_CASE("McpServer: tools/call unknown tool returns invalid-params", "[mcp][server]") {
     std::istringstream in;
     std::ostringstream out;
     McpServer server(MakeTestRegistry(), in, out);
@@ -111,8 +111,10 @@ TEST_CASE("McpServer: tools/call unknown tool returns method-not-found", "[mcp][
     auto response = server.HandleMessage(msg);
     REQUIRE(response.has_value());
     REQUIRE((*response).contains("error"));
-    // JSON-RPC 2.0: -32601 is Method not found; -32602 is Invalid params.
-    CHECK((*response)["error"]["code"] == -32601);
+    // tools/call is implemented; it is the *name* parameter that is wrong, so
+    // this is -32602. -32601 stays for a method the server does not implement,
+    // which is how a client tells the two apart.
+    CHECK((*response)["error"]["code"] == -32602);
 }
 
 TEST_CASE("McpServer: unknown method returns error", "[mcp][server]") {
@@ -326,4 +328,57 @@ TEST_CASE("McpServer: Run continues after a type-error frame",
     CHECK(r2["id"] == 101);
     REQUIRE(r2.contains("result"));
     CHECK(r2["result"]["tools"].size() == 1);
+}
+
+// ===========================================================================
+// Protocol version negotiation
+//
+// The version used to be answered as "2024-11-05" regardless of what the
+// client asked for, with params ignored entirely.
+// ===========================================================================
+
+TEST_CASE("McpServer: initialize echoes a supported version", "[mcp][server][protocol]") {
+    std::istringstream in;
+    std::ostringstream out;
+    McpServer server(MakeTestRegistry(), in, out);
+
+    for (const auto* version : {"2024-11-05", "2025-03-26", "2025-06-18"}) {
+        nlohmann::json msg = {{"jsonrpc", "2.0"},
+                              {"id", 1},
+                              {"method", "initialize"},
+                              {"params", {{"protocolVersion", version}}}};
+        auto response = server.HandleMessage(msg);
+        REQUIRE(response.has_value());
+        INFO("requested: " << version);
+        CHECK((*response)["result"]["protocolVersion"] == version);
+    }
+}
+
+TEST_CASE("McpServer: an unknown version negotiates down to the newest supported",
+          "[mcp][server][protocol]") {
+    std::istringstream in;
+    std::ostringstream out;
+    McpServer server(MakeTestRegistry(), in, out);
+
+    nlohmann::json msg = {{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "initialize"},
+                          {"params", {{"protocolVersion", "2099-01-01"}}}};
+    auto response = server.HandleMessage(msg);
+    REQUIRE(response.has_value());
+    CHECK((*response)["result"]["protocolVersion"] == "2025-06-18");
+}
+
+TEST_CASE("McpServer: initialize without params still answers a version",
+          "[mcp][server][protocol]") {
+    // Older clients that send no params must not regress into an error.
+    std::istringstream in;
+    std::ostringstream out;
+    McpServer server(MakeTestRegistry(), in, out);
+
+    nlohmann::json msg = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
+    auto response = server.HandleMessage(msg);
+    REQUIRE(response.has_value());
+    CHECK((*response)["result"]["protocolVersion"] == "2025-06-18");
+    CHECK((*response)["result"]["serverInfo"]["name"] == "erpl-adt");
 }

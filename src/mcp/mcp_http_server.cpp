@@ -158,12 +158,36 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
 
         if (!response.has_value()) {
             // Notification (e.g. notifications/initialized) — no body per
-            // JSON-RPC 2.0, HTTP 204 is the closest honest status.
-            res.status = 204;
+            // JSON-RPC 2.0. The transport spec asks for 202 Accepted: the
+            // message was taken, and there is nothing to answer with.
+            res.status = 202;
             return;
+        }
+
+        // An unimplemented method gets HTTP 404 alongside its -32601 body.
+        // The pairing is what a client probes to tell a modern server from a
+        // legacy HTTP+SSE one, and it costs nothing to be honest about.
+        if (response->contains("error") && response->at("error").is_object() &&
+            response->at("error").value("code", 0) == -32601) {
+            res.status = 404;
         }
         res.set_content(response->dump(), "application/json");
     });
+
+    // /mcp answers POST only. Registered here, before the web UI's catch-all
+    // Get(".*") below, or that catch-all would swallow GET /mcp and serve the
+    // SPA's index.html instead of a 405.
+    const auto method_not_allowed = [](const httplib::Request&,
+                                       httplib::Response& res) {
+        res.status = 405;
+        res.set_header("Allow", "POST, OPTIONS");
+        res.set_content(
+            R"({"jsonrpc":"2.0","id":null,"error":{"code":-32600,)"
+            R"("message":"/mcp accepts POST only"}})",
+            "application/json");
+    };
+    impl_->http.Get("/mcp", method_not_allowed);
+    impl_->http.Delete("/mcp", method_not_allowed);
 
     impl_->http.Get("/healthz", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(R"({"status":"ok"})", "application/json");

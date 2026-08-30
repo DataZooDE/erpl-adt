@@ -58,8 +58,10 @@ All arrows point downward. No cycles. Every horizontal boundary is a pure abstra
 - `adt/{packages,abapgit,activation}.hpp` — Deploy/bootstrap operations (`packages` uses `IXmlCodec`; `abapgit` and `activation` use shared async protocol contracts)
 - `cli/command_router.hpp` — Two-level dispatch: `erpl-adt <group> <action> [args]`
 - `cli/output_formatter.hpp` — Human-readable table and JSON output
-- `mcp/mcp_server.hpp` — JSON-RPC 2.0 server over stdio (MCP 2024-11-05)
-- `mcp/tool_registry.hpp` — Tool name → handler mapping
+- `mcp/mcp_server.hpp` — JSON-RPC 2.0 server over stdio; negotiates MCP 2025-06-18 / 2025-03-26 / 2024-11-05
+- `mcp/tool_registry.hpp` — Tool name → handler mapping, plus titles, annotations and output schemas
+- `mcp/tool_metadata.hpp` — The reviewed read-only/destructive classification for every tool
+- `mcp/http_security.hpp` — Origin allowlisting and optional bearer auth for the HTTP transport
 - `config/config_loader.hpp` — Merges CLI args (argparse) + YAML (yaml-cpp) into `AppConfig`
 - `workflow/deploy_workflow.hpp` — Idempotent state machine: discover → package → clone → pull → activate
 - `workflow/lock_workflow.hpp` — Lock transaction orchestration for CLI auto-lock flows

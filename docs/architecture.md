@@ -175,7 +175,7 @@ Handles human-readable table output and JSON mode. `OutputFormatter` takes a `js
 
 #### mcp/mcp_server
 
-JSON-RPC 2.0 server over stdin/stdout implementing MCP 2024-11-05. Handles `initialize`, `tools/list`, `tools/call` methods.
+JSON-RPC 2.0 server over stdin/stdout. Handles `initialize`, `tools/list`, `tools/call`; negotiates MCP 2025-06-18, 2025-03-26 or 2024-11-05 with the client.
 
 #### mcp/tool_registry
 

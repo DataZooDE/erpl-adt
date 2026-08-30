@@ -354,3 +354,115 @@ TEST_CASE("McpHttpServer: /healthz responds ok", "[mcp][http]") {
     server.Stop();
     server_thread.join();
 }
+
+// ===========================================================================
+// HTTP status conformance
+// ===========================================================================
+
+TEST_CASE("McpHttpServer: a notification is answered with 202, not 204",
+          "[mcp][http][protocol]") {
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 30);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json notification = {{"jsonrpc", "2.0"},
+                                   {"method", "notifications/initialized"}};
+    auto response = client.Post("/mcp", notification.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 202);
+    CHECK(response->body.empty());
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: an unimplemented method is 404 with -32601",
+          "[mcp][http][protocol]") {
+    // The pairing is what lets a client tell a modern server from a legacy
+    // HTTP+SSE one while probing.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 31);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json msg = {{"jsonrpc", "2.0"}, {"id", 9}, {"method", "no/such/method"}};
+    auto response = client.Post("/mcp", msg.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 404);
+    auto body = nlohmann::json::parse(response->body);
+    CHECK(body["error"]["code"] == -32601);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: an unknown tool is 200 with -32602",
+          "[mcp][http][protocol]") {
+    // An unknown *tool* is a bad parameter to an implemented method, so the
+    // HTTP status stays 200 — only the JSON-RPC error distinguishes it.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 32);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json msg = {{"jsonrpc", "2.0"},
+                          {"id", 9},
+                          {"method", "tools/call"},
+                          {"params", {{"name", "nope"}}}};
+    auto response = client.Post("/mcp", msg.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
+    auto body = nlohmann::json::parse(response->body);
+    CHECK(body["error"]["code"] == -32602);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: GET and DELETE on /mcp are 405",
+          "[mcp][http][protocol]") {
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 33);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    auto get = client.Get("/mcp");
+    REQUIRE(get != nullptr);
+    CHECK(get->status == 405);
+    CHECK(get->get_header_value("Allow") == "POST, OPTIONS");
+
+    auto del = client.Delete("/mcp");
+    REQUIRE(del != nullptr);
+    CHECK(del->status == 405);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: the web UI catch-all does not swallow GET /mcp",
+          "[mcp][http][protocol]") {
+    // The route-ordering trap: Get(".*") serving the SPA would otherwise
+    // answer index.html here instead of 405.
+    McpHttpServer server(MakeEchoRegistry(), /*serve_webui=*/true);
+    auto port = static_cast<uint16_t>(TestPort() + 34);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    auto get = client.Get("/mcp");
+    REQUIRE(get != nullptr);
+    CHECK(get->status == 405);
+
+    server.Stop();
+    server_thread.join();
+}
