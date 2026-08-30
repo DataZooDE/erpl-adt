@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/ddic.hpp>
 
 #include "adt_utils.hpp"
+#include <erpl_adt/core/log.hpp>
 #include "xml_utils.hpp"
 #include <erpl_adt/adt/packages.hpp>
 #include <erpl_adt/core/url.hpp>
@@ -69,6 +70,15 @@ Result<std::vector<PackageEntry>, Error> ParseNodeStructure(
         entry.object_uri = GetText(node, "OBJECT_URI");
         entry.description = GetText(node, "DESCRIPTION");
         entry.expandable = GetText(node, "EXPANDABLE") == "X";
+
+        // SAP reports a node it could not render as a pseudo-entry with an
+        // empty OBJECT_TYPE and a message in OBJECT_NAME ("Error loading
+        // node:"), not as an error. Passing it through made a diagnostic
+        // message look like an object in every listing that hit one.
+        if (entry.object_type.empty() && entry.object_uri.empty()) {
+            LogDebug("packages", "skipping unrenderable node: " + entry.object_name);
+            continue;
+        }
 
         if (!entry.object_name.empty()) {
             entries.push_back(std::move(entry));

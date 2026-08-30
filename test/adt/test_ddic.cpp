@@ -824,3 +824,39 @@ TEST_CASE("GetTableDefinition: resolve_types extracts abap_type from data elemen
     CHECK(fields[0].abap_type == "CHAR");
     CHECK(fields[0].description == "Airline code");
 }
+
+
+// ===========================================================================
+// SAP reports a node it cannot render as a pseudo-entry with an empty
+// OBJECT_TYPE and the message in OBJECT_NAME, rather than as an error. Passing
+// it through made "Error loading node:" appear as an object in the listing.
+// ===========================================================================
+
+TEST_CASE("ListPackageContents: drops nodes SAP could not render",
+          "[adt][ddic]") {
+    MockAdtSession mock;
+    const std::string xml = R"(<?xml version="1.0" encoding="utf-8"?>
+        <asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><TREE_CONTENT>
+          <SEU_ADT_REPOSITORY_OBJ_NODE>
+            <OBJECT_TYPE>CLAS/OC</OBJECT_TYPE>
+            <OBJECT_NAME>ZCL_REAL</OBJECT_NAME>
+            <OBJECT_URI>/sap/bc/adt/oo/classes/zcl_real</OBJECT_URI>
+            <DESCRIPTION>A real class</DESCRIPTION>
+          </SEU_ADT_REPOSITORY_OBJ_NODE>
+          <SEU_ADT_REPOSITORY_OBJ_NODE>
+            <OBJECT_TYPE/>
+            <OBJECT_NAME>Error loading node:</OBJECT_NAME>
+            <OBJECT_URI/>
+            <DESCRIPTION/>
+          </SEU_ADT_REPOSITORY_OBJ_NODE>
+        </TREE_CONTENT></DATA></asx:values></asx:abap>)";
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = ListPackageContents(mock, "ZTEST_PKG");
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().size() == 1);
+    CHECK(result.Value()[0].object_name == "ZCL_REAL");
+    for (const auto& entry : result.Value()) {
+        CHECK(!entry.object_type.empty());
+    }
+}
