@@ -2269,10 +2269,20 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "bw_query_properties",
-        "Read BW query properties rules endpoint.",
-        MakeSchema({}, {}),
-        [&session](const nlohmann::json&) -> ToolResult {
-            auto result = BwGetQueryProperties(session);
+        "Read the query properties of one BW InfoProvider.",
+        MakeSchema(
+            {{"infoprovider", StringProp("InfoProvider name (e.g. ZSALES)")},
+             {"object_type", StringProp("TLOGO of the InfoProvider (e.g. ADSO)")},
+             {"version", StringProp("Version: a (active) or m (modified)")}},
+            {"infoprovider"}),
+        [&session](const nlohmann::json& params) -> ToolResult {
+            ToolResult err;
+            auto infoprovider = RequireString(params, "infoprovider", err);
+            if (!infoprovider) return err;
+
+            auto result = BwGetQueryProperties(session, *infoprovider,
+                                               OptString(params, "object_type"),
+                                               OptString(params, "version"));
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
             nlohmann::json j = nlohmann::json::array();

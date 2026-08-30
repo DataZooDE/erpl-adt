@@ -33,11 +33,38 @@ TEST_CASE("BwGetReportingMetadata: builds URL and headers", "[adt][bw][reporting
     CHECK(mock.GetCalls()[0].headers.at("ToRow") == "10");
 }
 
-TEST_CASE("BwGetQueryProperties: sends endpoint", "[adt][bw][reporting]") {
+// The route needs an InfoProvider — without one the backend answers
+// "Operation could not be carried out for" — and it serves
+// infoprov_query_props, not the rulesQueryProperties type discovery
+// advertises (that combination produced an HTTP 415 on every call).
+TEST_CASE("BwGetQueryProperties: sends the InfoProvider and the served type",
+          "[adt][bw][reporting]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<rules/>"}));
 
-    auto result = BwGetQueryProperties(mock);
+    auto result = BwGetQueryProperties(mock, "ZSALES", "ADSO", "M");
     REQUIRE(result.IsOk());
-    CHECK(mock.GetCalls()[0].path == "/sap/bw/modeling/rules/qprops");
+    CHECK(mock.GetCalls()[0].path ==
+          "/sap/bw/modeling/rules/qprops?infoprovider=ZSALES&objectType=ADSO&version=M");
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.bw.modeling.infoprov_query_props-v3_0_0+xml");
+}
+
+TEST_CASE("BwGetQueryProperties: an empty InfoProvider fails before the wire",
+          "[adt][bw][reporting]") {
+    MockAdtSession mock;
+    auto result = BwGetQueryProperties(mock, "");
+    REQUIRE(result.IsErr());
+    CHECK(mock.GetCallCount() == 0);
+}
+
+TEST_CASE("BwGetQueryProperties: optional parameters are omitted when empty",
+          "[adt][bw][reporting]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<rules/>"}));
+
+    auto result = BwGetQueryProperties(mock, "ZSALES");
+    REQUIRE(result.IsOk());
+    CHECK(mock.GetCalls()[0].path ==
+          "/sap/bw/modeling/rules/qprops?infoprovider=ZSALES");
 }
