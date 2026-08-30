@@ -214,7 +214,18 @@ erpl-adt mcp --host sap.example.com --port 44300 --https
 ```
 
 The MCP server exposes all operations as tools for AI agent consumption via the Model Context
-Protocol (2024-11-05). Communication is line-delimited JSON-RPC 2.0 over stdin/stdout.
+Protocol. Communication is line-delimited JSON-RPC 2.0 over stdin/stdout.
+
+`initialize` negotiates the revision: the server speaks `2025-06-18`, `2025-03-26` and
+`2024-11-05`, echoes the client's version when it is one of those, and otherwise answers
+with the newest it supports. Results carry `structuredContent` alongside the text block,
+the tools whose output a model must branch on declare an `outputSchema`, and every tool
+declares `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint`) and a
+`title` — so a host can put a confirmation in front of `adt_delete_object` and not in
+front of `adt_search`.
+
+Use `--tools adt,bw,catalog` to expose only some tool families; the default is all of
+them. The set is fixed for the process and identical for every connection to it.
 
 **Supported MCP methods:**
 - `initialize` -- handshake and capability negotiation
