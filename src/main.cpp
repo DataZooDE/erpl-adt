@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -114,7 +115,9 @@ void PrintMcpHelp(std::ostream& out) {
     out << "  --http               Serve JSON-RPC over HTTP at POST /mcp instead of stdio\n";
     out << "  --mcp-host <addr>    Address to bind with --http (default: 127.0.0.1)\n";
     out << "  --mcp-port <n>       Port to bind with --http (default: 8383)\n";
-    out << "  --catalog-db <path>  Also expose the catalog_* tools over a DuckDB cache\n\n";
+    out << "  --catalog-db <path>  Also expose the catalog_* tools over a DuckDB cache\n";
+    out << "  --tools <families>   Expose only these tool families (adt, bw, catalog;\n";
+    out << "                       comma-separated). Default: all registered families\n\n";
     out << "HTTP ACCESS CONTROL (--http only)\n";
     out << "  --cors-origin <list> Comma-separated extra origins allowed to call /mcp.\n";
     out << "                       Same-origin, loopback and non-browser (no Origin\n";
@@ -566,6 +569,43 @@ int HandleMcpServer(int argc, const char* const* argv) {
         }
         std::shared_ptr<DuckDbCatalogStore> catalog_store(std::move(store_result).Value());
         RegisterCatalogStoreTools(registry, catalog_store);
+    }
+
+    // --tools: expose only the named families. 77 tools is a large slice of an
+    // agent's prompt and most sessions use one family; an ABAP developer
+    // rarely needs the 40+ bw_* tools. The set is fixed for the process, the
+    // same for every connection to it, which is what MCP requires.
+    if (!get("tools").empty()) {
+        static const std::vector<std::string> kKnownFamilies = {"adt", "bw",
+                                                                 "catalog"};
+        std::vector<std::string> families;
+        std::string current;
+        auto flush = [&]() {
+            if (!current.empty()) {
+                families.push_back(current);
+                current.clear();
+            }
+        };
+        for (char c : get("tools")) {
+            if (c == ',' || c == ' ') {
+                flush();
+            } else {
+                current.push_back(c);
+            }
+        }
+        flush();
+
+        for (const auto& family : families) {
+            if (std::find(kKnownFamilies.begin(), kKnownFamilies.end(), family) ==
+                kKnownFamilies.end()) {
+                std::cerr << "Error: --tools: unknown family '" << family
+                          << "'. Known families: adt, bw, catalog.\n";
+                return kExitInternal;
+            }
+        }
+        const auto removed = registry.RetainFamilies(families);
+        std::cerr << "Exposing " << registry.Tools().size() << " tools ("
+                  << removed << " hidden by --tools)\n";
     }
 
     const bool http_transport = get("http") == "true";

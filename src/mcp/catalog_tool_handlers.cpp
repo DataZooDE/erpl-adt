@@ -1,4 +1,5 @@
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/tool_metadata.hpp>
 
 #include <erpl_adt/adt/catalog_overlay.hpp>
 #include <erpl_adt/core/log.hpp>
@@ -13,16 +14,28 @@ namespace erpl_adt {
 
 namespace {
 
+// Both forms, same rationale as mcp_tool_handlers.cpp: the text block keeps
+// older clients working, structuredContent stops everyone re-parsing it.
 ToolResult MakeOkResult(const nlohmann::json& data) {
-    return ToolResult{false, nlohmann::json::array({{{"type", "text"}, {"text", data.dump()}}})};
+    ToolResult result;
+    result.is_error = false;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", data.dump()}}});
+    result.structured = data;
+    return result;
 }
 
 ToolResult MakeErrorResult(const Error& error) {
-    return ToolResult{true, nlohmann::json::array({{{"type", "text"}, {"text", error.ToJson()}}})};
+    ToolResult result;
+    result.is_error = true;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", error.ToJson()}}});
+    return result;
 }
 
 ToolResult MakeParamError(const std::string& msg) {
-    return ToolResult{true, nlohmann::json::array({{{"type", "text"}, {"text", msg}}})};
+    ToolResult result;
+    result.is_error = true;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", msg}}});
+    return result;
 }
 
 std::optional<std::string> RequireString(const nlohmann::json& params, const std::string& key,
@@ -493,6 +506,9 @@ void RegisterCatalogStoreTools(ToolRegistry& registry, std::shared_ptr<ICatalogS
             AttachCacheMeta(*store, j);
             return MakeOkResult(j);
         });
+    // Same reviewed table as the ADT tools — see mcp/tool_metadata.hpp.
+    ApplyToolMetadata(registry);
+    ApplyToolOutputSchemas(registry);
 }
 
 } // namespace erpl_adt
