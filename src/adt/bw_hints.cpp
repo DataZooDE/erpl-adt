@@ -27,23 +27,36 @@ bool IsBwEndpoint(const std::string& endpoint) {
 
 void AddBwHint(Error& error) {
     if (!IsBwEndpoint(error.endpoint)) return;
+    // A caller that already worked out something specific (the Accept types it
+    // actually tried, for instance) knows more than these generic hints do.
+    if (error.hint.has_value()) return;
 
-    // 406 on any BW endpoint → content type version mismatch
-    if (error.http_status.has_value() && *error.http_status == 406) {
+    // 406/415 on any BW endpoint → content type version mismatch
+    if (error.http_status.has_value() &&
+        (*error.http_status == 406 || *error.http_status == 415)) {
         error.hint = "Content type version mismatch. Run 'erpl-adt bw discover' "
                      "to check supported versions.";
         return;
     }
 
-    // 403 on any BW endpoint → not activated or not authorized
-    if (error.http_status.has_value() && *error.http_status == 403) {
+    // 403 on any BW endpoint → not activated or not authorized, but only when
+    // the response carries no SAP message.  A 403 that explains itself
+    // ("InfoProvider ... is locked by user ...") came from a service that is
+    // plainly running and authorized.
+    if (error.http_status.has_value() && *error.http_status == 403 &&
+        !error.sap_error.has_value()) {
         error.hint = "Access denied — activate /sap/bw/modeling/ in transaction SICF "
                      "and verify user authorizations for BW Modeling services";
         return;
     }
 
-    // 404 on any BW endpoint → SICF activation needed
-    if (error.http_status.has_value() && *error.http_status == 404) {
+    // 404 on any BW endpoint → SICF activation needed, but only when the
+    // response carries no SAP message: a 404 that explains itself ("Version
+    // 'M' of DataStore object ... does not exist") came from a service that
+    // is plainly running, and blaming SICF sends the caller after the wrong
+    // cause.
+    if (error.http_status.has_value() && *error.http_status == 404 &&
+        !error.sap_error.has_value()) {
         error.hint = "Activate the BW Modeling API in transaction SICF "
                      "(path: /sap/bw/modeling/)";
         return;

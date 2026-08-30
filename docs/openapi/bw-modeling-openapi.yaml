@@ -2945,25 +2945,42 @@ paths:
 
         XML in the type-specific SAP BW vendor media type (e.g.
 
-        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`; InfoObjects use plain
+        `application/vnd.sap.bw.modeling.adso-v1_2_0+xml`), which must ALSO be sent
 
-        `application/xml`). `tlogo` and `name` are lowercased in the URI.
+        in `Accept` -- a request that asks for `*/*` is rejected with HTTP 415.
+
+        `tlogo` and `name` are lowercased in the URI.
+
+
+        The body is mandatory: an empty one answers HTTP 500 "Object MODEL <name>
+
+        not found", and the `copyFrom*` query parameters do not fill it in -- a copy
+
+        is performed by reading the source definition and POSTing it under the new
+
+        name. The target package travels in the body as `<adtcore:packageRef>`.
 
 
         Requires CSRF token; mutating requests use a stateful session. On success
 
         the new object URI is returned in the `Location` header (a 202 indicates
 
-        an async create -- poll the `/jobs/{guid}` resource). MUTATING -- request
+        an async create -- poll the `/jobs/{guid}` resource). The new object exists
 
-        and response shapes are derived from `src/adt/bw_object.cpp` (not executed
+        only in its inactive (`m`) version until activated. Creating also takes an
 
-        against the live system).
+        implicit lock on the new object that outlives the HTTP session -- release
+
+        it with `POST ...?action=unlock` or every later request, delete included,
+
+        fails with "is locked by user ...". Verified against a live SAP_BW 758
+
+        system.
 
 
         Source CLI command: `erpl-adt bw create <tlogo> <name> [--package P]
 
-        [--copy-from NAME] [--copy-from-type T]`.
+        [--copy-from-name NAME] [--copy-from-type T] [--file XML]`.
 
         '
       parameters:
@@ -2975,11 +2992,6 @@ paths:
           type: string
       - $ref: '#/components/parameters/bwObjectName'
       - $ref: '#/components/parameters/sapClient'
-      - name: package
-        in: query
-        description: Target development package for the new object
-        schema:
-          type: string
       - name: copyFromObjectName
         in: query
         description: Copy the new object from this existing object's name
@@ -2992,12 +3004,12 @@ paths:
           type: string
       - $ref: '#/components/parameters/csrfToken'
       requestBody:
-        description: 'Object definition XML. Empty body is allowed when copying from an
+        description: 'Object definition XML. Required -- the backend parses it even when
 
-          existing object via the copyFrom* query parameters.
+          the copyFrom* query parameters are set.
 
           '
-        required: false
+        required: true
         content:
           application/xml:
             schema:

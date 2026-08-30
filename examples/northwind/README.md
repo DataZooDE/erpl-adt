@@ -31,7 +31,10 @@ data loader class to populate the tables.
 
 - `erpl-adt` binary built at `../../build/erpl-adt`
 - Connection credentials: set `SAP_PASSWORD` plus optional `SAP_HOST`, `SAP_PORT`,
-  `SAP_USER`, `SAP_CLIENT` environment variables, or pass them as CLI flags
+  `SAP_USER`, `SAP_CLIENT` environment variables, or pass them as CLI flags.
+  Each also accepts the `ERPL_ADT_` prefix (`ERPL_ADT_HOST`, ...), which wins
+  over the `SAP_` spelling. Resolution order: flags > environment >
+  `.adt.creds` > defaults
 - Target package parent (default `ZLOCAL`) must already exist
 - For transport-tracked deployments, provide an open transport request via `--transport`
 

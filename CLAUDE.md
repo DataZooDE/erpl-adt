@@ -159,6 +159,26 @@ not exist". Related: `nodestructure` answers HTTP 200 with an *empty body* for b
 "package is empty" and "package does not exist", so it cannot serve as the oracle either
 — those two states must be distinguished separately.
 
+BW content negotiation (every `/sap/bw/modeling/` route): a request that does not name
+the object type's media type in `Accept` is answered with HTTP 415 ("Requested content
+type */* does not match back-end content type ..."). cpp-httplib sends no `Accept` of its
+own, so every BW call must set one explicitly — reads *and* mutations. The catalog lives
+in `adt/bw_media_types.hpp` (`BwDefaultMediaType`), overridden by the discovery-resolved
+type.
+
+BW create (`POST /sap/bw/modeling/{tlogo}/{name}`) always parses a request body: an empty
+one answers HTTP 500 "Object MODEL <name> not found", and the `copyFrom*` query parameters
+do not fill it in — a copy is done by reading the source definition and POSTing it under
+the new name. The target package travels in the body as `<adtcore:packageRef>`, not as a
+`package` query parameter (which the discovery template does not advertise). ADSO bodies
+need `schemaVersion=""` or the backend answers 500 "Attribute 'schemaVersion' expected".
+Created objects exist only in the inactive (`m`) version until activated.
+
+BW discovery advertises several templates per type. The *first* one is `rel="self"` and
+has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
+relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested
+version.
+
 Key endpoints:
 - `/sap/bc/adt/discovery` — service discovery
 - `/sap/bc/adt/repository/informationsystem/search` — object search

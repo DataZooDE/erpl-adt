@@ -199,3 +199,41 @@ TEST_CASE("AddBwHint: case-insensitive matching on error text", "[bw_hints]") {
     REQUIRE(error.hint.has_value());
     CHECK(error.hint->find("BW Search") != std::string::npos);
 }
+
+
+// ---------------------------------------------------------------------------
+// A 404 that carries a SAP message came from a service that is plainly
+// running — blaming SICF sends the caller after the wrong cause (issue #41).
+// ---------------------------------------------------------------------------
+TEST_CASE("AddBwHint: 404 with a SAP message gets no SICF hint", "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "BwReadObject", "/sap/bw/modeling/adso/zfoo/m", 404,
+        "<exc:exception xmlns:exc=\"http://www.sap.com/abapxml/types/"
+        "communicationframework\"><message lang=\"EN\">Version 'M' of DataStore "
+        "object 'ZFOO' does not exist or cannot be loaded</message>"
+        "</exc:exception>");
+    REQUIRE(error.sap_error.has_value());
+    AddBwHint(error);
+    CHECK(!error.hint.has_value());
+}
+
+TEST_CASE("AddBwHint: 415 on BW endpoint reports a content type mismatch",
+          "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "BwCreateObject", "/sap/bw/modeling/adso/zfoo", 415);
+    AddBwHint(error);
+    REQUIRE(error.hint.has_value());
+    CHECK(error.hint->find("bw discover") != std::string::npos);
+}
+
+TEST_CASE("AddBwHint: 403 with a SAP message gets no SICF hint", "[bw_hints]") {
+    auto error = Error::FromHttpStatus(
+        "BwLockObject", "/sap/bw/modeling/adso/zfoo", 403,
+        "<exc:exception xmlns:exc=\"http://www.sap.com/abapxml/types/"
+        "communicationframework\"><message lang=\"EN\">InfoProvider ZFOO is "
+        "locked by user DEVELOPER</message></exc:exception>");
+    REQUIRE(error.sap_error.has_value());
+    CHECK(error.category == ErrorCategory::LockConflict);
+    AddBwHint(error);
+    CHECK(!error.hint.has_value());
+}

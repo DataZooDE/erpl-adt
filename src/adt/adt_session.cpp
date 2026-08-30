@@ -174,6 +174,9 @@ struct AdtSession::Impl {
     bool stateful_ = false;
     std::string sap_context_id_;
     std::map<std::string, std::string> cookies_;
+    // Kept for error messages: a transport failure that does not name the
+    // server it tried is the hardest kind to diagnose.
+    std::string base_url_;
 
     Impl(const std::string& host,
          uint16_t port,
@@ -185,9 +188,9 @@ struct AdtSession::Impl {
         : sap_client(sap_client_value),
           accept_language(ResolveAcceptLanguage(opts.language)),
           options(opts) {
-        auto base_url = (use_https ? "https://" : "http://") + host + ":" +
-                        std::to_string(port);
-        client = std::make_unique<httplib::Client>(base_url);
+        base_url_ = (use_https ? "https://" : "http://") + host + ":" +
+                    std::to_string(port);
+        client = std::make_unique<httplib::Client>(base_url_);
 
         client->set_basic_auth(user, password);
         client->set_connection_timeout(opts.connect_timeout);
@@ -315,7 +318,8 @@ struct AdtSession::Impl {
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Get", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(http_error),
+                                     httplib::to_string(http_error) +
+                                     " (connecting to " + base_url_ + ")",
                                  CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
@@ -344,7 +348,8 @@ struct AdtSession::Impl {
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Post", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(http_error),
+                                     httplib::to_string(http_error) +
+                                     " (connecting to " + base_url_ + ")",
                                  CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
@@ -373,7 +378,8 @@ struct AdtSession::Impl {
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Put", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(http_error),
+                                     httplib::to_string(http_error) +
+                                     " (connecting to " + base_url_ + ")",
                                  CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
@@ -399,7 +405,8 @@ struct AdtSession::Impl {
             return Result<HttpResponse, Error>::Err(
                 MakeSessionError("Delete", std::string(path), std::nullopt,
                                  "HTTP request failed: " +
-                                     httplib::to_string(http_error),
+                                     httplib::to_string(http_error) +
+                                     " (connecting to " + base_url_ + ")",
                                  CategoryFromHttpTransportError(http_error)));
         }
         LogResponse(res->status, res->headers, res->body);
@@ -433,7 +440,8 @@ struct AdtSession::Impl {
                     MakeSessionError("FetchCsrfToken", fetch_path,
                                      std::nullopt,
                                      "HTTP request failed: " +
-                                         httplib::to_string(http_error),
+                                         httplib::to_string(http_error) +
+                                         " (connecting to " + base_url_ + ")",
                                      CategoryFromHttpTransportError(http_error)));
             }
             LogResponse(res->status, res->headers, res->body);

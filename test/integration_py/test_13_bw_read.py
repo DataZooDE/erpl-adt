@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from conftest import find_active_object
+
 
 # ===========================================================================
 # BW Read Object
@@ -15,11 +17,10 @@ class TestBwRead:
     @pytest.fixture(scope="class")
     def known_object(self, cli, bw_has_search):
         """Find a known active ADSO to use for read tests."""
-        data = cli.run_ok("bw", "search", "*", "--max", "1",
-                          "--type", "ADSO")
-        if not data:
-            pytest.skip("No ADSO objects found for read tests")
-        return data[0]
+        name = find_active_object(cli, "ADSO")
+        if not name:
+            pytest.skip("No active ADSO objects found for read tests")
+        return {"name": name}
 
     def test_read_object(self, cli, bw_has_adso, known_object):
         """bw read returns object metadata."""
@@ -98,13 +99,11 @@ class TestBwReadAllTypes:
         found = []
         for term in sorted(readable_terms):
             tlogo = self.TERM_TO_TLOGO[term]
-            result = cli.run("bw", "search", "*", "--max", "1",
-                             "--type", tlogo)
-            if result.returncode == 0:
-                stdout = result.stdout.strip()
-                objs = json.loads(stdout) if stdout else []
-                if objs:
-                    found.append((tlogo, objs[0]["name"]))
+            # Read addresses the active version, so only an active object is a
+            # meaningful subject for a read regression test.
+            name = find_active_object(cli, tlogo)
+            if name:
+                found.append((tlogo, name))
         if not found:
             pytest.skip("No readable BW objects found")
         return found

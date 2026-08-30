@@ -55,6 +55,7 @@ TEST_CASE("BwResolveAndExpandEndpoint: resolves and expands from discovery", "[a
         "bwSearch",
         "/sap/bw/modeling/repo/is/bwsearch{?searchTerm,maxSize,objectType}",
         "application/atom+xml",
+        "",
     });
 
     BwTemplateParams path;

@@ -20,7 +20,24 @@
 | `--color` / `--no-color` | Force or disable ANSI color output |
 | `-v` / `-vv` | INFO / DEBUG logging to stderr |
 
-Credential priority: explicit flags > `--password-env` > `.adt.creds` (via `login`) > `SAP_PASSWORD` env var.
+Connection priority: explicit flags > `--password-env` > environment > `.adt.creds`
+(via `login`) > defaults.
+
+Every connection setting can come from the environment, under two spellings — the
+`ERPL_ADT_` prefix wins over the `SAP_` one:
+
+| Setting | Environment variables |
+|---------|-----------------------|
+| host | `ERPL_ADT_HOST`, `SAP_HOST` |
+| port | `ERPL_ADT_PORT`, `SAP_PORT` |
+| user | `ERPL_ADT_USER`, `SAP_USER` |
+| client | `ERPL_ADT_CLIENT`, `SAP_CLIENT` |
+| password | `ERPL_ADT_PASSWORD`, `SAP_PASSWORD` |
+| language | `ERPL_ADT_LANGUAGE`, `SAP_LANGUAGE` |
+
+A saved `.adt.creds` in the working directory still wins over nothing at all, but
+loses to the environment — so an exported `ERPL_ADT_HOST` is never silently
+ignored in favour of a stale cache.
 
 ## Command Groups
 

@@ -23,16 +23,23 @@ class TestBwCreateLifecycle:
             pytest.skip("No IOBJ source object for create lifecycle probe")
 
         src_name = source_data[0]["name"]
-        new_name = ("ZTST" + uuid.uuid4().hex[:10]).upper()
+        # BW object names are limited to 9 characters ("Name ... is not
+        # valid" / "must be between 3 and 9 characters long").
+        new_name = ("ZTST" + uuid.uuid4().hex[:5]).upper()
 
         create = cli.run("bw", "create", "IOBJ", new_name,
                          "--copy-from-name", src_name,
                          "--copy-from-type", "IOBJ")
         if create.returncode != 0:
             stderr = create.stderr.strip().lower()
+            # 415 and 400 are no longer skippable: HTTP 415 is the
+            # content-negotiation bug of issue #41, and skipping on it hid the
+            # defect for as long as it existed.
+            assert "415" not in stderr, (
+                "bw create sent a media type the backend rejects: " + stderr)
             if any(s in stderr for s in ("not activated", "not implemented", "forbidden",
-                                         "\"http_status\":400", "\"http_status\":403",
-                                         "\"http_status\":405", "\"http_status\":415")):
+                                         "\"http_status\":403",
+                                         "\"http_status\":405")):
                 pytest.skip("bw create not supported on this backend profile")
             assert create.returncode != 99
             return

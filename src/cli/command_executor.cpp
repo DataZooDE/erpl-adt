@@ -1,4 +1,6 @@
 #include <erpl_adt/cli/command_executor.hpp>
+
+#include <erpl_adt/core/connection_env.hpp>
 #include <erpl_adt/cli/login_wizard.hpp>
 #include <erpl_adt/cli/output_formatter.hpp>
 #include <erpl_adt/core/ansi.hpp>
@@ -343,20 +345,40 @@ Result<uint16_t, Error> ParsePort(std::string_view raw) {
         static_cast<uint16_t>(std::move(result).Value()));
 }
 
+// Connection settings resolve as: explicit flag > environment > .adt.creds >
+// built-in default.  The environment step accepts both ERPL_ADT_<NAME> and
+// SAP_<NAME> (see core/connection_env.hpp).
+std::string ResolveConnectionSetting(const CommandArgs& args,
+                                     const std::string& flag,
+                                     const std::string& env_setting,
+                                     const std::string& saved,
+                                     const std::string& fallback) {
+    if (HasFlag(args, flag)) {
+        return GetFlag(args, flag);
+    }
+    auto env = ConnectionEnvValue(env_setting);
+    if (env.has_value()) {
+        return *env;
+    }
+    return saved.empty() ? fallback : saved;
+}
+
 // Resolve the effective logon user the same way CreateSession does:
-// explicit flag > saved credentials > default.
+// explicit flag > environment > saved credentials > default.
 std::string ResolveUserName(const CommandArgs& args) {
     auto creds = LoadCredentials();
-    return GetFlag(args, "user", creds ? creds->user : "DEVELOPER");
+    return ResolveConnectionSetting(args, "user", "USER",
+                                    creds ? creds->user : "", "DEVELOPER");
 }
 
 // Create an AdtSession from CommandArgs flags.
 Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args) {
     auto creds = LoadCredentials();
 
-    auto host = GetFlag(args, "host", creds ? creds->host : "localhost");
-    auto port_str = GetFlag(args, "port",
-                            creds ? std::to_string(creds->port) : "50000");
+    auto host = ResolveConnectionSetting(args, "host", "HOST",
+                                        creds ? creds->host : "", "localhost");
+    auto port_str = ResolveConnectionSetting(
+        args, "port", "PORT", creds ? std::to_string(creds->port) : "", "50000");
     auto port_result = ParsePort(port_str);
     if (port_result.IsErr()) {
         return Result<std::unique_ptr<AdtSession>, Error>::Err(
@@ -366,17 +388,24 @@ Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args
     auto use_https = HasFlag(args, "https")
                          ? GetFlag(args, "https") == "true"
                          : (creds ? creds->use_https : false);
-    auto user = GetFlag(args, "user", creds ? creds->user : "DEVELOPER");
-    auto client_str = GetFlag(args, "client",
-                              creds ? creds->client : "001");
+    auto user = ResolveConnectionSetting(args, "user", "USER",
+                                         creds ? creds->user : "", "DEVELOPER");
+    auto client_str = ResolveConnectionSetting(args, "client", "CLIENT",
+                                               creds ? creds->client : "", "001");
     auto password = GetFlag(args, "password");
 
-    // Resolve password: explicit flag > env var > saved creds.
-    if (password.empty()) {
-        auto env_var = GetFlag(args, "password-env", "SAP_PASSWORD");
-        const char* env_val = std::getenv(env_var.c_str());
+    // Resolve password: explicit flag > --password-env > ERPL_ADT_PASSWORD /
+    // SAP_PASSWORD > saved creds.
+    if (password.empty() && HasFlag(args, "password-env")) {
+        const char* env_val = std::getenv(GetFlag(args, "password-env").c_str());
         if (env_val != nullptr) {
             password = env_val;
+        }
+    }
+    if (password.empty()) {
+        auto env = ConnectionEnvValue("PASSWORD");
+        if (env.has_value()) {
+            password = *env;
         }
     }
     if (password.empty() && creds) {
@@ -391,9 +420,10 @@ Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args
     auto sap_client = std::move(client_result).Value();
 
     AdtSessionOptions opts;
-    // SAP logon language: explicit --language flag > saved creds > default (EN).
-    auto language_str = GetFlag(args, "language",
-                                creds ? creds->language : "");
+    // SAP logon language: --language flag > environment > saved creds >
+    // default (EN).
+    auto language_str = ResolveConnectionSetting(args, "language", "LANGUAGE",
+                                                creds ? creds->language : "", "");
     if (!language_str.empty()) {
         auto lang_result = SapLanguage::Create(language_str);
         if (lang_result.IsErr()) {
@@ -575,14 +605,18 @@ Result<SearchResult, Error> ResolveObjectInfo(IAdtSession& session,
     return Result<SearchResult, Error>::Err(std::move(err));
 }
 
+// Resolve a BW endpoint from discovery and expand its URI template.
+// `rel` picks which of a type's templates to use ("self", "latest-version");
+// an empty rel keeps the historical behaviour of taking the first match.
 std::optional<std::string> TryResolveBwEndpoint(
     IAdtSession& session,
     const std::string& scheme,
     const std::string& term,
     const BwTemplateParams& path_params,
-    const BwTemplateParams& query_params) {
+    const BwTemplateParams& query_params,
+    const std::string& rel = "") {
     auto resolved = BwDiscoverResolveAndExpandEndpoint(
-        session, scheme, term, path_params, query_params);
+        session, scheme, term, path_params, query_params, rel);
     if (resolved.IsErr() || resolved.Value().empty()) {
         return std::nullopt;
     }
@@ -3308,8 +3342,12 @@ int HandleBwRead(const CommandArgs& args) {
         BwTemplateParams query_params;
         auto scheme = "http://www.sap.com/bw/modeling/" + ToLowerCopy(opts.object_type);
         auto term = ToLowerCopy(opts.object_type);
+        // Prefer the template that carries {version}: the first template a
+        // type advertises is rel="self", which has no version segment, and
+        // letting it win drops --version on the floor (issue #41).
         auto endpoint = TryResolveBwEndpoint(
-            *session, scheme, term, path_params, query_params);
+            *session, scheme, term, path_params, query_params,
+            opts.version.empty() ? "self" : "latest-version");
         if (endpoint.has_value()) {
             opts.uri = *endpoint;
         }
@@ -4191,6 +4229,9 @@ int HandleBwCreate(const CommandArgs& args) {
     if (HasFlag(args, "package")) opts.package_name = GetFlag(args, "package");
     if (HasFlag(args, "copy-from-name")) opts.copy_from_name = GetFlag(args, "copy-from-name");
     if (HasFlag(args, "copy-from-type")) opts.copy_from_type = GetFlag(args, "copy-from-type");
+    // Creating locks the new object; keep the lock only when the caller is
+    // running a stateful workflow that can release it later.
+    opts.keep_lock = HasFlag(args, "keep-lock");
     if (HasFlag(args, "file")) {
         std::ifstream ifs(GetFlag(args, "file"));
         if (!ifs) {
@@ -4200,6 +4241,16 @@ int HandleBwCreate(const CommandArgs& args) {
         std::ostringstream buffer;
         buffer << ifs.rdbuf();
         opts.content = buffer.str();
+    }
+
+    // Resolve the media type from discovery (best-effort); a system that
+    // advertises a different version wins over the built-in default.
+    auto disc = BwDiscover(*session);
+    if (disc.IsOk()) {
+        auto ct = BwResolveContentType(disc.Value(), opts.object_type);
+        if (!ct.empty()) {
+            opts.content_type = ct;
+        }
     }
 
     auto result = BwCreateObject(*session, opts);
@@ -6905,7 +6956,17 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     }
 
     out << "\n";
-    a.Dim("  Credential priority: flags > --password-env > .adt.creds (via login) > SAP_PASSWORD env var").Nl();
+    a.Bold("ENVIRONMENT").Nl();
+    out << "  ERPL_ADT_HOST / SAP_HOST          SAP hostname\n";
+    out << "  ERPL_ADT_PORT / SAP_PORT          SAP port\n";
+    out << "  ERPL_ADT_USER / SAP_USER          SAP username\n";
+    out << "  ERPL_ADT_CLIENT / SAP_CLIENT      SAP client\n";
+    out << "  ERPL_ADT_PASSWORD / SAP_PASSWORD  SAP password\n";
+    out << "  ERPL_ADT_LANGUAGE / SAP_LANGUAGE  SAP logon language\n";
+
+    out << "\n";
+    a.Dim("  Connection priority: flags > --password-env > environment > "
+          ".adt.creds (via login) > defaults").Nl();
 
     // Exit codes — compact 3-column layout.
     out << "\n";
@@ -8318,16 +8379,27 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw create <type> <name> [flags]";
         help.args_description = "<type>    Object type\n  <name>    Object name";
-        help.long_description = "Create a BW modeling object. Some object types require --file XML content or copy-from flags.";
+        help.long_description =
+            "Create a BW modeling object. The backend always parses a request body: "
+            "ADSO can be created from --package alone (a minimal definition is "
+            "generated for it), every other type needs --file <xml> or "
+            "--copy-from-name/--copy-from-type, which sends a renamed copy of the "
+            "source definition. New objects are created inactive — read them back "
+            "with --version=m and activate them with 'bw activate'. Creating "
+            "locks the object; the lock is released again unless --keep-lock is "
+            "given.";
         help.flags = {
             {"package", "<pkg>", "Target package", false},
             {"copy-from-name", "<name>", "Copy source object name", false},
             {"copy-from-type", "<type>", "Copy source object type", false},
-            {"file", "<path>", "Optional XML payload file for create request body", false},
+            {"file", "<path>", "XML payload file for the create request body", false},
+            {"keep-lock", "", "Keep the lock the create acquires (stateful workflows)", false},
         };
         help.examples = {
-            "erpl-adt bw create ADSO ZNEW_ADSO --package=ZPKG",
+            "erpl-adt bw create ADSO ZNEW_ADSO --package='$TMP'",
+            "erpl-adt bw create ADSO ZCOPY --copy-from-name=ZSALES --copy-from-type=ADSO",
             "erpl-adt bw create IOBJ ZNEW_IOBJ --copy-from-name=0MATERIAL --copy-from-type=IOBJ",
+            "erpl-adt bw create TRFN ZTRFN --file=trfn.xml",
         };
         router.Register("bw", "create", "Create BW object",
                          HandleBwCreate, std::move(help));

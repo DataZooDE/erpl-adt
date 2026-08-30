@@ -1291,6 +1291,14 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             auto content = OptString(params, "content");
             if (!content.empty()) opts.content = content;
 
+            // Resolve the media type from discovery (best-effort) so a system
+            // advertising a different version wins over the built-in default.
+            auto disc = BwDiscover(session);
+            if (disc.IsOk()) {
+                auto ct = BwResolveContentType(disc.Value(), opts.object_type);
+                if (!ct.empty()) opts.content_type = ct;
+            }
+
             auto result = BwCreateObject(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());
 
