@@ -12,7 +12,7 @@ Part of the [Datazoo](https://datazoo.de) ERPL family.
 - **Read and write** source code with lock management and transport integration
 - **Run tests** — ABAP Unit and ATC quality checks from the command line
 - **Manage transports** — create, list, and release transport requests
-- **MCP server** — expose all capabilities to AI agents over JSON-RPC (MCP 2024-11-05)
+- **MCP server** — expose all capabilities to AI agents over JSON-RPC (MCP 2025-06-18, negotiating down to 2024-11-05)
 
 Every command accepts `--json` for machine-readable output.
 
@@ -190,7 +190,7 @@ EXIT CODES
 
 ## MCP server
 
-erpl-adt includes a built-in MCP server (Model Context Protocol, version 2024-11-05) that exposes all ADT operations as tools over JSON-RPC 2.0 on stdin/stdout. This lets AI agents search, read, write, test, and manage ABAP code directly.
+erpl-adt includes a built-in MCP server (Model Context Protocol) that exposes all ADT operations as tools over JSON-RPC 2.0 on stdin/stdout. This lets AI agents search, read, write, test, and manage ABAP code directly. It negotiates 2025-06-18, 2025-03-26 or 2024-11-05 with the client, returns `structuredContent` as well as text, and annotates every tool as read-only, mutating or destructive.
 
 ```bash
 erpl-adt mcp --host sap.example.com --port 44300 --https

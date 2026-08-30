@@ -2,6 +2,7 @@
 
 #include <erpl_adt/adt/catalog_ids.hpp>
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/tool_metadata.hpp>
 #include <erpl_adt/storage/duckdb_catalog_store.hpp>
 
 #include <nlohmann/json.hpp>
@@ -460,4 +461,73 @@ TEST_CASE("catalog_sync_status: empty before any sync has run", "[mcp][catalog][
     auto result = CallTool(registry, "catalog_sync_status", nlohmann::json::object());
     auto j = ParseContent(result);
     CHECK(j["runs"].empty());
+}
+
+// ===========================================================================
+// Catalog tool metadata and structured results
+// ===========================================================================
+
+TEST_CASE("Every catalog tool is classified and titled",
+          "[mcp][catalog][metadata]") {
+    auto store = MakeSeededStore();
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    std::set<std::string> classified;
+    for (const auto& entry : ToolMetadataTable()) {
+        classified.insert(entry.name);
+    }
+    for (const auto& tool : registry.Tools()) {
+        INFO("tool: " << tool.name);
+        CHECK(classified.count(tool.name) == 1);
+        CHECK(!tool.title.empty());
+    }
+}
+
+TEST_CASE("catalog_annotate is the only catalog tool that writes",
+          "[mcp][catalog][metadata]") {
+    auto store = MakeSeededStore();
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    for (const auto& tool : registry.Tools()) {
+        INFO("tool: " << tool.name);
+        if (tool.name == "catalog_annotate") {
+            CHECK(!tool.annotations.read_only);
+        } else {
+            CHECK(tool.annotations.read_only);
+        }
+        // None of them can destroy anything in SAP — the catalog is a local
+        // cache and curation replaces its own overlay columns.
+        CHECK(!tool.annotations.destructive);
+    }
+}
+
+TEST_CASE("catalog_search declares an outputSchema and returns structured content",
+          "[mcp][catalog][metadata]") {
+    auto store = MakeSeededStore();
+    ToolRegistry registry;
+    RegisterCatalogStoreTools(registry, store);
+
+    for (const auto& tool : registry.Tools()) {
+        if (tool.name == "catalog_search" || tool.name == "catalog_lineage") {
+            INFO("tool: " << tool.name);
+            REQUIRE(!tool.output_schema.is_null());
+            CHECK(tool.output_schema.value("type", "") == "object");
+        }
+    }
+
+    auto result = registry.Execute("catalog_search", {{"query", "sales"}});
+    REQUIRE(!result.is_error);
+    // The payload arrives as data, not only as a JSON string in a text block:
+    // this is what the Flutter client used to reconstruct by hand.
+    REQUIRE(!result.structured.is_null());
+    CHECK(result.structured.contains("hits"));
+    CHECK(result.structured.contains("has_more"));
+    // And the text block is still there for clients that predate it.
+    REQUIRE(result.content.is_array());
+    REQUIRE(!result.content.empty());
+    CHECK(result.content[0]["type"] == "text");
+    CHECK(nlohmann::json::parse(result.content[0]["text"].get<std::string>()) ==
+          result.structured);
 }

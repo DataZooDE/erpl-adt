@@ -1,4 +1,5 @@
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
+#include <erpl_adt/mcp/tool_metadata.hpp>
 
 #include <erpl_adt/adt/bw_activation.hpp>
 #include <erpl_adt/adt/bw_discovery.hpp>
@@ -52,23 +53,30 @@ namespace {
 // Result helpers
 // ---------------------------------------------------------------------------
 
+// The payload goes out twice: as data in structuredContent, and serialized
+// into a text block. The text block is what clients older than the structured
+// form read, and the spec asks for both; the data is what stops the model —
+// and our own web client — from re-parsing a string.
 ToolResult MakeOkResult(const nlohmann::json& data) {
-    return ToolResult{
-        false,
-        nlohmann::json::array({{{"type", "text"}, {"text", data.dump()}}})};
+    ToolResult result;
+    result.is_error = false;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", data.dump()}}});
+    result.structured = data;
+    return result;
 }
 
 ToolResult MakeErrorResult(const Error& error) {
-    return ToolResult{
-        true,
-        nlohmann::json::array(
-            {{{"type", "text"}, {"text", error.ToJson()}}})};
+    ToolResult result;
+    result.is_error = true;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", error.ToJson()}}});
+    return result;
 }
 
 ToolResult MakeParamError(const std::string& msg) {
-    return ToolResult{
-        true,
-        nlohmann::json::array({{{"type", "text"}, {"text", msg}}})};
+    ToolResult result;
+    result.is_error = true;
+    result.content = nlohmann::json::array({{{"type", "text"}, {"text", msg}}});
+    return result;
 }
 
 // Get a required string param. Returns nullopt and sets out_error on failure.
@@ -998,9 +1006,14 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "adt_lock",
-        "Lock an ABAP object for editing. "
-        "Returns a lock handle. The session becomes stateful. "
-        "Call adt_unlock when done.",
+        "Lock an ABAP object for editing and return a lock handle. Pass that "
+        "handle to adt_write_source and then to adt_unlock. The handle lives "
+        "only as long as this server process and the SAP session behind it: it "
+        "does not survive a restart, and SAP may drop it after a period of "
+        "inactivity. A handle that is no longer valid comes back as a tool "
+        "error saying so — recover by locking again, not by retrying the write. "
+        "Lock late and unlock promptly; while the lock is held nobody else can "
+        "edit the object.",
         MakeSchema(
             {{"uri", StringProp("Object URI to lock")}},
             {"uri"}),
@@ -1310,8 +1323,14 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "bw_lock_object",
-        "Lock a BW object for editing. Returns lock handle and transport info. "
-        "Requires stateful session.",
+        "Lock a BW object for editing and return a lock handle plus transport "
+        "info. Pass the handle to bw_save_object or bw_delete_object, then "
+        "release it with bw_unlock_object. The handle lives only as long as "
+        "this server process and its SAP session; it does not survive a "
+        "restart. A stale handle comes back as a tool error — lock again "
+        "rather than retrying the write. Note the lock belongs to the SAP "
+        "user, so an abandoned one blocks the next attempt until it is "
+        "released.",
         MakeSchema(
             {{"object_type", StringProp("Object type (ADSO, IOBJ, etc.)")},
              {"object_name", StringProp("Object name")},
@@ -1584,7 +1603,12 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
     registry.Register(
         "bw_job_status",
         "Get status of a BW background job. Status values: N (new), R (running), "
-        "E (error), W (warning), S (success).",
+        "E (error), W (warning), S (success). The job GUID comes from the "
+        "operation that started the job and stays valid until the job is "
+        "cleaned up with bw_job_cleanup or the system discards it; an unknown "
+        "GUID comes back as a tool error rather than a status. Poll every few "
+        "seconds — activations and long checks take minutes, not "
+        "milliseconds.",
         MakeSchema(
             {{"job_guid", StringProp("25-character job GUID")}},
             {"job_guid"}),
@@ -2802,6 +2826,10 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         [&session](const nlohmann::json& params) {
             return HandleCatalogExportTool(session, params);
         });
+    // One reviewed classification for every tool, applied in one place:
+    // see mcp/tool_metadata.hpp.
+    ApplyToolMetadata(registry);
+    ApplyToolOutputSchemas(registry);
 }
 
 } // namespace erpl_adt
