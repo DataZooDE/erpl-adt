@@ -210,6 +210,17 @@ Saving (`PUT`) addresses the **version segment**: `/sap/bw/modeling/{tlogo}/{nam
 Without it the backend answers HTTP 400 "Parameter version could not be found", and
 `?version=M` does not satisfy it either — which is why `bw save` had never worked.
 
+Auditing the BW surface is mechanical: list the calls, then probe each against a
+*non-existent* object so nothing can be mutated, and read what comes back. HTTP 405
+"Resource controller does not support method X" means the wrong verb; 415 names the type
+the route serves; 400 names the missing parameter. That sweep found `bw validate` (GET on
+a POST-only route, and `action=validate` is not one of the accepted actions — they are
+exists / new / standard_transport / is_plannable), `bw qprops` (serves
+`infoprov_query_props`, not the `rulesQueryProperties` discovery advertises, and needs an
+`infoprovider`), `bw applog` (username, starttimestamp and endtimestamp are all mandatory)
+and `bw move` (the endpoint executes moves and never had a listing). A clean `bw validate`
+answers 200 with an *empty body* — that is the success case, not a malformed response.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested

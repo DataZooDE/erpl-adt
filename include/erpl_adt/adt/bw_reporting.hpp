@@ -30,6 +30,12 @@ struct BwReportingRecord {
 BwGetReportingMetadata(IAdtSession& session, const BwReportingOptions& options);
 
 [[nodiscard]] Result<std::vector<BwReportingRecord>, Error>
-BwGetQueryProperties(IAdtSession& session);
+// Query properties of one InfoProvider. `infoprovider` is required: the route
+// answers "Operation could not be carried out for" without it, and the media
+// type it serves is infoprov_query_props, not the rulesQueryProperties the
+// discovery document advertises.
+BwGetQueryProperties(IAdtSession& session, const std::string& infoprovider,
+                     const std::string& object_type = "",
+                     const std::string& version = "");
 
 }  // namespace erpl_adt

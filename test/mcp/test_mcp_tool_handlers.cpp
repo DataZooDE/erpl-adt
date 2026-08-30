@@ -74,12 +74,14 @@ void CheckNoNullMembers(const nlohmann::json& node, const std::string& path) {
 // Every tool registered with MakeSchema({}, {}) — i.e. takes no arguments and
 // must expose empty (but non-null) properties/required. Kept complete so the
 // empty-schema assertion actually pins each no-arg tool.
+// bw_query_properties left this list once it was measured against a live
+// system: the route needs an InfoProvider, and answered "Operation could not
+// be carried out for" when called with none.
 const std::set<std::string>& NoArgTools() {
     static const std::set<std::string> tools = {
-        "bw_adturi",          "bw_changeability",   "bw_clear_favorites",
-        "bw_dbinfo",          "bw_discover",        "bw_list_favorites",
-        "bw_move_requests",   "bw_query_properties", "bw_search_metadata",
-        "bw_sysinfo"};
+        "bw_adturi",        "bw_changeability", "bw_clear_favorites",
+        "bw_dbinfo",        "bw_discover",      "bw_list_favorites",
+        "bw_move_requests", "bw_search_metadata", "bw_sysinfo"};
     return tools;
 }
 
@@ -977,7 +979,8 @@ TEST_CASE("bw_validate: happy path", "[mcp][handlers][bw]") {
             </entry>
         </feed>
     )";
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    // The validation resource implements post() only.
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "bw_validate",
@@ -990,26 +993,20 @@ TEST_CASE("bw_validate: happy path", "[mcp][handlers][bw]") {
     CHECK(j[0]["code"] == "BW123");
 }
 
-TEST_CASE("bw_move_requests: happy path", "[mcp][handlers][bw]") {
+// The BW move endpoint executes moves and never listed anything — a GET
+// answered HTTP 405 on every system, so the tool now explains that instead of
+// forwarding a protocol error.
+TEST_CASE("bw_move_requests: reports that the endpoint has no listing",
+          "[mcp][handlers][bw]") {
     MockAdtSession mock;
-    std::string xml = R"(
-        <feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <title>Move Request 1</title>
-                <content type="application/xml">
-                    <properties request="MOVE0001" owner="DEVELOPER" status="OPEN"/>
-                </content>
-            </entry>
-        </feed>
-    )";
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "bw_move_requests", nlohmann::json::object());
-    auto j = ParseContent(result);
-    REQUIRE(j.is_array());
-    REQUIRE(j.size() == 1);
-    CHECK(j[0]["request"] == "MOVE0001");
+    CHECK(result.is_error);
+    CHECK(mock.GetCallCount() == 0);
+    REQUIRE(result.content.size() == 1);
+    CHECK(result.content[0]["text"].get<std::string>().find("no listing") !=
+          std::string::npos);
 }
 
 TEST_CASE("bw_lineage_graph: returns canonical graph payload", "[mcp][handlers][bw]") {

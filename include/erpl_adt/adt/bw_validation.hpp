@@ -12,7 +12,10 @@ namespace erpl_adt {
 struct BwValidationOptions {
     std::string object_type;
     std::string object_name;
-    std::string action = "validate";
+    // The actions CL_RSO_RES_VALIDATION accepts: exists (default), new,
+    // standard_transport, is_plannable. "validate" is not among them — the
+    // backend answers "invalid action" for anything else.
+    std::string action = "exists";
 };
 
 struct BwValidationMessage {

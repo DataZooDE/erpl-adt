@@ -116,18 +116,37 @@ BwGetReportingMetadata(IAdtSession& session, const BwReportingOptions& options) 
 }
 
 Result<std::vector<BwReportingRecord>, Error>
-BwGetQueryProperties(IAdtSession& session) {
-    HttpHeaders headers;
-    headers["Accept"] = "application/vnd.sap-bw-modeling.rulesQueryProperties+xml, application/xml";
+BwGetQueryProperties(IAdtSession& session, const std::string& infoprovider,
+                     const std::string& object_type, const std::string& version) {
+    if (infoprovider.empty()) {
+        return Result<std::vector<BwReportingRecord>, Error>::Err(Error{
+            "BwGetQueryProperties", kQueryPropsPath, std::nullopt,
+            "InfoProvider must not be empty", std::nullopt});
+    }
 
-    auto response = Fetch(session, kQueryPropsPath, headers, "BwGetQueryProperties");
+    std::string path = std::string(kQueryPropsPath) +
+                       "?infoprovider=" + UrlEncode(infoprovider);
+    if (!object_type.empty()) {
+        path += "&objectType=" + UrlEncode(object_type);
+    }
+    if (!version.empty()) {
+        path += "&version=" + UrlEncode(version);
+    }
+
+    HttpHeaders headers;
+    // The discovery document advertises vnd.sap-bw-modeling.rulesQueryProperties,
+    // but the backend serves infoprov_query_props and answers HTTP 415 for
+    // anything else — CL_RSO_RES_CNT_TYPE_FACTORY names it 'infoprov_query_props'.
+    headers["Accept"] = "application/vnd.sap.bw.modeling.infoprov_query_props-v3_0_0+xml";
+
+    auto response = Fetch(session, path, headers, "BwGetQueryProperties");
     if (response.IsErr()) {
         return Result<std::vector<BwReportingRecord>, Error>::Err(
             std::move(response).Error());
     }
 
     return Result<std::vector<BwReportingRecord>, Error>::Ok(
-        ParseGenericRecords(response.Value(), "BwGetQueryProperties", kQueryPropsPath));
+        ParseGenericRecords(response.Value(), "BwGetQueryProperties", path));
 }
 
 }  // namespace erpl_adt

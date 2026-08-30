@@ -19,13 +19,16 @@ namespace {
 const char* kValidationPath = "/sap/bw/modeling/validation";
 const char* kMoveRequestsPath = "/sap/bw/modeling/move_requests";
 
-Result<std::string, Error> FetchAtom(IAdtSession& session,
-                                     const std::string& path,
-                                     const char* operation) {
+// The validation resource implements post() only — a GET answers HTTP 405
+// "Resource controller does not support method GET". The parameters stay in
+// the query string; the body is empty.
+Result<std::string, Error> PostAtom(IAdtSession& session,
+                                    const std::string& path,
+                                    const char* operation) {
     HttpHeaders headers;
     headers["Accept"] = "application/atom+xml";
 
-    auto response = session.Get(path, headers);
+    auto response = session.Post(path, "", "application/xml", headers);
     if (response.IsErr()) {
         return Result<std::string, Error>::Err(std::move(response).Error());
     }
@@ -67,6 +70,12 @@ std::string BuildValidationPath(const BwValidationOptions& options) {
 }
 
 Result<std::vector<BwValidationMessage>, Error> ParseValidation(std::string_view xml) {
+    // A clean validation answers 200 with an empty body: nothing to report is
+    // the good outcome, not a malformed response.
+    if (xml.find_first_not_of(" \t\r\n") == std::string_view::npos) {
+        return Result<std::vector<BwValidationMessage>, Error>::Ok({});
+    }
+
     tinyxml2::XMLDocument doc;
     if (auto parse_error = adt_utils::ParseXmlOrError(
             doc, xml, "BwValidateObject", kValidationPath,
@@ -109,48 +118,6 @@ Result<std::vector<BwValidationMessage>, Error> ParseValidation(std::string_view
     return Result<std::vector<BwValidationMessage>, Error>::Ok(std::move(out));
 }
 
-Result<std::vector<BwMoveRequestEntry>, Error> ParseMoveRequests(std::string_view xml) {
-    tinyxml2::XMLDocument doc;
-    if (auto parse_error = adt_utils::ParseXmlOrError(
-            doc, xml, "BwListMoveRequests", kMoveRequestsPath,
-            "Failed to parse BW move requests XML")) {
-        return Result<std::vector<BwMoveRequestEntry>, Error>::Err(
-            std::move(*parse_error));
-    }
-
-    std::vector<BwMoveRequestEntry> out;
-    auto* root = doc.RootElement();
-    if (!root) {
-        return Result<std::vector<BwMoveRequestEntry>, Error>::Ok(std::move(out));
-    }
-
-    for (auto* entry = root->FirstChildElement(); entry;
-         entry = entry->NextSiblingElement()) {
-        if (!atom_parser::HasLocalName(entry, "entry")) {
-            continue;
-        }
-
-        BwMoveRequestEntry item;
-        item.description = atom_parser::ChildTextByLocalName(entry, "title");
-
-        const auto* props = atom_parser::AtomEntryProperties(entry);
-        if (props) {
-            item.request = AttrOrChild(props, "request", "corrNr", "request", "corrNr");
-            item.owner = AttrOrChild(props, "owner", "username", "owner", "username");
-            item.status = AttrOrChild(props, "status", "state", "status", "state");
-            if (item.description.empty()) {
-                item.description = AttrOrChild(props, "description", "text", "description", "text");
-            }
-        }
-
-        if (!item.request.empty() || !item.description.empty()) {
-            out.push_back(std::move(item));
-        }
-    }
-
-    return Result<std::vector<BwMoveRequestEntry>, Error>::Ok(std::move(out));
-}
-
 }  // namespace
 
 Result<std::vector<BwValidationMessage>, Error>
@@ -167,7 +134,7 @@ BwValidateObject(IAdtSession& session, const BwValidationOptions& options) {
     }
 
     auto path = BuildValidationPath(options);
-    auto xml_result = FetchAtom(session, path, "BwValidateObject");
+    auto xml_result = PostAtom(session, path, "BwValidateObject");
     if (xml_result.IsErr()) {
         return Result<std::vector<BwValidationMessage>, Error>::Err(
             std::move(xml_result).Error());
@@ -178,13 +145,19 @@ BwValidateObject(IAdtSession& session, const BwValidationOptions& options) {
 
 Result<std::vector<BwMoveRequestEntry>, Error>
 BwListMoveRequests(IAdtSession& session) {
-    auto xml_result = FetchAtom(session, kMoveRequestsPath, "BwListMoveRequests");
-    if (xml_result.IsErr()) {
-        return Result<std::vector<BwMoveRequestEntry>, Error>::Err(
-            std::move(xml_result).Error());
-    }
-
-    return ParseMoveRequests(xml_result.Value());
+    // CL_RSO_RES_MOVE_REQUESTS implements post() only: the endpoint *executes*
+    // a move (an Atom feed naming the object and its new parent) and never
+    // listed anything. A GET here answered HTTP 405 "Resource controller does
+    // not support method GET" on every system — so say what the endpoint is
+    // instead of forwarding a protocol error the caller cannot act on.
+    (void)session;
+    Error error{"BwListMoveRequests", kMoveRequestsPath, std::nullopt,
+                "The BW move endpoint has no listing: it only executes moves",
+                std::nullopt, ErrorCategory::NotFound};
+    error.hint =
+        "/sap/bw/modeling/move_requests accepts POST only. To see where an "
+        "object sits, use 'bw nodes' or 'bw nodepath'.";
+    return Result<std::vector<BwMoveRequestEntry>, Error>::Err(std::move(error));
 }
 
 }  // namespace erpl_adt
