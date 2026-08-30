@@ -10,6 +10,7 @@
 #include <erpl_adt/core/version.hpp>
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/http_security.hpp>
 #include <erpl_adt/mcp/mcp_http_server.hpp>
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
 #include <erpl_adt/storage/duckdb_catalog_store.hpp>
@@ -108,7 +109,19 @@ void PrintMcpHelp(std::ostream& out) {
     out << "  --insecure           Skip TLS verification (with --https)\n";
     out << "  --timeout <sec>      Request timeout in seconds\n";
     out << "  -v                   Verbose logging (INFO level)\n";
-    out << "  -vv                  Debug logging (DEBUG level)\n";
+    out << "  -vv                  Debug logging (DEBUG level)\n\n";
+    out << "TRANSPORT\n";
+    out << "  --http               Serve JSON-RPC over HTTP at POST /mcp instead of stdio\n";
+    out << "  --mcp-host <addr>    Address to bind with --http (default: 127.0.0.1)\n";
+    out << "  --mcp-port <n>       Port to bind with --http (default: 8383)\n";
+    out << "  --catalog-db <path>  Also expose the catalog_* tools over a DuckDB cache\n\n";
+    out << "HTTP ACCESS CONTROL (--http only)\n";
+    out << "  --cors-origin <list> Comma-separated extra origins allowed to call /mcp.\n";
+    out << "                       Same-origin, loopback and non-browser (no Origin\n";
+    out << "                       header) requests are always allowed; anything else is\n";
+    out << "                       refused with 403. '*' allows every origin.\n";
+    out << "  --auth-token <tok>   Require 'Authorization: Bearer <tok>' on /mcp\n";
+    out << "  --auth-token-env <v> Read that token from an environment variable\n";
 }
 
 // Map an Error to an exit code based on the operation field.
@@ -572,11 +585,17 @@ int HandleMcpServer(int argc, const char* const* argv) {
         }
         auto mcp_host = get("mcp-host", "127.0.0.1");
 
+        auto security = ResolveHttpSecurity(get("cors-origin"), get("auth-token"),
+                                            get("auth-token-env"), mcp_host, std::cerr);
+        if (!security.has_value()) {
+            return kExitInternal;
+        }
+
         // server_started { transport, tool_count }: same tool contract as
         // stdio (BRD.md FR-MCP-2) — a thin HTTP shim, not a second registry.
         Telemetry::ServerStarted("http", static_cast<int>(registry.Tools().size()));
 
-        McpHttpServer server(std::move(registry));
+        McpHttpServer server(std::move(registry), /*serve_webui=*/false, *security);
         std::cerr << "erpl-adt MCP HTTP server listening on http://" << mcp_host << ":"
                   << mcp_port << "/mcp\n";
         if (!server.Run(mcp_host, mcp_port)) {

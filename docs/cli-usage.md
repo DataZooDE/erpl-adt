@@ -221,6 +221,33 @@ Protocol (2024-11-05). Communication is line-delimited JSON-RPC 2.0 over stdin/s
 - `tools/list` -- enumerate available tools
 - `tools/call` -- execute a tool by name
 
+#### HTTP transport and access control
+
+```bash
+erpl-adt mcp --http                       # POST /mcp on 127.0.0.1:8383
+erpl-adt mcp --http --mcp-host 0.0.0.0 --mcp-port 9000 --auth-token-env ERPL_ADT_MCP_TOKEN
+```
+
+The tools behind this endpoint write to the connected SAP system, so who may call it
+matters:
+
+| Flag | Effect |
+|------|--------|
+| `--cors-origin <list>` | Comma-separated extra browser origins allowed to call `/mcp`. `*` allows every origin. |
+| `--auth-token <tok>` | Require `Authorization: Bearer <tok>`; requests without it get 401 and run nothing. |
+| `--auth-token-env <var>` | Read that token from an environment variable instead of the command line. |
+
+Without `--cors-origin`, three kinds of request are allowed: those with **no `Origin`
+header** (curl, the CLI, native MCP clients — not browsers), **same-origin** requests
+(which is how the embedded web UI calls its own API, on whatever address it was reached
+by), and **loopback** origins. Any other browser origin is refused with **403** — that is
+the case where a page the developer merely visited could otherwise post writes to their
+SAP system, and binding to `127.0.0.1` does not prevent it because the browser is already
+inside the loopback boundary.
+
+Authentication is off unless a token is configured. Binding beyond loopback without one
+warns on stderr; `/healthz` never requires the token so liveness probes keep working.
+
 ### deploy -- Legacy deploy workflow
 
 ```bash

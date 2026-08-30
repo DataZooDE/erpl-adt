@@ -60,21 +60,52 @@ struct McpHttpServer::Impl {
     // if throughput becomes a bottleneck.
     std::mutex mcp_mutex;
 
-    explicit Impl(ToolRegistry registry) : mcp(std::move(registry)) {}
+    HttpSecurityOptions security;
+
+    Impl(ToolRegistry registry, HttpSecurityOptions security_options)
+        : mcp(std::move(registry)), security(std::move(security_options)) {}
 };
 
 McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui)
-    : impl_(std::make_unique<Impl>(std::move(registry))) {
-    // CORS: a browser-based client (e.g. erpl_catalog_kit's Flutter web
-    // build, HLD.md §4 hosted mode) runs on a different origin than this
-    // server and would otherwise be blocked by the browser's same-origin
-    // policy before the request even reaches /mcp. Applied to every
-    // response via a pre-routing hook rather than per-handler so a new
-    // route can't accidentally omit it.
-    impl_->http.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
+    : McpHttpServer(std::move(registry), serve_webui, HttpSecurityOptions{}) {}
+
+McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
+                             HttpSecurityOptions security)
+    : impl_(std::make_unique<Impl>(std::move(registry), std::move(security))) {
+    // CORS + Origin validation. A browser-based client (erpl_catalog_kit's
+    // Flutter web build, HLD.md §4 hosted mode) needs CORS headers to reach
+    // /mcp at all — but this endpoint executes SAP writes, so the origin
+    // asking has to be one we accept, and the answer is never "*" unless the
+    // operator asked for it. What is allowed by default (same-origin,
+    // loopback, no Origin at all) is in mcp/http_security.hpp; the effect is
+    // that non-browser clients and the embedded UI are unaffected, and a
+    // random page the developer visits is not.
+    //
+    // Applied via a pre-routing hook rather than per-handler so a new route
+    // can't accidentally omit it.
+    impl_->http.set_pre_routing_handler([this](const httplib::Request& req,
+                                               httplib::Response& res) {
+        const auto origin = req.get_header_value("Origin");
+        const auto verdict =
+            ClassifyOrigin(origin, req.get_header_value("Host"), impl_->security);
+
+        if (!IsAllowed(verdict)) {
+            res.status = 403;
+            res.set_content(
+                R"({"error":"origin not allowed; pass --cors-origin to allow it"})",
+                "application/json");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+
+        if (!origin.empty()) {
+            // Echo the caller's origin, never "*" — except when the operator
+            // explicitly configured the wildcard escape hatch.
+            res.set_header("Access-Control-Allow-Origin",
+                           verdict == OriginVerdict::Wildcard ? "*" : origin);
+            res.set_header("Vary", "Origin");
+        }
         res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         if (req.method == "OPTIONS") {
             res.status = 204;
             return httplib::Server::HandlerResponse::Handled;
@@ -83,6 +114,19 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui)
     });
 
     impl_->http.Post("/mcp", [this](const httplib::Request& req, httplib::Response& res) {
+        // Authenticate before taking the lock and before parsing: a rejected
+        // request must not execute a tool or hold up a legitimate one.
+        if (!BearerTokenMatches(req.get_header_value("Authorization"),
+                                impl_->security.auth_token)) {
+            res.status = 401;
+            res.set_header("WWW-Authenticate", "Bearer");
+            res.set_content(
+                R"({"jsonrpc":"2.0","id":null,"error":{"code":-32600,)"
+                R"("message":"Unauthorized: missing or invalid bearer token"}})",
+                "application/json");
+            return;
+        }
+
         std::lock_guard<std::mutex> lock(impl_->mcp_mutex);
 
         nlohmann::json message;

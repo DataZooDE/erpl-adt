@@ -69,9 +69,8 @@ TEST_CASE("McpHttpServer: tools/call over HTTP returns the same shape a stdio ca
     server_thread.join();
 }
 
-TEST_CASE("McpHttpServer: sets CORS headers so a browser-based client "
-          "(e.g. the Flutter web client) isn't blocked by same-origin policy",
-          "[mcp][http]") {
+TEST_CASE("McpHttpServer: CORS headers echo an allowed origin, never '*'",
+          "[mcp][http][security]") {
     McpHttpServer server(MakeEchoRegistry());
     auto port = static_cast<uint16_t>(TestPort() + 2);
 
@@ -79,22 +78,182 @@ TEST_CASE("McpHttpServer: sets CORS headers so a browser-based client "
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     httplib::Client client("127.0.0.1", port);
+    const httplib::Headers origin{{"Origin", "http://localhost:5173"}};
 
     // Preflight (OPTIONS) — browsers send this before a cross-origin POST
     // with a JSON content type.
-    auto preflight = client.Options("/mcp");
+    auto preflight = client.Options("/mcp", origin);
     REQUIRE(preflight != nullptr);
     CHECK(preflight->status == 204);
-    CHECK(preflight->get_header_value("Access-Control-Allow-Origin") == "*");
+    CHECK(preflight->get_header_value("Access-Control-Allow-Origin") ==
+          "http://localhost:5173");
 
     // The actual response also needs the header — browsers check both.
     nlohmann::json call_msg = {{"jsonrpc", "2.0"},
                                {"id", 1},
                                {"method", "tools/call"},
                                {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
+    auto response = client.Post("/mcp", origin, call_msg.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
+    CHECK(response->get_header_value("Access-Control-Allow-Origin") ==
+          "http://localhost:5173");
+    CHECK(response->get_header_value("Vary") == "Origin");
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: a request without an Origin still works",
+          "[mcp][http][security]") {
+    // curl, the CLI and every native MCP client send no Origin. Origin
+    // validation must not touch them.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 20);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json call_msg = {{"jsonrpc", "2.0"},
+                               {"id", 1},
+                               {"method", "tools/call"},
+                               {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
     auto response = client.Post("/mcp", call_msg.dump(), "application/json");
     REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
+    // Nothing to echo, so no CORS header is emitted at all.
+    CHECK(response->get_header_value("Access-Control-Allow-Origin").empty());
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: a cross-origin browser request is refused with 403",
+          "[mcp][http][security]") {
+    // The confused-deputy case: a page the developer happens to visit posting
+    // adt_write_source at their SAP system.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 21);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    const httplib::Headers evil{{"Origin", "https://evil.example"}};
+    nlohmann::json call_msg = {{"jsonrpc", "2.0"},
+                               {"id", 1},
+                               {"method", "tools/call"},
+                               {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
+
+    auto response = client.Post("/mcp", evil, call_msg.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 403);
+    CHECK(response->get_header_value("Access-Control-Allow-Origin").empty());
+    // The tool must not have run.
+    CHECK(response->body.find("hi") == std::string::npos);
+
+    auto preflight = client.Options("/mcp", evil);
+    REQUIRE(preflight != nullptr);
+    CHECK(preflight->status == 403);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: --cors-origin allows a named origin",
+          "[mcp][http][security]") {
+    HttpSecurityOptions security;
+    security.allowed_origins = {"https://catalog.example"};
+    McpHttpServer server(MakeEchoRegistry(), /*serve_webui=*/false, security);
+    auto port = static_cast<uint16_t>(TestPort() + 22);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json call_msg = {{"jsonrpc", "2.0"},
+                               {"id", 1},
+                               {"method", "tools/call"},
+                               {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
+    auto allowed = client.Post("/mcp", {{"Origin", "https://catalog.example"}},
+                               call_msg.dump(), "application/json");
+    REQUIRE(allowed != nullptr);
+    CHECK(allowed->status == 200);
+    CHECK(allowed->get_header_value("Access-Control-Allow-Origin") ==
+          "https://catalog.example");
+
+    auto refused = client.Post("/mcp", {{"Origin", "https://other.example"}},
+                               call_msg.dump(), "application/json");
+    REQUIRE(refused != nullptr);
+    CHECK(refused->status == 403);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: --cors-origin '*' restores the old wildcard",
+          "[mcp][http][security]") {
+    HttpSecurityOptions security;
+    security.allowed_origins = {"*"};
+    McpHttpServer server(MakeEchoRegistry(), /*serve_webui=*/false, security);
+    auto port = static_cast<uint16_t>(TestPort() + 23);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json call_msg = {{"jsonrpc", "2.0"},
+                               {"id", 1},
+                               {"method", "tools/call"},
+                               {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
+    auto response = client.Post("/mcp", {{"Origin", "https://anything.example"}},
+                                call_msg.dump(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
     CHECK(response->get_header_value("Access-Control-Allow-Origin") == "*");
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: a bearer token gates /mcp but not /healthz",
+          "[mcp][http][security]") {
+    HttpSecurityOptions security;
+    security.auth_token = "s3cret";
+    McpHttpServer server(MakeEchoRegistry(), /*serve_webui=*/false, security);
+    auto port = static_cast<uint16_t>(TestPort() + 24);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    nlohmann::json call_msg = {{"jsonrpc", "2.0"},
+                               {"id", 1},
+                               {"method", "tools/call"},
+                               {"params", {{"name", "echo"}, {"arguments", {{"text", "hi"}}}}}};
+
+    auto without = client.Post("/mcp", call_msg.dump(), "application/json");
+    REQUIRE(without != nullptr);
+    CHECK(without->status == 401);
+    CHECK(without->get_header_value("WWW-Authenticate") == "Bearer");
+    CHECK(without->body.find("hi") == std::string::npos);  // tool did not run
+
+    auto wrong = client.Post("/mcp", {{"Authorization", "Bearer nope"}},
+                             call_msg.dump(), "application/json");
+    REQUIRE(wrong != nullptr);
+    CHECK(wrong->status == 401);
+
+    auto right = client.Post("/mcp", {{"Authorization", "Bearer s3cret"}},
+                             call_msg.dump(), "application/json");
+    REQUIRE(right != nullptr);
+    CHECK(right->status == 200);
+    CHECK(right->body.find("hi") != std::string::npos);
+
+    // Liveness probes must not need the token.
+    auto health = client.Get("/healthz");
+    REQUIRE(health != nullptr);
+    CHECK(health->status == 200);
 
     server.Stop();
     server_thread.join();

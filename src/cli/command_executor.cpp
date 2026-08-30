@@ -39,6 +39,7 @@
 #include <erpl_adt/adt/catalog_overlay.hpp>
 #include <erpl_adt/adt/catalog_sync.hpp>
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
+#include <erpl_adt/mcp/http_security.hpp>
 #include <erpl_adt/mcp/mcp_http_server.hpp>
 #include <erpl_adt/mcp/tool_registry.hpp>
 #include <erpl_adt/adt/ddic.hpp>
@@ -2892,7 +2893,15 @@ int HandleCatalogWebui(const CommandArgs& args) {
     ToolRegistry registry;
     RegisterCatalogStoreTools(registry, store);
 
-    McpHttpServer server(std::move(registry), /*serve_webui=*/true);
+    auto security = ResolveHttpSecurity(GetFlag(args, "cors-origin"),
+                                        GetFlag(args, "auth-token"),
+                                        GetFlag(args, "auth-token-env"), host,
+                                        std::cerr);
+    if (!security.has_value()) {
+        return 99;
+    }
+
+    McpHttpServer server(std::move(registry), /*serve_webui=*/true, *security);
     std::cerr << "erpl-adt catalog web UI listening on http://" << host << ":" << port << "/\n";
     if (!server.Run(host, port)) {
         fmt.PrintError(Error{"CatalogWebui", "", std::nullopt,
@@ -7898,14 +7907,25 @@ void RegisterAllCommands(CommandRouter& router) {
             "(erpl_catalog_kit) and its JSON-RPC catalog API on the same origin — the web "
             "UI is compiled into the erpl-adt binary itself, so no separate static file "
             "server or CORS setup is needed. If the binary was built without 'make webui' "
-            "having been run first, this serves an instructional message instead of the app.";
+            "having been run first, this serves an instructional message instead of the app.\n\n"
+            "Access control: requests without an Origin header (curl, native clients), "
+            "same-origin requests and loopback origins are allowed; any other browser "
+            "origin is refused with 403 unless named with --cors-origin. Binding beyond "
+            "127.0.0.1 without --auth-token exposes the catalog API — including the "
+            "curation writes of catalog_annotate — to everyone who can reach the port.";
         help.flags = {
             {"port", "<n>", "Port to listen on (default: 8383)", false},
             {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
+            {"cors-origin", "<list>", "Comma-separated extra origins allowed to call the API", false},
+            {"auth-token", "<tok>", "Require 'Authorization: Bearer <tok>' on the API", false},
+            {"auth-token-env", "<var>", "Read that token from an environment variable", false},
         };
         help.examples = {
             "erpl-adt catalog webui catalog.duckdb",
-            "erpl-adt catalog webui catalog.duckdb --port 9000 --host 0.0.0.0",
+            "erpl-adt catalog webui catalog.duckdb --port 9000",
+            // Binding beyond loopback serves the curation API (catalog_annotate
+            // writes) to the whole network, so the example pairs the two.
+            "erpl-adt catalog webui catalog.duckdb --host 0.0.0.0 --auth-token-env ERPL_ADT_WEBUI_TOKEN",
         };
         router.Register("catalog", "webui", "Serve the embedded web catalog client + API (blocking)",
                          HandleCatalogWebui, std::move(help));

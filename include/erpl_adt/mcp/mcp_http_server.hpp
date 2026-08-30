@@ -1,10 +1,12 @@
 #pragma once
 
+#include <erpl_adt/mcp/http_security.hpp>
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/tool_registry.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace erpl_adt {
 
@@ -23,6 +25,11 @@ public:
     // UI embedded (see CMakeLists.txt's ERPL_ADT_HAVE_WEBUI guard), those routes
     // return an instructional message instead of 404ing silently.
     explicit McpHttpServer(ToolRegistry registry, bool serve_webui = false);
+
+    // As above, with Origin allowlisting and an optional bearer token; see
+    // mcp/http_security.hpp for what the defaults allow and why.
+    McpHttpServer(ToolRegistry registry, bool serve_webui,
+                  HttpSecurityOptions security);
     ~McpHttpServer();
 
     // Blocks serving on the given port until Stop() is called (e.g. from a
