@@ -44,15 +44,27 @@ class TestBwRepositoryUtils:
         if "validate" not in bw_terms:
             pytest.skip("validation service not available")
         result = cli.run("bw", "validate", "ADSO", "ZZZZZ_NONEXISTENT_99999")
-        if result.returncode == 0:
-            data = json.loads(result.stdout.strip()) if result.stdout.strip() else []
-            assert isinstance(data, list)
-        else:
-            stderr = result.stderr.strip().lower()
-            if ("not activated" in stderr or "not implemented" in stderr or
-                    "\"http_status\":405" in stderr):
-                pytest.skip("validation listed but not activated")
-            assert result.returncode != 0
+        stderr = result.stderr.strip().lower()
+        # 405 used to be skippable, and that skip hid the real defect for as
+        # long as it existed: the client sent GET to a POST-only resource.
+        assert "\"http_status\":405" not in stderr, (
+            "bw validate used the wrong verb: " + stderr)
+        assert "is not valid" not in stderr, (
+            "bw validate sent an action the backend rejects: " + stderr)
+        # A missing object is a 404 with the backend's own message.
+        assert result.returncode != 0
+        assert "does not exist" in stderr
+
+    def test_validate_reports_a_consistent_object(self, cli, bw_terms):
+        """A clean validation answers 200 with an empty body."""
+        if "validate" not in bw_terms:
+            pytest.skip("validation service not available")
+        objects = cli.run_ok("bw", "search", "0CALMONTH", "--max", "1", "--type", "IOBJ")
+        if not objects:
+            pytest.skip("No delivered IOBJ available to validate")
+
+        data = cli.run_ok("bw", "validate", "IOBJ", objects[0]["name"])
+        assert isinstance(data, list)
 
     def test_move_requests_contract(self, cli, bw_terms):
         if "move" not in bw_terms:
@@ -118,24 +130,43 @@ class TestBwAdvancedServices:
     def test_reporting_and_qprops_capability(self, cli, bw_terms):
         if "queryProperties" not in bw_terms:
             pytest.skip("queryProperties not available")
-        qprops = cli.run("bw", "qprops")
+        # qprops needs an InfoProvider: without one the backend answers
+        # "Operation could not be carried out for".
+        providers = cli.run_ok("bw", "search", "*", "--max", "1", "--type", "ADSO")
+        if not providers:
+            pytest.skip("No InfoProvider available for a qprops read")
+        qprops = cli.run("bw", "qprops", providers[0]["name"], "--type", "ADSO")
+        stderr = qprops.stderr.strip().lower()
+        # 415 was skippable here, which hid that the client asked for the media
+        # type discovery advertises rather than the one the route serves.
+        assert "\"http_status\":415" not in stderr, (
+            "bw qprops asked for a media type the route does not serve: " + stderr)
         if qprops.returncode != 0:
-            stderr = qprops.stderr.strip().lower()
             if any(s in stderr for s in ("not activated", "not implemented",
-                                         "not found", "\"http_status\":404", "\"http_status\":405")):
+                                         "not found", "\"http_status\":404")):
                 pytest.skip("qprops endpoint not available")
             assert qprops.returncode != 0
         qprops_data = json.loads(qprops.stdout.strip()) if qprops.stdout.strip() else []
         assert isinstance(qprops_data, list)
 
-        report = cli.run("bw", "reporting", "DUMMY_QUERY", "--metadata-only")
+        # Use a query that exists: "DUMMY_QUERY" made this skip on a 404 about
+        # the name, which proved nothing about the endpoint.
+        queries = cli.run("bw", "search", "*", "--max", "1", "--type", "QUERY")
+        query_name = ""
+        if queries.returncode == 0 and queries.stdout.strip():
+            found = json.loads(queries.stdout.strip())
+            if found:
+                query_name = found[0]["name"]
+        if not query_name:
+            pytest.skip("No query available for the reporting check")
+
+        report = cli.run("bw", "reporting", query_name, "--metadata-only")
         if report.returncode != 0:
             stderr = report.stderr.strip().lower()
             if any(s in stderr for s in ("not activated", "not implemented",
-                                         "not found", "\"http_status\":404", "\"http_status\":405",
+                                         "\"http_status\":404", "\"http_status\":405",
                                          "\"http_status\":500")):
                 pytest.skip("reporting endpoint not available")
-            # Invalid compid / backend errors are acceptable capability proof
             assert report.returncode != 99
 
     def test_virtualfolders_and_datavolumes_capability(self, cli):

@@ -97,9 +97,23 @@ class TestBwCreateLifecycle:
 class TestBwServerErrors:
 
     def test_lock_nonexistent_object(self, cli, bw_available):
-        """Locking a nonexistent BW object fails gracefully."""
+        """BW grants a lock on a name that does not exist yet.
+
+        Measured, not assumed: BW locks *names*, which is what lets a client
+        reserve one before creating the object. The command used to look like
+        it failed here only because the lock response could not be parsed —
+        the server had granted the lock either way, and it stayed held.
+        """
         result = cli.run("bw", "lock", "ADSO", "ZZZZZ_NONEXISTENT_99999")
-        assert result.returncode != 0
+        if result.returncode != 0:
+            # Some releases refuse instead; either answer is acceptable, an
+            # unparseable one is not.
+            assert "failed to parse" not in result.stderr.lower()
+            return
+        handle = json.loads(result.stdout.strip())["lock_handle"]
+        assert handle
+        # Release it again: an abandoned lock blocks the next caller.
+        cli.run("bw", "unlock", "ADSO", "ZZZZZ_NONEXISTENT_99999")
 
     def test_unlock_without_lock(self, cli, bw_available):
         """Unlocking without a prior lock succeeds (BW unlock is idempotent)."""
