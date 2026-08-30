@@ -1020,3 +1020,171 @@ TEST_CASE("BwLockObject: parses the live ASXML lock response",
     CHECK(result.Value().transport_owner == "DEVELOPER");
     CHECK(result.Value().is_local);
 }
+
+
+// ===========================================================================
+// Which verb creates depends on the object type (issue #44 follow-up).
+//
+// ADSO creates with POST. InfoObject's resource controller implements only
+// get(), so a POST for a name that does not exist yet answers 404
+// "Resource IOBJ <name> does not exist" and PUT is the create verb there.
+// ===========================================================================
+
+TEST_CASE("BwCreateObject: falls back to PUT when POST says the object does not exist",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<iobj name=\"0CALMONTH\"/>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {404, {}, "<exc:exception><message>Resource IOBJ ZNEW does not exist."
+                  "</message></exc:exception>"}));
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "ZNEW";
+    opts.copy_from_name = "0CALMONTH";
+    opts.copy_from_type = "IOBJ";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    // Same URL and same body as the POST that was refused.
+    CHECK(mock.PutCalls()[0].path == mock.PostCalls()[0].path);
+    CHECK(mock.PutCalls()[0].body == mock.PostCalls()[0].body);
+    CHECK(mock.PutCalls()[0].content_type ==
+          "application/vnd.sap-bw-modeling.iobj-v2_1_0+xml");
+}
+
+TEST_CASE("BwCreateObject: a POST that works is not retried with PUT",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCallCount() == 0);
+}
+
+TEST_CASE("BwCreateObject: a PUT that also fails reports the failure",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({400, {}, "no good"}));
+
+    BwCreateOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZNEW_ADSO";
+    opts.content = "<adso:dataStore/>";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsErr());
+    // The original refusal is what the caller should see, not the fallback's.
+    CHECK(result.Error().http_status.value_or(0) == 404);
+}
+
+// ===========================================================================
+// Copy-create renames whole names only
+// ===========================================================================
+
+TEST_CASE("BwCreateObject: copying does not rename a longer name that starts the same",
+          "[adt][bw][object]") {
+    // Copying 0CALMONTH must leave a referenced 0CALMONTH2 alone. A plain
+    // substring replace turned it into <target>2, and the copy then failed
+    // activation with "Attribute ...2 not (actively) available".
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         "<iobj name=\"0CALMONTH\"><attribute ref=\"0CALMONTH2\"/>"
+         "<link href=\"/sap/bw/modeling/iobj/0calmonth2/a\"/></iobj>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));  // unlock
+
+    BwCreateOptions opts;
+    opts.object_type = "IOBJ";
+    opts.object_name = "ZTSTIO7";
+    opts.copy_from_name = "0CALMONTH";
+    opts.copy_from_type = "IOBJ";
+
+    auto result = BwCreateObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("name=\"ZTSTIO7\"") != std::string::npos);
+    // The neighbouring object keeps its own name, in both spellings.
+    CHECK(body.find("0CALMONTH2") != std::string::npos);
+    CHECK(body.find("0calmonth2") != std::string::npos);
+    CHECK(body.find("ZTSTIO72") == std::string::npos);
+}
+
+
+// ===========================================================================
+// Saving addresses a version segment (found by sweeping the BW write surface
+// for the same defect as the IOBJ create verb).
+//
+// PUT /sap/bw/modeling/{tlogo}/{name} answers HTTP 400 "Parameter version
+// could not be found", and ?version=M does not satisfy it either — so every
+// bw save had failed, whatever the caller passed.
+// ===========================================================================
+
+TEST_CASE("BwSaveObject: puts to the versioned path", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.PutCallCount() == 1);
+    const auto& path = mock.PutCalls()[0].path;
+    CHECK(path.find("/sap/bw/modeling/adso/zsales/m") == 0);
+    CHECK(path.find("lockHandle=H1") != std::string::npos);
+    // Not a query parameter — the backend does not read it there.
+    CHECK(path.find("version=") == std::string::npos);
+}
+
+TEST_CASE("BwSaveObject: the version is selectable", "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+    opts.version = "a";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCalls()[0].path.find("/sap/bw/modeling/adso/zsales/a") == 0);
+}
+
+TEST_CASE("BwSaveObject: an empty version falls back to the inactive one",
+          "[adt][bw][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+
+    BwSaveOptions opts;
+    opts.object_type = "ADSO";
+    opts.object_name = "ZSALES";
+    opts.content = "<adso:dataStore/>";
+    opts.lock_handle = "H1";
+    opts.version = "";
+
+    auto result = BwSaveObject(mock, opts);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PutCalls()[0].path.find("/sap/bw/modeling/adso/zsales/m") == 0);
+}

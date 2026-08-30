@@ -10,6 +10,7 @@
 #include <tinyxml2.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -92,8 +93,18 @@ std::string BuildCreateUrl(const BwCreateOptions& options) {
     return url;
 }
 
-// Replace every occurrence of `from` with `to`, matching both the upper-case
-// spelling used in attributes and the lower-case spelling used in URIs.
+// True when `c` can appear inside a BW object name, and therefore means a
+// match that ends (or starts) next to it is part of a longer name.
+bool IsNameChar(char c) {
+    const auto uc = static_cast<unsigned char>(c);
+    return std::isalnum(uc) != 0 || c == '_';
+}
+
+// Replace whole-name occurrences of `from` with `to`. Whole-name matters:
+// copying 0CALMONTH renamed the referenced 0CALMONTH2 as well when this was a
+// plain substring replace, and the copy then failed activation with
+// "Attribute ...2 not (actively) available" — a corrupted reference to an
+// object that has nothing to do with the copy.
 std::string ReplaceAll(std::string haystack, const std::string& from,
                        const std::string& to) {
     if (from.empty()) {
@@ -108,9 +119,18 @@ std::string ReplaceAll(std::string haystack, const std::string& from,
             out.append(haystack, pos, std::string::npos);
             return out;
         }
+        const bool left_ok = hit == 0 || !IsNameChar(haystack[hit - 1]);
+        const auto after = hit + from.size();
+        const bool right_ok =
+            after >= haystack.size() || !IsNameChar(haystack[after]);
+
         out.append(haystack, pos, hit - pos);
-        out += to;
-        pos = hit + from.size();
+        if (left_ok && right_ok) {
+            out += to;
+        } else {
+            out.append(haystack, hit, from.size());
+        }
+        pos = after;
     }
 }
 
@@ -596,6 +616,26 @@ Result<BwCreateResult, Error> BwCreateObject(
         return Result<BwCreateResult, Error>::Err(std::move(response).Error());
     }
 
+    // Which verb creates depends on the object type, and the backend tells us
+    // which one it wanted. ADSO creates with POST; InfoObject's resource
+    // controller implements only get(), so a POST for a name that does not
+    // exist yet comes back 404 "Resource IOBJ <name> does not exist" and PUT
+    // is the create verb there. A 404 means nothing was created, so retrying
+    // the same body with PUT is safe — and this reads the answer off the
+    // system instead of hard-coding a verb per type for the 40-odd types
+    // whose behaviour we have not measured.
+    if (response.Value().status_code == 404) {
+        auto put_response = session.Put(create_url, body, ct, headers);
+        if (put_response.IsErr()) {
+            return Result<BwCreateResult, Error>::Err(
+                std::move(put_response).Error());
+        }
+        if (adt_utils::HasStatus(put_response.Value().status_code,
+                                 {200, 201, 202, 204})) {
+            response = std::move(put_response);
+        }
+    }
+
     const auto& http = response.Value();
     if (!adt_utils::HasStatus(http.status_code, {200, 201, 202, 204})) {
         auto error = Error::FromHttpStatus(
@@ -736,7 +776,11 @@ Result<void, Error> BwSaveObject(
             "Lock handle must not be empty", std::nullopt});
     }
 
-    auto path = BuildObjectPath(options.object_type, options.object_name);
+    // The version belongs in the path, not in a query parameter: a PUT to
+    // /sap/bw/modeling/{tlogo}/{name} answers HTTP 400 "Parameter version
+    // could not be found", and ?version=M does not satisfy it either.
+    const auto version = options.version.empty() ? std::string("m") : options.version;
+    auto path = BuildObjectPath(options.object_type, options.object_name, version);
     auto save_url = path + "?lockHandle=" + options.lock_handle;
     if (!options.transport.empty()) {
         save_url += "&corrNr=" + options.transport;

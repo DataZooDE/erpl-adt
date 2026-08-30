@@ -176,6 +176,40 @@ the new name. The target package travels in the body as `<adtcore:packageRef>`, 
 need `schemaVersion=""` or the backend answers 500 "Attribute 'schemaVersion' expected".
 Created objects exist only in the inactive (`m`) version until activated.
 
+BW activation (`POST /sap/bw/modeling/activation`, or `/checkruns` to check without
+activating) takes an **Atom feed with exactly one entry** — `CL_RSO_RES_ACTIVATION`
+deserializes the body with `cl_atom_feed_prov->get_feed()`. The entry's `rel="self"` link
+names the object; its `<atom:content>` must hold a `bwModel:checkProperties` element
+(namespace `http://www.sap.com/bw/modeling`) whose `version`, `modelContent` and
+`lockHandle` attributes are mandatory — `RSO_RES_ST_BW_CHECKRUN` is the transformation
+that maps them. The mode comes from the *path*, not a query parameter, and there is no
+async variant. The **type segment of the object URI must be lower case**:
+`/sap/bw/modeling/ADSO/...` makes the backend dump with HTTP 500, `/adso/...` works.
+Anything else answers HTTP 500 "Request cannot be deserialized". The response is an Atom
+feed of check messages: severity in `bwModel:checkresult/@messageType`, text in the
+entry's `<atom:title>`.
+
+Reading the backend is the fastest way to settle a payload question: the ABAP source is
+right there over ADT. `erpl-adt search 'CL_RSO_RES*'` finds the resource controllers, and
+`GET /sap/bc/adt/oo/classes/<name>/source/main` (plus `/includes/implementations` for the
+local classes) shows exactly what the deserializer expects — that is how the shape above
+was established rather than guessed.
+
+The create *verb* depends on the object type. ADSO creates with POST; the InfoObject
+resource controller (`CL_RSO_RES_INFO_OBJECT`) implements only `get()`, so POSTing a name
+that does not exist yet answers HTTP 404 "Resource IOBJ &lt;name&gt; does not exist" and PUT is
+the create verb there — while PUT on a *new* ADSO answers 400 "Parameter version could not
+be found". `BwCreateObject` therefore tries POST and retries with PUT on a 404, which reads
+the answer off the system instead of hard-coding a verb for each of the 40-odd types.
+
+Renaming a copied object must match whole names only: copying `0CALMONTH` with a plain
+substring replace also renamed the referenced `0CALMONTH2`, and the copy then failed
+activation with "Attribute ...2 not (actively) available".
+
+Saving (`PUT`) addresses the **version segment**: `/sap/bw/modeling/{tlogo}/{name}/m`.
+Without it the backend answers HTTP 400 "Parameter version could not be found", and
+`?version=M` does not satisfy it either — which is why `bw save` had never worked.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested
