@@ -10,6 +10,8 @@ import json
 
 import pytest
 
+from conftest import find_active_object
+
 
 @pytest.mark.e2e
 @pytest.mark.bw
@@ -43,18 +45,17 @@ class TestBwExplore:
         if not data:
             pytest.skip("No BW objects found")
         self.__class__.search_results = data
-        # Find an ADSO specifically
+        # Find an active ADSO specifically: the later steps read it, and read
+        # addresses the active version.
         adso = None
         for r in data:
-            if r.get("type") == "ADSO":
+            if r.get("type") == "ADSO" and r.get("status") == "active":
                 adso = r
                 break
-        # If no ADSO in first 5 results, search specifically
         if not adso:
-            adso_results = cli.run_ok("bw", "search", "*", "--max", "1",
-                                       "--type", "ADSO")
-            if adso_results:
-                adso = adso_results[0]
+            name = find_active_object(cli, "ADSO")
+            if name:
+                adso = {"name": name, "type": "ADSO"}
         self.__class__.known_adso = adso
 
     @pytest.mark.order(3)

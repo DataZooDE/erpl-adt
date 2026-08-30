@@ -23,7 +23,9 @@ class TestBwCreateLifecycle:
             pytest.skip("No IOBJ source object for create lifecycle probe")
 
         src_name = source_data[0]["name"]
-        new_name = ("ZTST" + uuid.uuid4().hex[:10]).upper()
+        # BW object names are limited to 9 characters ("Name ... is not
+        # valid" / "must be between 3 and 9 characters long").
+        new_name = ("ZTST" + uuid.uuid4().hex[:5]).upper()
 
         create = cli.run("bw", "create", "IOBJ", new_name,
                          "--copy-from-name", src_name,

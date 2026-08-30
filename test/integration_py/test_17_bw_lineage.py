@@ -7,6 +7,8 @@ import tempfile
 
 import pytest
 
+from conftest import find_active_object
+
 
 # ===========================================================================
 # BW Lineage: read-adso, read-trfn, read-dtp, read-rsds, read-query, read-dmod
@@ -17,12 +19,11 @@ class TestBwLineage:
 
     @pytest.fixture(scope="class")
     def known_adso(self, cli, bw_has_search):
-        """Find a known ADSO for lineage tests."""
-        data = cli.run_ok("bw", "search", "*", "--max", "1",
-                          "--type", "ADSO")
-        if not data:
-            pytest.skip("No ADSO found")
-        return data[0]["name"]
+        """Find a known active ADSO for lineage tests."""
+        name = find_active_object(cli, "ADSO")
+        if not name:
+            pytest.skip("No active ADSO found")
+        return name
 
     @pytest.fixture(scope="class")
     def known_trfn(self, cli, bw_has_search):

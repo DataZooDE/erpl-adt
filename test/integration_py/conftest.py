@@ -303,3 +303,25 @@ def bw_has_cto(bw_available):
 @pytest.fixture(scope="session")
 def bw_terms(bw_available):
     return {s.get("term", "") for s in bw_available}
+
+
+def find_active_object(cli, tlogo, probe=25):
+    """Return the name of an *active* object of `tlogo`, or None.
+
+    `bw read` addresses the active version by default, so an object that only
+    exists inactive (someone's work in progress, a half-finished fixture) is
+    not a usable read subject: SAP answers "Version 'A' ... does not exist".
+    Search results carry the status, so pick on it rather than taking whatever
+    happens to sort first.
+    """
+    result = cli.run("bw", "search", "*", "--max", str(probe), "--type", tlogo)
+    if result.returncode != 0:
+        return None
+    stdout = result.stdout.strip()
+    if not stdout:
+        return None
+    import json as _json
+    for row in _json.loads(stdout):
+        if row.get("status") == "active":
+            return row["name"]
+    return None
