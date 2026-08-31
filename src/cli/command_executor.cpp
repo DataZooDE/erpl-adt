@@ -364,19 +364,6 @@ std::string ResolveConnectionSetting(const CommandArgs& args,
     return saved.empty() ? fallback : saved;
 }
 
-// SAP's yyyyMMddHHmmss timestamp, as the BW application-log route expects it.
-std::string FormatSapTimestamp(std::time_t when) {
-    std::tm tm_value{};
-#ifdef _WIN32
-    localtime_s(&tm_value, &when);
-#else
-    localtime_r(&when, &tm_value);
-#endif
-    char buffer[16];
-    std::strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", &tm_value);
-    return buffer;
-}
-
 // Resolve the effective logon user the same way CreateSession does:
 // explicit flag > environment > saved credentials > default.
 std::string ResolveUserName(const CommandArgs& args) {
@@ -4095,19 +4082,12 @@ int HandleBwApplicationLog(const CommandArgs& args) {
     auto session = RequireSession(args, fmt);
     if (!session) return 99;
 
-    // All three parameters are mandatory on the backend — without them it
-    // answers HTTP 400 "Parameter username could not be found", which is why
-    // a bare `bw applog` never worked. Default to this user's log over the
-    // last week rather than making the caller spell out a timestamp format.
+    // The mandatory parameters are defaulted in BwGetApplicationLog, so the
+    // CLI and the MCP tool behave the same; only explicit flags are passed.
     BwApplicationLogOptions opts;
-    opts.username = HasFlag(args, "username") ? GetFlag(args, "username")
-                                              : ResolveUserName(args);
-    opts.end_timestamp = HasFlag(args, "end") ? GetFlag(args, "end")
-                                              : FormatSapTimestamp(std::time(nullptr));
-    opts.start_timestamp =
-        HasFlag(args, "start")
-            ? GetFlag(args, "start")
-            : FormatSapTimestamp(std::time(nullptr) - 7 * 24 * 60 * 60);
+    if (HasFlag(args, "username")) opts.username = GetFlag(args, "username");
+    if (HasFlag(args, "start")) opts.start_timestamp = GetFlag(args, "start");
+    if (HasFlag(args, "end")) opts.end_timestamp = GetFlag(args, "end");
 
     auto result = BwGetApplicationLog(*session, opts);
     if (result.IsErr()) {

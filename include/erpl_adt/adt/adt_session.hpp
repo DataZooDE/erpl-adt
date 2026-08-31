@@ -58,6 +58,8 @@ public:
 
     // -- IAdtSession implementation ------------------------------------------
 
+    [[nodiscard]] std::string LogonUserName() const override;
+
     [[nodiscard]] Result<HttpResponse, Error> Get(
         std::string_view path,
         const HttpHeaders& headers = {}) override;

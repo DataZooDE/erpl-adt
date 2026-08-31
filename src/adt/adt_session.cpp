@@ -167,6 +167,7 @@ httplib::Headers BuildRequestHeaders(
 struct AdtSession::Impl {
     std::unique_ptr<httplib::Client> client;
     std::string sap_client;
+    std::string logon_user;
     std::string accept_language;                 // resolved SAP logon language
     std::optional<std::string> csrf_token;       // ADT paths (/sap/bc/adt/)
     std::optional<std::string> bw_csrf_token_;   // BW paths (/sap/bw/modeling/)
@@ -186,6 +187,7 @@ struct AdtSession::Impl {
          const std::string& sap_client_value,
          const AdtSessionOptions& opts)
         : sap_client(sap_client_value),
+          logon_user(user),
           accept_language(ResolveAcceptLanguage(opts.language)),
           options(opts) {
         base_url_ = (use_https ? "https://" : "http://") + host + ":" +
@@ -498,6 +500,8 @@ AdtSession::~AdtSession() = default;
 // ---------------------------------------------------------------------------
 // Get — with 403 CSRF retry
 // ---------------------------------------------------------------------------
+std::string AdtSession::LogonUserName() const { return impl_->logon_user; }
+
 Result<HttpResponse, Error> AdtSession::Get(std::string_view path,
                                             const HttpHeaders& headers) {
     auto result = impl_->DoGet(path, headers);

@@ -149,6 +149,10 @@ public:
 
     // -- IAdtSession implementation ------------------------------------------
 
+    [[nodiscard]] std::string LogonUserName() const override { return logon_user_; }
+
+    void SetLogonUserName(std::string user) { logon_user_ = std::move(user); }
+
     Result<HttpResponse, Error> Get(
         std::string_view path,
         const HttpHeaders& headers) override {
@@ -226,6 +230,7 @@ public:
     }
 
 private:
+    std::string logon_user_ = "DEVELOPER";
     static Result<HttpResponse, Error> Dequeue(
         std::deque<Result<HttpResponse, Error>>& queue,
         std::string_view operation,
