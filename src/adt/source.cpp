@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/source.hpp>
+#include <erpl_adt/adt/object_exists.hpp>
 #include "adt_utils.hpp"
 
 #include <tinyxml2.h>
@@ -289,6 +290,25 @@ Result<void, Error> WriteSourceOptimistic(
 Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
     IAdtSession& session,
     const std::string& source_uri) {
+    // A check run against an object that is not there answers with an empty
+    // message list, which reads as "no syntax errors". Same trap as the ATC
+    // and test runs: establish that the object exists first.
+    {
+        // The check takes a source URI (".../source/main"); the object it
+        // belongs to is its parent.
+        auto object_uri = source_uri;
+        const auto source_pos = object_uri.rfind("/source/");
+        if (source_pos != std::string::npos) {
+            object_uri.erase(source_pos);
+        }
+        if (auto missing = EnsureObjectExists(session, object_uri, "CheckSyntax",
+                                              "Object " + object_uri);
+            missing.IsErr()) {
+            return Result<std::vector<SyntaxMessage>, Error>::Err(
+                std::move(missing).Error());
+        }
+    }
+
     std::string body =
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<chkrun:checkObjectList xmlns:chkrun=\"http://www.sap.com/adt/checkrun\"\n"

@@ -2142,7 +2142,13 @@ int HandleTransportList(const CommandArgs& args) {
     FeatureTimer ft(feature::kTransportOp);  // { op, duration_ms }
     ft.SetStr("op", "list");
 
-    auto user = GetFlag(args, "user", "DEVELOPER");
+    // --user is the *connection* flag: passing someone else's name there
+    // re-authenticates as them and answers HTTP 401, which is what
+    // `transport list --user=ADMIN` used to do — the documented example could
+    // never have worked. The owner filter is --owner, and it defaults to
+    // whoever we are logged on as.
+    auto user = HasFlag(args, "owner") ? GetFlag(args, "owner")
+                                       : ResolveUserName(args);
 
     auto session = RequireSession(args, fmt);
     if (!session) {
@@ -7713,11 +7719,11 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt transport list [flags]";
         help.flags = {
-            {"user", "<user>", "Filter by user (default: DEVELOPER)", false},
+            {"owner", "<user>", "Filter by transport owner (default: the logon user)", false},
         };
         help.examples = {
             "erpl-adt transport list",
-            "erpl-adt --json transport list --user=ADMIN",
+            "erpl-adt --json transport list --owner=ADMIN",
         };
         router.Register("transport", "list", "List transports",
                          HandleTransportList, std::move(help));

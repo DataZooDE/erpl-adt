@@ -251,6 +251,8 @@ TEST_CASE("adt_read_source: missing uri param", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: clean code", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_clean.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -263,6 +265,8 @@ TEST_CASE("adt_check_syntax: clean code", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: with errors", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_errors.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -279,6 +283,8 @@ TEST_CASE("adt_check_syntax: with errors", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: missing uri param", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_check_syntax",

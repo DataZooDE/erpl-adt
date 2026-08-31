@@ -175,6 +175,8 @@ TEST_CASE("WriteSource: unexpected status returns error", "[adt][source]") {
 
 TEST_CASE("CheckSyntax: clean result returns empty messages", "[adt][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_clean.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -185,6 +187,8 @@ TEST_CASE("CheckSyntax: clean result returns empty messages", "[adt][source]") {
 
 TEST_CASE("CheckSyntax: parses error messages", "[adt][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_errors.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -209,6 +213,8 @@ TEST_CASE("CheckSyntax: parses error messages", "[adt][source]") {
 
 TEST_CASE("CheckSyntax: sends POST to checkruns endpoint", "[adt][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, "<chkrun:checkRunReports xmlns:chkrun=\"http://www.sap.com/adt/checkrun\"/>"}));
 
@@ -223,6 +229,8 @@ TEST_CASE("CheckSyntax: sends POST to checkruns endpoint", "[adt][source]") {
 
 TEST_CASE("CheckSyntax: HTTP error propagated", "[adt][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
         Error{"Post", "", std::nullopt, "timeout", std::nullopt}));
 
@@ -360,4 +368,21 @@ TEST_CASE("DeriveObjectUriFromSourceUri: returns nullopt without a section segme
           "[adt][source][uri]") {
     auto obj = DeriveObjectUriFromSourceUri("/sap/bc/adt/oo/classes/zcl_test");
     CHECK_FALSE(obj.has_value());
+}
+
+
+// A check run against an object that is not there answered with an empty
+// message list — "no syntax errors" for something that does not exist.
+TEST_CASE("CheckSyntax: a missing object is not reported as clean",
+          "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+
+    auto result = CheckSyntax(mock, "/sap/bc/adt/oo/classes/zzz_nope/source/main");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(mock.PostCallCount() == 0);
+    // The probe asks about the object, not the source sub-resource.
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bc/adt/oo/classes/zzz_nope");
 }
