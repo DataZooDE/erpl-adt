@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/transport.hpp>
+#include <erpl_adt/adt/object_exists.hpp>
 
 #include "adt_utils.hpp"
 #include "xml_utils.hpp"
@@ -262,7 +263,22 @@ Result<std::string, Error> CreateTransport(
 Result<void, Error> ReleaseTransport(
     IAdtSession& session,
     const std::string& transport_number) {
-    auto url = "/sap/bc/adt/cts/transportrequests/" + transport_number + "/newreleasejobs";
+    const auto transport_uri =
+        "/sap/bc/adt/cts/transportrequests/" + transport_number;
+
+    // Releasing a transport that does not exist answered HTTP 200 with an
+    // empty body, and the CLI said "Released transport: X" — a claim about a
+    // one-way operation that had not happened. The release is a job the
+    // backend accepts without validating the number, so check the transport
+    // first.
+    if (auto missing = EnsureObjectExists(session, transport_uri,
+                                          "ReleaseTransport",
+                                          "Transport " + transport_number);
+        missing.IsErr()) {
+        return Result<void, Error>::Err(std::move(missing).Error());
+    }
+
+    auto url = transport_uri + "/newreleasejobs";
 
     auto response = session.Post(url, "", "application/xml");
     if (response.IsErr()) {

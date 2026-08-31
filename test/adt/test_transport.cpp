@@ -207,6 +207,8 @@ TEST_CASE("CreateTransport: HTTP error propagated", "[adt][transport]") {
 
 TEST_CASE("ReleaseTransport: sends POST to release endpoint", "[adt][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900001");
@@ -219,6 +221,8 @@ TEST_CASE("ReleaseTransport: sends POST to release endpoint", "[adt][transport]"
 
 TEST_CASE("ReleaseTransport: accepts 204", "[adt][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({204, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900002");
@@ -227,6 +231,8 @@ TEST_CASE("ReleaseTransport: accepts 204", "[adt][transport]") {
 
 TEST_CASE("ReleaseTransport: unexpected status returns error", "[adt][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({409, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900001");
@@ -236,9 +242,26 @@ TEST_CASE("ReleaseTransport: unexpected status returns error", "[adt][transport]
 
 TEST_CASE("ReleaseTransport: HTTP error propagated", "[adt][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
         Error{"Post", "", std::nullopt, "connection refused", std::nullopt}));
 
     auto result = ReleaseTransport(mock, "NPLK900001");
     REQUIRE(result.IsErr());
+}
+
+
+// Releasing a transport that does not exist answered HTTP 200 with an empty
+// body, and the CLI reported "Released transport: X" — a claim about a
+// one-way operation that never happened.
+TEST_CASE("ReleaseTransport: a missing transport is not reported as released",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+
+    auto result = ReleaseTransport(mock, "ZZZK900099");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(mock.PostCallCount() == 0);
 }

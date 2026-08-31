@@ -251,6 +251,8 @@ TEST_CASE("adt_read_source: missing uri param", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: clean code", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_clean.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -263,6 +265,8 @@ TEST_CASE("adt_check_syntax: clean code", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: with errors", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("source/check_errors.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -279,6 +283,8 @@ TEST_CASE("adt_check_syntax: with errors", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_check_syntax: missing uri param", "[mcp][handlers][source]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_check_syntax",
@@ -292,6 +298,8 @@ TEST_CASE("adt_check_syntax: missing uri param", "[mcp][handlers][source]") {
 
 TEST_CASE("adt_run_tests: all passing", "[mcp][handlers][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_pass.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -308,6 +316,8 @@ TEST_CASE("adt_run_tests: all passing", "[mcp][handlers][testing]") {
 
 TEST_CASE("adt_run_tests: with failures", "[mcp][handlers][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_failures.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
     auto registry = MakeRegistry(mock);
@@ -322,6 +332,8 @@ TEST_CASE("adt_run_tests: with failures", "[mcp][handlers][testing]") {
 
 TEST_CASE("adt_run_tests: missing uri param", "[mcp][handlers][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_run_tests",
@@ -335,6 +347,8 @@ TEST_CASE("adt_run_tests: missing uri param", "[mcp][handlers][testing]") {
 
 TEST_CASE("adt_run_atc: with findings", "[mcp][handlers][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     // ATC workflow: POST create worklist (returns ID in body), POST run, GET results.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_001"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
@@ -353,6 +367,8 @@ TEST_CASE("adt_run_atc: with findings", "[mcp][handlers][checks]") {
 
 TEST_CASE("adt_run_atc: missing uri param", "[mcp][handlers][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_run_atc",
@@ -843,6 +859,8 @@ TEST_CASE("adt_create_transport: missing params", "[mcp][handlers][transport]") 
 
 TEST_CASE("adt_release_transport: happy path", "[mcp][handlers][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("token123"));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     auto registry = MakeRegistry(mock);
@@ -856,6 +874,8 @@ TEST_CASE("adt_release_transport: happy path", "[mcp][handlers][transport]") {
 
 TEST_CASE("adt_release_transport: missing transport_number", "[mcp][handlers][transport]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_release_transport",
@@ -1138,6 +1158,8 @@ TEST_CASE("bw_read_rsds: parses fields", "[mcp][handlers][bw]") {
 
 TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e2e]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     ToolRegistry registry;
     RegisterAdtTools(registry, mock);
 

@@ -14,6 +14,8 @@ using namespace erpl_adt::testing;
 
 TEST_CASE("RunClass: happy path returns console output", "[adt][classrun]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, "Flights generated: 42\n"}));
 
@@ -29,6 +31,8 @@ TEST_CASE("RunClass: happy path returns console output", "[adt][classrun]") {
 
 TEST_CASE("RunClass: namespaced name encodes slashes as %2F", "[adt][classrun]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "done\n"}));
 
     auto result = RunClass(mock, "/DMO/CL_FOO");
@@ -42,6 +46,8 @@ TEST_CASE("RunClass: namespaced name encodes slashes as %2F", "[adt][classrun]")
 
 TEST_CASE("RunClass: full ADT URI extracts class name", "[adt][classrun]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "ok\n"}));
 
     // Caller passes a full object URI — we strip to the last segment.
@@ -54,6 +60,8 @@ TEST_CASE("RunClass: full ADT URI extracts class name", "[adt][classrun]") {
 
 TEST_CASE("RunClass: non-200 HTTP status returns error", "[adt][classrun]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {404, {}, "Class not found"}));
 
@@ -64,6 +72,8 @@ TEST_CASE("RunClass: non-200 HTTP status returns error", "[adt][classrun]") {
 
 TEST_CASE("RunClass: network error propagates as Err", "[adt][classrun]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
         Error{"Post", "/sap/bc/adt/oo/classrun/ZCL_FOO", std::nullopt,
               "connection refused", std::nullopt, ErrorCategory::Connection}));
@@ -71,4 +81,19 @@ TEST_CASE("RunClass: network error propagates as Err", "[adt][classrun]") {
     auto result = RunClass(mock, "ZCL_FOO");
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::Connection);
+}
+
+
+// classrun answers HTTP 200 for a class that does not exist, with the message
+// as its console output — so the run looked successful and exit code 0 was
+// reported to whatever was scripting it.
+TEST_CASE("RunClass: a missing class is an error, not empty output",
+          "[adt][classrun]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+
+    auto result = RunClass(mock, "ZZZ_NOPE_99");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(mock.PostCallCount() == 0);
 }
