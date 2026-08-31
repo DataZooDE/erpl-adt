@@ -221,6 +221,14 @@ exists / new / standard_transport / is_plannable), `bw qprops` (serves
 and `bw move` (the endpoint executes moves and never had a listing). A clean `bw validate`
 answers 200 with an *empty body* — that is the success case, not a malformed response.
 
+Several ADT endpoints answer HTTP 200 for a target that is not there, and the answer reads
+like success: `classrun` returns "Object X of type CLAS does not exist." as its *console
+output*, an ATC run returns an empty finding list (indistinguishable from "clean"), a test
+run returns `all_passed: true` with "no test methods", and a transport release accepts the
+job without validating the number. SAP's wording is translated, so matching on it is
+fragile — `EnsureObjectExists` (adt/object_exists.hpp) does a plain GET first, and every
+one of those commands calls it before acting.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested

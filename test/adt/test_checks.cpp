@@ -36,6 +36,8 @@ std::string LoadFixture(const std::string& filename) {
 
 TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
 
     // Step 1: Create worklist -> returns ID.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_001"}));
@@ -65,6 +67,8 @@ TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
 
 TEST_CASE("RunAtcCheck: clean results", "[adt][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_002"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     auto xml = LoadFixture("checks/atc_worklist_clean.xml");
@@ -77,6 +81,8 @@ TEST_CASE("RunAtcCheck: clean results", "[adt][checks]") {
 
 TEST_CASE("RunAtcCheck: sends correct endpoints", "[adt][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_test"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
@@ -89,12 +95,14 @@ TEST_CASE("RunAtcCheck: sends correct endpoints", "[adt][checks]") {
     CHECK(mock.PostCalls()[0].path.find("checkVariant=MY_VARIANT") != std::string::npos);
     CHECK(mock.PostCalls()[1].path.find("worklistId=wl_test") != std::string::npos);
 
-    REQUIRE(mock.GetCallCount() == 1);
-    CHECK(mock.GetCalls()[0].path.find("atc/worklists/wl_test") != std::string::npos);
+    REQUIRE(mock.GetCallCount() == 2);
+    CHECK(mock.GetCalls()[1].path.find("atc/worklists/wl_test") != std::string::npos);
 }
 
 TEST_CASE("RunAtcCheck: worklist creation failure propagated", "[adt][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, ""}));
 
     auto result = RunAtcCheck(mock, "/sap/bc/adt/packages/ztest");
@@ -103,9 +111,42 @@ TEST_CASE("RunAtcCheck: worklist creation failure propagated", "[adt][checks]") 
 
 TEST_CASE("RunAtcCheck: run creation failure propagated", "[adt][checks]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_test"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, ""}));
 
     auto result = RunAtcCheck(mock, "/sap/bc/adt/packages/ztest");
     REQUIRE(result.IsErr());
+}
+
+
+// ===========================================================================
+// A run against an object that is not there used to answer with an empty
+// finding list — indistinguishable from "clean", which is the reading that
+// matters when an agent runs ATC after every edit and mistypes a URI.
+// ===========================================================================
+
+TEST_CASE("RunAtcCheck: a missing object is not reported as clean",
+          "[adt][checks]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zzz_nope");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    // Nothing was run: no worklist, no run.
+    CHECK(mock.PostCallCount() == 0);
+}
+
+TEST_CASE("RunAtcCheck: a transport failure is not reported as missing",
+          "[adt][checks]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Err(
+        Error{"Get", "/sap/bc/adt/oo/classes/zcl_x", std::nullopt,
+              "HTTP request failed", std::nullopt, ErrorCategory::Connection}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::Connection);
 }

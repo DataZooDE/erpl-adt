@@ -36,6 +36,8 @@ std::string LoadFixture(const std::string& filename) {
 
 TEST_CASE("RunTests: all passing", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_pass.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -62,6 +64,8 @@ TEST_CASE("RunTests: all passing", "[adt][testing]") {
 
 TEST_CASE("RunTests: with failures", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_failures.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -96,6 +100,8 @@ TEST_CASE("RunTests: with failures", "[adt][testing]") {
 
 TEST_CASE("RunTests: sends POST to testruns endpoint", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, "<aunit:runResult xmlns:aunit=\"http://www.sap.com/adt/aunit\"/>"}));
 
@@ -110,6 +116,8 @@ TEST_CASE("RunTests: sends POST to testruns endpoint", "[adt][testing]") {
 
 TEST_CASE("RunTests: HTTP error propagated", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
         Error{"Post", "", std::nullopt, "timeout", std::nullopt}));
 
@@ -119,6 +127,8 @@ TEST_CASE("RunTests: HTTP error propagated", "[adt][testing]") {
 
 TEST_CASE("RunTests: unexpected status returns error", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, ""}));
 
     auto result = RunTests(mock, "/sap/bc/adt/oo/classes/zcl_test");
@@ -128,6 +138,8 @@ TEST_CASE("RunTests: unexpected status returns error", "[adt][testing]") {
 
 TEST_CASE("RunTests: class-level alerts parsed when no test methods", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_skipped_risk.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -155,6 +167,8 @@ TEST_CASE("RunTests: class-level alerts parsed when no test methods", "[adt][tes
 
 TEST_CASE("RunTests: mixed skipped and executed classes", "[adt][testing]") {
     MockAdtSession mock;
+    // The call probes that the object exists before acting.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
     auto xml = LoadFixture("testing/test_mixed_skip.xml");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
@@ -180,4 +194,18 @@ TEST_CASE("RunTests: mixed skipped and executed classes", "[adt][testing]") {
     CHECK(run.classes[1].methods.empty());
     REQUIRE(run.classes[1].alerts.size() == 1);
     CHECK(run.classes[1].alerts[0].title == "No execution, risk level of test class exceeds upper limit");
+}
+
+
+// A test run against a missing object answered "no test methods found" with
+// all_passed = true — a green run for an object that does not exist.
+TEST_CASE("RunTests: a missing object is not reported as passing",
+          "[adt][testing]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "not found"}));
+
+    auto result = RunTests(mock, "/sap/bc/adt/oo/classes/zzz_nope");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(mock.PostCallCount() == 0);
 }

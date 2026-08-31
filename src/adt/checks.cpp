@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/checks.hpp>
 #include "adt_utils.hpp"
 
+#include <erpl_adt/adt/object_exists.hpp>
 #include <tinyxml2.h>
 
 #include <cstdlib>
@@ -165,6 +166,15 @@ Result<AtcResult, Error> RunAtcCheck(
     IAdtSession& session,
     const std::string& uri,
     const std::string& check_variant) {
+    // An ATC run against a URI that does not exist answers with an empty
+    // finding list, which reads exactly like "the object is clean" — the worst
+    // possible answer for an agent checking its own edit. Establish that the
+    // object is there first.
+    if (auto missing = EnsureObjectExists(session, uri, "RunAtcCheck", "Object " + uri);
+        missing.IsErr()) {
+        return Result<AtcResult, Error>::Err(std::move(missing).Error());
+    }
+
     // Step 1: Create worklist.
     auto worklist_result = CreateWorklist(session, check_variant);
     if (worklist_result.IsErr()) {

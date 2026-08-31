@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/testing.hpp>
+#include <erpl_adt/adt/object_exists.hpp>
 #include "adt_utils.hpp"
 
 #include <tinyxml2.h>
@@ -138,6 +139,14 @@ Result<TestRunResult, Error> ParseTestRunResult(
 Result<TestRunResult, Error> RunTests(
     IAdtSession& session,
     const std::string& uri) {
+    // A test run against a URI that does not exist answers "no test methods
+    // found" with all_passed = true. Establish that the object is there, so a
+    // mistyped URI is not reported as a green run.
+    if (auto missing = EnsureObjectExists(session, uri, "RunTests", "Object " + uri);
+        missing.IsErr()) {
+        return Result<TestRunResult, Error>::Err(std::move(missing).Error());
+    }
+
     auto body = BuildTestRunXml(uri);
 
     HttpHeaders headers;

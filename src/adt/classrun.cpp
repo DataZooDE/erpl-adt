@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/classrun.hpp>
+#include <erpl_adt/adt/object_exists.hpp>
 
 #include <string>
 
@@ -42,6 +43,19 @@ Result<ClassRunResult, Error> RunClass(
     const std::string name    = ExtractClassName(class_name);
     const std::string encoded = UrlEncodeName(name);
     const std::string path    = "/sap/bc/adt/oo/classrun/" + encoded;
+
+    // classrun answers HTTP 200 for a class that does not exist, with
+    // "Object X of type CLAS does not exist." as its console output — so the
+    // run looks successful and the message is only prose. The backend's own
+    // wording is translated, so check for the class instead of matching it.
+    {
+        const std::string class_uri = "/sap/bc/adt/oo/classes/" + encoded;
+        if (auto missing = EnsureObjectExists(session, class_uri, "RunClass",
+                                              "Class " + name);
+            missing.IsErr()) {
+            return Result<ClassRunResult, Error>::Err(std::move(missing).Error());
+        }
+    }
 
     HttpHeaders headers;
     headers["Accept"] = "text/plain";
