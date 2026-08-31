@@ -150,3 +150,49 @@ TEST_CASE("BwGetMessageText: validates required parameters", "[adt][bw][repo-uti
     auto result = BwGetMessageText(mock, opts);
     REQUIRE(result.IsErr());
 }
+
+
+// ===========================================================================
+// The application-log route needs username, starttimestamp and endtimestamp;
+// without them it answers HTTP 400. Defaulting them in the ADT layer rather
+// than in the CLI handler is deliberate: when the defaults lived in the CLI,
+// the MCP tool called the route with nothing and stayed broken.
+// ===========================================================================
+
+TEST_CASE("BwGetApplicationLog: defaults the mandatory parameters",
+          "[adt][bw][repo_utils]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("TESTUSER");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, R"(<feed xmlns="http://www.w3.org/2005/Atom"/>)"}));
+
+    auto result = BwGetApplicationLog(mock, BwApplicationLogOptions{});
+    REQUIRE(result.IsOk());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    const auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("username=TESTUSER") != std::string::npos);
+    CHECK(path.find("starttimestamp=") != std::string::npos);
+    CHECK(path.find("endtimestamp=") != std::string::npos);
+}
+
+TEST_CASE("BwGetApplicationLog: explicit values win over the defaults",
+          "[adt][bw][repo_utils]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("TESTUSER");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, R"(<feed xmlns="http://www.w3.org/2005/Atom"/>)"}));
+
+    BwApplicationLogOptions options;
+    options.username = "SOMEONE";
+    options.start_timestamp = "20260101000000";
+    options.end_timestamp = "20261231235959";
+
+    auto result = BwGetApplicationLog(mock, options);
+    REQUIRE(result.IsOk());
+
+    const auto& path = mock.GetCalls()[0].path;
+    CHECK(path.find("username=SOMEONE") != std::string::npos);
+    CHECK(path.find("starttimestamp=20260101000000") != std::string::npos);
+    CHECK(path.find("endtimestamp=20261231235959") != std::string::npos);
+}

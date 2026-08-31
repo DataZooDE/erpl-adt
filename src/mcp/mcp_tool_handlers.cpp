@@ -2074,7 +2074,7 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         MakeSchema(
             {{"object_type", StringProp("Object type")},
              {"object_name", StringProp("Object name")},
-             {"action", StringProp("Validation action (default: validate)")}},
+             {"action", StringProp("exists (default), new, standard_transport or is_plannable")}},
             {"object_type", "object_name"}),
         [&session](const nlohmann::json& params) -> ToolResult {
             ToolResult err;
@@ -2086,7 +2086,9 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             BwValidationOptions opts;
             opts.object_type = *object_type;
             opts.object_name = *object_name;
-            opts.action = OptString(params, "action", "validate");
+            // "validate" is not an action the backend accepts; leaving this
+            // empty takes BwValidationOptions' default of "exists".
+            opts.action = OptString(params, "action", "");
 
             auto result = BwValidateObject(session, opts);
             if (result.IsErr()) return MakeErrorResult(result.Error());

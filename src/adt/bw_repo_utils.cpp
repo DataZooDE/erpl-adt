@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/bw_repo_utils.hpp>
+#include <ctime>
 
 #include "adt_utils.hpp"
 #include "atom_parser.hpp"
@@ -275,6 +276,19 @@ std::string BuildApplicationLogUrl(const BwApplicationLogOptions& options) {
     return path;
 }
 
+// SAP's yyyyMMddHHmmss stamp, as the application-log route expects it.
+std::string FormatSapTimestamp(std::time_t when) {
+    std::tm tm_value{};
+#ifdef _WIN32
+    localtime_s(&tm_value, &when);
+#else
+    localtime_r(&when, &tm_value);
+#endif
+    char buffer[16];
+    std::strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", &tm_value);
+    return buffer;
+}
+
 std::string BuildMessageUrl(const BwMessageTextOptions& options) {
     std::string path = std::string(kMessagePath) + "/" +
         UrlEncode(options.identifier) + "/" + UrlEncode(options.text_type);
@@ -402,7 +416,24 @@ BwGetNodePath(IAdtSession& session, const std::string& object_uri) {
 
 Result<std::vector<BwApplicationLogEntry>, Error>
 BwGetApplicationLog(IAdtSession& session, const BwApplicationLogOptions& options) {
-    auto path = BuildApplicationLogUrl(options);
+    // username, starttimestamp and endtimestamp are all mandatory: without
+    // them the route answers HTTP 400 "Parameter username could not be found".
+    // Defaulting here rather than in the CLI is deliberate — the same defaults
+    // were once applied only in the CLI handler, which left the MCP tool
+    // broken while the command worked.
+    auto effective = options;
+    if (!effective.username.has_value() || effective.username->empty()) {
+        effective.username = session.LogonUserName();
+    }
+    const auto now = std::time(nullptr);
+    if (!effective.end_timestamp.has_value() || effective.end_timestamp->empty()) {
+        effective.end_timestamp = FormatSapTimestamp(now);
+    }
+    if (!effective.start_timestamp.has_value() || effective.start_timestamp->empty()) {
+        effective.start_timestamp = FormatSapTimestamp(now - 7 * 24 * 60 * 60);
+    }
+
+    auto path = BuildApplicationLogUrl(effective);
     auto xml_result = FetchAtom(session, path, "BwGetApplicationLog");
     if (xml_result.IsErr()) {
         return Result<std::vector<BwApplicationLogEntry>, Error>::Err(

@@ -65,6 +65,15 @@ public:
 
     // -- HTTP verbs ----------------------------------------------------------
 
+    // The user this session authenticates as. Some routes need it as a
+    // parameter (the BW application log filters by user), and without it here
+    // only the CLI could supply a default — which is how the MCP tool ended up
+    // broken while the CLI worked.
+    //
+    // Not LogonUser(): windows.h defines that as a macro expanding to
+    // LogonUserA, and httplib pulls windows.h in on the MSVC build.
+    [[nodiscard]] virtual std::string LogonUserName() const = 0;
+
     [[nodiscard]] virtual Result<HttpResponse, Error> Get(
         std::string_view path,
         const HttpHeaders& headers = {}) = 0;
