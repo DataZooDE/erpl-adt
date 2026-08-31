@@ -229,6 +229,13 @@ job without validating the number. SAP's wording is translated, so matching on i
 fragile — `EnsureObjectExists` (adt/object_exists.hpp) does a plain GET first, and every
 one of those commands calls it before acting.
 
+Not verifiable on the a4h trial: the **abapGit ADT backend is not installed** —
+`/sap/bc/adt/abapgit` answers 404 and abapgit appears nowhere in the ADT discovery
+document. So `abapgit.cpp` and the `deploy` workflow that drives it have never been
+measured against a live system, and the audit that swept BW, the ADT read/write surface
+and the MCP tools does not cover them. Treat their request shapes as unconfirmed rather
+than as working.
+
 BW discovery advertises several templates per type. The *first* one is `rel="self"` and
 has no `{version}` segment; the versioned route is `rel="latest-version"`. Resolve by
 relation (`BwResolveEndpointByRel`) — taking the first match silently drops a requested

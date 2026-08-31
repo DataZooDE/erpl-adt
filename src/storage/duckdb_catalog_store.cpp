@@ -695,6 +695,20 @@ Result<void, Error> DuckDbCatalogStore::WriteEmbedding(const EntityId& entity_id
 Result<std::vector<CatalogSearchHit>, Error> DuckDbCatalogStore::SearchVss(
     const std::vector<float>& query_embedding, int max_results) {
     try {
+        // A catalog built without --embed has no vectors, and a semantic
+        // search over none returns an empty list — indistinguishable from
+        // "nothing matched". Say which it is.
+        auto count = impl_->con->Query("SELECT count(*) FROM entity_embeddings");
+        if (!count->HasError() && count->RowCount() > 0 &&
+            count->GetValue(0, 0).GetValue<int64_t>() == 0) {
+            Error error{"SearchVss", "entity_embeddings", std::nullopt,
+                        "This catalog holds no embeddings", std::nullopt,
+                        ErrorCategory::NotFound};
+            error.hint = "Rebuild it with 'catalog build --embed' (needs "
+                         "GEMINI_API_KEY), or search with --mode fts.";
+            return Result<std::vector<CatalogSearchHit>, Error>::Err(std::move(error));
+        }
+
         auto stmt = impl_->con->Prepare(
             "SELECT e.id, e.system_sid, e.domain, e.object_type, e.object_subtype, "
             "e.technical_name, e.display_name, e.package_or_infoarea, e.extracted_at, "
