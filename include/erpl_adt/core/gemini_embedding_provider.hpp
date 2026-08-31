@@ -8,7 +8,7 @@ namespace erpl_adt {
 
 // ---------------------------------------------------------------------------
 // GeminiEmbeddingProvider — default IEmbeddingProvider, calls the Gemini
-// embeddings API (text-embedding-004, 768-d) over HTTPS. Requires an API
+// embeddings API (gemini-embedding-001 truncated to 768-d) over HTTPS. Requires an API
 // key (GEMINI_API_KEY env var, or passed explicitly to Create).
 // ---------------------------------------------------------------------------
 class GeminiEmbeddingProvider : public IEmbeddingProvider {
@@ -24,7 +24,9 @@ public:
 
     [[nodiscard]] Result<std::vector<float>, Error> EmbedText(const std::string& text) override;
     [[nodiscard]] int Dimensions() const override { return 768; }
-    [[nodiscard]] std::string ModelName() const override { return "text-embedding-004"; }
+    // Defined in the .cpp: the name is configurable, because Google retires
+    // embedding models (text-embedding-004 now answers HTTP 404).
+    [[nodiscard]] std::string ModelName() const override;
 
 private:
     explicit GeminiEmbeddingProvider(std::string api_key);
