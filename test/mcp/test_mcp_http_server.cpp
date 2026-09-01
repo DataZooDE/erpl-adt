@@ -491,7 +491,7 @@ TEST_CASE("McpHttpServer: an unknown Host is served by default",
     // Warn-only until the operator opts in: a deployment reached through a
     // DNS name or a reverse proxy keeps working with no new flag.
     McpHttpServer server(MakeEchoRegistry());
-    auto port = static_cast<uint16_t>(TestPort() + 30);
+    auto port = static_cast<uint16_t>(TestPort() + 40);
 
     std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -517,7 +517,7 @@ TEST_CASE("McpHttpServer: with --allowed-hosts, a rebound Host is refused",
     security.enforce_hosts = true;
 
     McpHttpServer server(MakeEchoRegistry(), false, security);
-    auto port = static_cast<uint16_t>(TestPort() + 31);
+    auto port = static_cast<uint16_t>(TestPort() + 41);
 
     std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -565,7 +565,7 @@ TEST_CASE("McpHttpServer: enforcing hosts leaves the web UI's own origin alone",
     security.enforce_hosts = true;
 
     McpHttpServer server(MakeEchoRegistry(), false, security);
-    auto port = static_cast<uint16_t>(TestPort() + 32);
+    auto port = static_cast<uint16_t>(TestPort() + 42);
 
     std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
