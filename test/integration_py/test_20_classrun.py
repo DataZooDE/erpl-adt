@@ -14,10 +14,17 @@ class TestClassRun:
         assert len(data["output"]) > 0
 
     def test_run_nonexistent_class(self, cli):
-        """Running a nonexistent class returns output indicating it does not exist."""
-        data = cli.run_ok("object", "run", "ZZZZ_NONEXISTENT_99999")
-        assert "output" in data
-        assert "does not exist" in data["output"].lower()
+        """A class that is not there is a failure, not console output.
+
+        classrun answers HTTP 200 and puts "Object X of type CLAS does not
+        exist." in the *output*, which read literally says the run succeeded.
+        `object run` now checks existence first and exits 2. The contract
+        itself lives in test_24_missing_target_contract.py; this pins that the
+        message still names the cause.
+        """
+        result = cli.run("object", "run", "ZZZZ_NONEXISTENT_99999")
+        assert result.returncode != 0
+        assert "does not exist" in (result.stdout + result.stderr).lower()
 
     def test_run_plain_text_output(self, cli):
         """Without --json flag, output is printed directly to stdout."""

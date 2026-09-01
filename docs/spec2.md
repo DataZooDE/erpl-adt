@@ -297,7 +297,7 @@ erpl-adt [global-flags] <command-group> <action> [flags] [args]
 | `-v, --verbose` | Verbose output |
 | `-q, --quiet` | Suppress non-essential output |
 | `--version` | Print version |
-| `--timeout <seconds>` | Request timeout (default: 120) |
+| `--timeout <seconds>` | Per-request read timeout (default: 600) |
 | `--insecure` | Skip TLS certificate verification |
 
 ### 5.2 Command Groups and Actions
@@ -482,7 +482,7 @@ connection:
 defaults:
   package: ZTEST
   transport_prefix: "AI:"
-  timeout: 120
+  timeout: 600
   activate_after_write: true
 
 # For erpl-adt compatibility: multi-repo deployment

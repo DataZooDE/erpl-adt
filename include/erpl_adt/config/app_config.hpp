@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/adt_session.hpp>
 #include <erpl_adt/core/types.hpp>
 
 #include <cstdint>
@@ -36,7 +37,7 @@ struct AppConfig {
     bool json_output = false;
     bool verbose = false;
     bool quiet = false;
-    int timeout_seconds = 600;
+    int timeout_seconds = kDefaultReadTimeoutSeconds;
 };
 
 } // namespace erpl_adt
