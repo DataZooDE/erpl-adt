@@ -6992,7 +6992,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"--https",                 "Use HTTPS"},
         {"--insecure",              "Skip TLS verification (with --https)"},
         {"--json",                  "JSON output"},
-        {"--timeout <sec>",         "Request timeout in seconds"},
+        {"--timeout <sec>",         "Per-request read timeout in seconds (default: 600)"},
         {"--session-file <path>",   "Persist session for lock/write/unlock workflows"},
         {"--color",                 "Force colored output"},
         {"--no-color",              "Disable colored output"},

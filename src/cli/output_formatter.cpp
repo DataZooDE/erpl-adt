@@ -202,6 +202,13 @@ void OutputFormatter::PrintJson(const std::string& json) const {
 static constexpr const char* kIssueHint =
     "  Unexpected? Please report it: https://github.com/DataZooDE/erpl-adt/issues";
 
+// ...except where nothing unexpected happened. A read timeout is a limit the
+// caller configured and can raise, and the error already says how; inviting a
+// bug report for it sends people to the tracker for working software (#42).
+static bool WorthReporting(const Error& error) {
+    return error.category != ErrorCategory::Timeout;
+}
+
 void OutputFormatter::PrintError(const Error& error) const {
     if (json_mode_) {
         err_ << error.ToJson() << "\n";
@@ -224,7 +231,9 @@ void OutputFormatter::PrintError(const Error& error) const {
             err_ << "  " << kYellow << "Hint: " << kReset
                  << error.hint.value() << "\n";
         }
-        err_ << kDim << kIssueHint << kReset << "\n";
+        if (WorthReporting(error)) {
+            err_ << kDim << kIssueHint << kReset << "\n";
+        }
         return;
     }
 
@@ -241,7 +250,9 @@ void OutputFormatter::PrintError(const Error& error) const {
     if (error.hint.has_value() && !error.hint->empty()) {
         err_ << "  Hint: " << error.hint.value() << "\n";
     }
-    err_ << kIssueHint << "\n";
+    if (WorthReporting(error)) {
+        err_ << kIssueHint << "\n";
+    }
 }
 
 void OutputFormatter::PrintSuccess(const std::string& message) const {

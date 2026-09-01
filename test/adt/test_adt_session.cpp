@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <erpl_adt/adt/adt_session.hpp>
+#include <erpl_adt/config/app_config.hpp>
 #include "../../test/mocks/mock_adt_session.hpp"
 
 #include <httplib.h>
@@ -1010,4 +1011,68 @@ TEST_CASE("AdtSession: ResetStatefulSession clears cookies and CSRF token", "[ad
     CHECK(j["context_id"].get<std::string>().empty());
     CHECK(j.contains("cookies"));
     CHECK(j["cookies"].empty());
+}
+
+// ===========================================================================
+// Read timeout: the default, and how exceeding it is reported (#42)
+// ===========================================================================
+
+TEST_CASE("AdtSessionOptions: the default read timeout is the documented one",
+          "[adt][session]") {
+    // These two drifted apart once already: the session defaulted to 120s
+    // while AppConfig documented 600, and because both CLI entry points only
+    // assign read_timeout when --timeout is passed, 120s was what every call
+    // actually got. A classrun longer than that failed while the ABAP ran on
+    // to completion server-side.
+    CHECK(AdtSessionOptions{}.read_timeout ==
+          std::chrono::seconds(kDefaultReadTimeoutSeconds));
+    CHECK(AppConfig{}.timeout_seconds == kDefaultReadTimeoutSeconds);
+}
+
+TEST_CASE("AdtSession: a read timeout is reported as a timeout, naming --timeout",
+          "[adt][session][live]") {
+    // "HTTP request failed: Failed to read connection" said nothing about a
+    // timeout, named no flag, and was followed by an invitation to file a bug
+    // — for a limit the caller can simply raise.
+    httplib::Server svr;
+    svr.Get("/sap/bc/adt/slow", [&](const httplib::Request&,
+                                    httplib::Response& res) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        res.set_content("<ok/>", "text/xml");
+    });
+
+    LocalServer server(svr);
+    auto client = SapClient::Create("001");
+    REQUIRE(client.IsOk());
+    AdtSessionOptions opts;
+    opts.connect_timeout = std::chrono::seconds{5};
+    opts.read_timeout = std::chrono::seconds{1};
+    AdtSession session("127.0.0.1", static_cast<uint16_t>(server.Port()), false,
+                       "testuser", "testpass", client.Value(), opts);
+
+    auto result = session.Get("/sap/bc/adt/slow");
+    REQUIRE(result.IsErr());
+    const auto& error = result.Error();
+    CHECK(error.category == ErrorCategory::Timeout);
+    CHECK(error.message.find("timed out after 1s") != std::string::npos);
+    REQUIRE(error.hint.has_value());
+    CHECK(error.hint->find("--timeout") != std::string::npos);
+}
+
+TEST_CASE("AdtSession: a connection failure is not dressed up as a timeout",
+          "[adt][session][live]") {
+    // Only the timeout family gets the new wording; everything else keeps
+    // saying what it always said.
+    auto client = SapClient::Create("001");
+    REQUIRE(client.IsOk());
+    AdtSessionOptions opts;
+    opts.connect_timeout = std::chrono::seconds{2};
+    opts.read_timeout = std::chrono::seconds{2};
+    // Port 1 on loopback: nothing listens, so this is refused, not slow.
+    AdtSession session("127.0.0.1", 1, false, "testuser", "testpass",
+                       client.Value(), opts);
+
+    auto result = session.Get("/sap/bc/adt/test");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("timed out") == std::string::npos);
 }

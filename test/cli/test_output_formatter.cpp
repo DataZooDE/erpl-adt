@@ -305,3 +305,53 @@ TEST_CASE("OutputFormatter: IsColorMode", "[cli][formatter]") {
     OutputFormatter json_color(true, true, out, err);
     CHECK_FALSE(json_color.IsColorMode());
 }
+
+// ===========================================================================
+// The issue-tracker invitation (#42)
+// ===========================================================================
+
+TEST_CASE("OutputFormatter: a timeout is not an invitation to file a bug",
+          "[cli][formatter]") {
+    // "Unexpected? Please report it" belongs on surprises. A read timeout is
+    // a configured limit the caller can raise, and the hint already says how.
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(false, false, out, err);
+
+    Error e{"Post", "/sap/bc/adt/oo/classrun/zcl_wait", std::nullopt,
+            "request timed out after 600s", std::nullopt,
+            ErrorCategory::Timeout};
+    e.hint = "Raise it with --timeout <seconds>.";
+    fmt.PrintError(e);
+
+    CHECK(err.str().find("timed out") != std::string::npos);
+    CHECK(err.str().find("--timeout") != std::string::npos);
+    CHECK(err.str().find("Please report it") == std::string::npos);
+}
+
+TEST_CASE("OutputFormatter: other failures still name the issue tracker",
+          "[cli][formatter]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(false, false, out, err);
+
+    Error e{"Search", "/sap/bc/adt/search", 500, "Internal Server Error",
+            std::nullopt, ErrorCategory::Internal};
+    fmt.PrintError(e);
+
+    CHECK(err.str().find("Please report it") != std::string::npos);
+}
+
+TEST_CASE("OutputFormatter: the timeout carve-out holds in color mode too",
+          "[cli][formatter]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(false, true, out, err);
+
+    Error e{"Post", "/sap/bc/adt/oo/classrun/zcl_wait", std::nullopt,
+            "request timed out after 600s", std::nullopt,
+            ErrorCategory::Timeout};
+    fmt.PrintError(e);
+
+    CHECK(err.str().find("Please report it") == std::string::npos);
+}

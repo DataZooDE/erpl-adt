@@ -10,12 +10,21 @@
 
 namespace erpl_adt {
 
+// The per-request read timeout, in seconds, when --timeout says nothing.
+// One constant, because two of them drifted: the session defaulted to 120s
+// while AppConfig::timeout_seconds documented 600, and since both CLI entry
+// points assign read_timeout only when --timeout is passed, 120s was what
+// every call actually got. ABAP that runs longer keeps running server-side
+// and completes, so giving up early reports a failure for work that
+// succeeded (issue #42).
+inline constexpr int kDefaultReadTimeoutSeconds = 600;
+
 // ---------------------------------------------------------------------------
 // AdtSessionOptions — configuration for the ADT HTTP session.
 // ---------------------------------------------------------------------------
 struct AdtSessionOptions {
     std::chrono::seconds connect_timeout{30};
-    std::chrono::seconds read_timeout{120};
+    std::chrono::seconds read_timeout{kDefaultReadTimeoutSeconds};
     bool disable_tls_verify = false;
     std::chrono::seconds poll_interval{2};
     // SAP logon language for the connection. Sent as the Accept-Language

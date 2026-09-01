@@ -203,6 +203,39 @@ struct AdtSession::Impl {
         }
     }
 
+    // Shape a transport failure (no HTTP response at all) into an Error.
+    //
+    // A read timeout used to arrive as "HTTP request failed: Failed to read
+    // connection", which named neither the timeout nor the flag that raises
+    // it — and the CLI then invited the user to file a bug for a limit they
+    // had simply hit (issue #42). Worse, the ABAP behind a timed-out
+    // classrun keeps running and usually completes, so the failure is about
+    // our patience, not their work.
+    Error MakeTransportError(const std::string& operation,
+                             const std::string& path,
+                             httplib::Error http_error) const {
+        const auto category = CategoryFromHttpTransportError(http_error);
+        if (category != ErrorCategory::Timeout) {
+            return MakeSessionError(operation, path, std::nullopt,
+                                    "HTTP request failed: " +
+                                        httplib::to_string(http_error) +
+                                        " (connecting to " + base_url_ + ")",
+                                    category);
+        }
+        const auto seconds = std::to_string(options.read_timeout.count());
+        auto error = MakeSessionError(
+            operation, path, std::nullopt,
+            "request timed out after " + seconds + "s (connecting to " +
+                base_url_ + ")",
+            category);
+        if (!error.hint.has_value()) {
+            error.hint = "Raise it with --timeout <seconds>. Work already "
+                         "started on the server may still be running and may "
+                         "complete — check before repeating it.";
+        }
+        return error;
+    }
+
     // Check if a request path targets the BW Modeling API.
     static bool IsBwPath(std::string_view path) {
         // "/sap/bw/modeling/" = 17 chars
@@ -318,11 +351,7 @@ struct AdtSession::Impl {
         if (!res) {
             const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
-                MakeSessionError("Get", std::string(path), std::nullopt,
-                                 "HTTP request failed: " +
-                                     httplib::to_string(http_error) +
-                                     " (connecting to " + base_url_ + ")",
-                                 CategoryFromHttpTransportError(http_error)));
+                MakeTransportError("Get", std::string(path), http_error));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -348,11 +377,7 @@ struct AdtSession::Impl {
         if (!res) {
             const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
-                MakeSessionError("Post", std::string(path), std::nullopt,
-                                 "HTTP request failed: " +
-                                     httplib::to_string(http_error) +
-                                     " (connecting to " + base_url_ + ")",
-                                 CategoryFromHttpTransportError(http_error)));
+                MakeTransportError("Post", std::string(path), http_error));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -378,11 +403,7 @@ struct AdtSession::Impl {
         if (!res) {
             const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
-                MakeSessionError("Put", std::string(path), std::nullopt,
-                                 "HTTP request failed: " +
-                                     httplib::to_string(http_error) +
-                                     " (connecting to " + base_url_ + ")",
-                                 CategoryFromHttpTransportError(http_error)));
+                MakeTransportError("Put", std::string(path), http_error));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -405,11 +426,7 @@ struct AdtSession::Impl {
         if (!res) {
             const auto http_error = res.error();
             return Result<HttpResponse, Error>::Err(
-                MakeSessionError("Delete", std::string(path), std::nullopt,
-                                 "HTTP request failed: " +
-                                     httplib::to_string(http_error) +
-                                     " (connecting to " + base_url_ + ")",
-                                 CategoryFromHttpTransportError(http_error)));
+                MakeTransportError("Delete", std::string(path), http_error));
         }
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
@@ -439,12 +456,7 @@ struct AdtSession::Impl {
             if (!res) {
                 const auto http_error = res.error();
                 return Result<std::string, Error>::Err(
-                    MakeSessionError("FetchCsrfToken", fetch_path,
-                                     std::nullopt,
-                                     "HTTP request failed: " +
-                                         httplib::to_string(http_error) +
-                                         " (connecting to " + base_url_ + ")",
-                                     CategoryFromHttpTransportError(http_error)));
+                    MakeTransportError("FetchCsrfToken", fetch_path, http_error));
             }
             LogResponse(res->status, res->headers, res->body);
             if (res->status != 200) {

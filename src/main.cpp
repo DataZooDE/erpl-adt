@@ -108,7 +108,7 @@ void PrintMcpHelp(std::ostream& out) {
     out << "  --language <iso>     SAP logon language (2-letter ISO, e.g. EN, DE; default: EN)\n";
     out << "  --https              Use HTTPS\n";
     out << "  --insecure           Skip TLS verification (with --https)\n";
-    out << "  --timeout <sec>      Request timeout in seconds\n";
+    out << "  --timeout <sec>      Per-request read timeout in seconds (default: 600)\n";
     out << "  -v                   Verbose logging (INFO level)\n";
     out << "  -vv                  Debug logging (DEBUG level)\n\n";
     out << "TRANSPORT\n";

@@ -214,7 +214,7 @@ Result<AppConfig, Error> LoadFromCli(int argc, const char* const* argv) {
         .default_value(false)
         .implicit_value(true);
     program.add_argument("--timeout")
-        .help("Timeout in seconds")
+        .help("Per-request read timeout in seconds (default: 600)")
         .scan<'i', int>();
     program.add_argument("--json")
         .help("JSON output")
@@ -380,7 +380,7 @@ AppConfig MergeConfigs(const AppConfig& yaml_base, const AppConfig& cli_override
     if (cli_overrides.quiet) {
         merged.quiet = true;
     }
-    if (cli_overrides.timeout_seconds != 600) {
+    if (cli_overrides.timeout_seconds != kDefaultReadTimeoutSeconds) {
         merged.timeout_seconds = cli_overrides.timeout_seconds;
     }
     if (cli_overrides.log_file.has_value()) {

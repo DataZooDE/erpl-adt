@@ -15,7 +15,7 @@
 | `--https` | Use HTTPS |
 | `--insecure` | Skip TLS certificate verification |
 | `--json` | Output in machine-readable JSON |
-| `--timeout <sec>` | Request timeout in seconds |
+| `--timeout <sec>` | Per-request read timeout in seconds (default: 600). Raise it for long classruns and ATC runs. |
 | `--session-file <path>` | Persist session for lock/write/unlock workflows |
 | `--color` / `--no-color` | Force or disable ANSI color output |
 | `-v` / `-vv` | INFO / DEBUG logging to stderr |
