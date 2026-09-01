@@ -123,6 +123,12 @@ void PrintMcpHelp(std::ostream& out) {
     out << "                       Same-origin, loopback and non-browser (no Origin\n";
     out << "                       header) requests are always allowed; anything else is\n";
     out << "                       refused with 403. '*' allows every origin.\n";
+    out << "  --allowed-hosts <l>  Comma-separated Host header values this server answers\n";
+    out << "                       to. Loopback, IP literals and the bound address are\n";
+    out << "                       always allowed. Passing this refuses any other Host\n";
+    out << "                       with 403 (DNS-rebinding defence); without it such a\n";
+    out << "                       request is served with a warning. '*' allows every\n";
+    out << "                       Host.\n";
     out << "  --auth-token <tok>   Require 'Authorization: Bearer <tok>' on /mcp\n";
     out << "  --auth-token-env <v> Read that token from an environment variable\n";
 }
@@ -625,8 +631,9 @@ int HandleMcpServer(int argc, const char* const* argv) {
         }
         auto mcp_host = get("mcp-host", "127.0.0.1");
 
-        auto security = ResolveHttpSecurity(get("cors-origin"), get("auth-token"),
-                                            get("auth-token-env"), mcp_host, std::cerr);
+        auto security = ResolveHttpSecurity(get("cors-origin"), get("allowed-hosts"),
+                                            get("auth-token"), get("auth-token-env"),
+                                            mcp_host, std::cerr);
         if (!security.has_value()) {
             return kExitInternal;
         }

@@ -2,6 +2,9 @@
 
 #include <erpl_adt/mcp/http_security.hpp>
 
+#include <sstream>
+#include <string>
+
 using namespace erpl_adt;
 
 // ===========================================================================
@@ -141,4 +144,129 @@ TEST_CASE("ParseOriginList: empty pieces are dropped", "[mcp][security]") {
     const auto parsed = ParseOriginList("https://a.example,,");
     REQUIRE(parsed.size() == 1);
     CHECK(parsed[0] == "https://a.example");
+}
+
+// ===========================================================================
+// Host classification
+//
+// Origin validation alone does not stop DNS rebinding. Once a page at
+// evil.example makes rebind.evil.example resolve to 127.0.0.1, the browser
+// considers the request same-origin and sends Host: rebind.evil.example with
+// either a matching Origin or none at all — and both of those are allowed by
+// the Origin rules above. The Host header is the half the attacker cannot
+// launder, so it is checked on its own.
+//
+// An IP literal is a deliberate pass: there is no name to rebind, which is
+// what keeps `catalog webui --host 0.0.0.0` reachable at a LAN address with
+// no configuration.
+// ===========================================================================
+
+TEST_CASE("ClassifyHost: loopback names are recognised", "[mcp][security]") {
+    HttpSecurityOptions options;
+    CHECK(ClassifyHost("localhost:8383", options) == HostVerdict::Loopback);
+    CHECK(ClassifyHost("127.0.0.1:8383", options) == HostVerdict::Loopback);
+    CHECK(ClassifyHost("[::1]:8383", options) == HostVerdict::Loopback);
+    CHECK(ClassifyHost("LocalHost", options) == HostVerdict::Loopback);
+}
+
+TEST_CASE("ClassifyHost: an IP literal cannot be rebound", "[mcp][security]") {
+    HttpSecurityOptions options;
+    CHECK(ClassifyHost("192.168.1.5:8383", options) == HostVerdict::IpLiteral);
+    CHECK(ClassifyHost("10.0.0.7", options) == HostVerdict::IpLiteral);
+    CHECK(ClassifyHost("[fe80::1]:8383", options) == HostVerdict::IpLiteral);
+}
+
+TEST_CASE("ClassifyHost: an unknown name is the rebinding shape",
+          "[mcp][security]") {
+    HttpSecurityOptions options;
+    CHECK(ClassifyHost("rebind.evil.example:8383", options) ==
+          HostVerdict::Unrecognised);
+    // A name that merely contains a loopback label is still a name.
+    CHECK(ClassifyHost("localhost.evil.example", options) ==
+          HostVerdict::Unrecognised);
+    CHECK(ClassifyHost("127.0.0.1.evil.example", options) ==
+          HostVerdict::Unrecognised);
+}
+
+TEST_CASE("ClassifyHost: a configured host is allowed", "[mcp][security]") {
+    HttpSecurityOptions options;
+    options.allowed_hosts = {"mcp.internal.example"};
+    CHECK(ClassifyHost("mcp.internal.example:8383", options) ==
+          HostVerdict::Allowlisted);
+    CHECK(ClassifyHost("mcp.internal.example", options) == HostVerdict::Allowlisted);
+    CHECK(ClassifyHost("other.internal.example", options) == HostVerdict::Unrecognised);
+}
+
+TEST_CASE("ClassifyHost: a configured host may name a port", "[mcp][security]") {
+    // "host:port" and a bare host both mean the same thing to a user; only
+    // the port-qualified form is picky, and then only about that port.
+    HttpSecurityOptions options;
+    options.allowed_hosts = {"mcp.internal.example:8383"};
+    CHECK(ClassifyHost("mcp.internal.example:8383", options) ==
+          HostVerdict::Allowlisted);
+    CHECK(ClassifyHost("mcp.internal.example:9999", options) ==
+          HostVerdict::Unrecognised);
+}
+
+TEST_CASE("ClassifyHost: '*' allows any host", "[mcp][security]") {
+    HttpSecurityOptions options;
+    options.allowed_hosts = {"*"};
+    CHECK(ClassifyHost("rebind.evil.example", options) == HostVerdict::Wildcard);
+}
+
+TEST_CASE("ClassifyHost: a missing Host header is not a browser",
+          "[mcp][security]") {
+    // Browsers always send Host, so an absent one cannot be the rebinding
+    // shape — it is an HTTP/1.0 client or a hand-rolled request.
+    HttpSecurityOptions options;
+    CHECK(ClassifyHost("", options) == HostVerdict::NoHost);
+    CHECK(ClassifyHost("  ", options) == HostVerdict::NoHost);
+}
+
+TEST_CASE("ClassifyHost: only Unrecognised is ever refused", "[mcp][security]") {
+    CHECK(IsAllowed(HostVerdict::NoHost));
+    CHECK(IsAllowed(HostVerdict::Loopback));
+    CHECK(IsAllowed(HostVerdict::IpLiteral));
+    CHECK(IsAllowed(HostVerdict::Allowlisted));
+    CHECK(IsAllowed(HostVerdict::Wildcard));
+    CHECK(!IsAllowed(HostVerdict::Unrecognised));
+}
+
+// ===========================================================================
+// ResolveHttpSecurity — the flag-to-options mapping
+// ===========================================================================
+
+TEST_CASE("ResolveHttpSecurity: enforcement is off until --allowed-hosts",
+          "[mcp][security]") {
+    // The default has to stay warn-only: every deployment reached by a DNS
+    // name today keeps working, and enforcement is one flag away.
+    std::ostringstream err;
+    auto options = ResolveHttpSecurity("", "", "", "", "127.0.0.1", err);
+    REQUIRE(options.has_value());
+    CHECK(!options->enforce_hosts);
+
+    std::ostringstream err2;
+    auto enforcing =
+        ResolveHttpSecurity("", "mcp.internal.example", "", "", "0.0.0.0", err2);
+    REQUIRE(enforcing.has_value());
+    CHECK(enforcing->enforce_hosts);
+    CHECK(ClassifyHost("mcp.internal.example", *enforcing) ==
+          HostVerdict::Allowlisted);
+}
+
+TEST_CASE("ResolveHttpSecurity: the bind host is allowed without naming it twice",
+          "[mcp][security]") {
+    std::ostringstream err;
+    auto options = ResolveHttpSecurity("", "other.example", "", "",
+                                       "mcp.internal.example", err);
+    REQUIRE(options.has_value());
+    CHECK(ClassifyHost("mcp.internal.example:8383", *options) ==
+          HostVerdict::Allowlisted);
+}
+
+TEST_CASE("ResolveHttpSecurity: --allowed-hosts '*' warns", "[mcp][security]") {
+    std::ostringstream err;
+    auto options = ResolveHttpSecurity("", "*", "", "", "0.0.0.0", err);
+    REQUIRE(options.has_value());
+    CHECK(err.str().find("--allowed-hosts") != std::string::npos);
 }

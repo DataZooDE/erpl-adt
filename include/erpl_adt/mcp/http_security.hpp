@@ -19,16 +19,30 @@ namespace erpl_adt {
 //   Binding to 127.0.0.1 does not help there — the browser is inside the
 //   loopback boundary.
 //
+//   Host validation stops the same browser being aimed here by DNS
+//   rebinding, which Origin validation cannot see: once evil.example makes
+//   rebind.evil.example resolve to 127.0.0.1, the browser treats the call as
+//   same-origin and sends either a matching Origin or none at all. Both of
+//   those satisfy the Origin rules, because the attacker controls each side
+//   of the comparison. The Host header is the half they cannot launder.
+//
 //   The bearer token stops everything else that can reach the port.
 //
-// Both are permissive by default so that no existing deployment breaks: a
-// request without an Origin header is not a browser and is allowed, and the
-// token is only enforced once one is configured.
+// All three are permissive by default so that no existing deployment breaks:
+// a request without an Origin header is not a browser and is allowed, an
+// unrecognised Host is served with a warning until --allowed-hosts opts in to
+// refusing it, and the token is only enforced once one is configured.
 // ---------------------------------------------------------------------------
 struct HttpSecurityOptions {
     // Extra origins allowed beyond same-origin and loopback. The single
     // entry "*" restores the historical allow-everything behaviour.
     std::vector<std::string> allowed_origins;
+    // Hosts allowed beyond loopback and IP literals — the bind host and
+    // anything named by --allowed-hosts. "*" allows every host.
+    std::vector<std::string> allowed_hosts;
+    // Whether an unrecognised Host is refused (true) or served with a
+    // warning (false, the default). Set by passing --allowed-hosts.
+    bool enforce_hosts = false;
     // When non-empty, /mcp requires "Authorization: Bearer <token>".
     std::string auth_token;
 };
@@ -55,6 +69,27 @@ enum class OriginVerdict {
                                            const std::string& host,
                                            const HttpSecurityOptions& options);
 
+// Why a request's Host was accepted or refused.
+enum class HostVerdict {
+    NoHost,        // no Host header — browsers always send one, so not a browser
+    Loopback,      // localhost / 127.0.0.1 / [::1]
+    IpLiteral,     // an IP address — there is no name to rebind
+    Allowlisted,   // the bind host, or named by --allowed-hosts
+    Wildcard,      // --allowed-hosts '*'
+    Unrecognised,  // a DNS name we were not told about — the rebinding shape
+};
+
+[[nodiscard]] constexpr bool IsAllowed(HostVerdict verdict) {
+    return verdict != HostVerdict::Unrecognised;
+}
+
+// Classify a Host header against the options. `host` is the raw header value
+// ("name" or "name:port"); an empty one means the header was absent. Whether
+// an Unrecognised host is actually refused is the caller's decision, via
+// HttpSecurityOptions::enforce_hosts.
+[[nodiscard]] HostVerdict ClassifyHost(const std::string& host,
+                                       const HttpSecurityOptions& options);
+
 // True when `header` carries the configured bearer token. Comparison is
 // constant-time so a token cannot be recovered one byte at a time by timing
 // the response. An empty configured token means "no auth required" and every
@@ -62,18 +97,25 @@ enum class OriginVerdict {
 [[nodiscard]] bool BearerTokenMatches(const std::string& authorization_header,
                                       const std::string& expected_token);
 
-// Split a comma-separated --cors-origin value into individual origins,
-// trimming whitespace and dropping empties.
-[[nodiscard]] std::vector<std::string> ParseOriginList(const std::string& value);
+// Split a comma-separated flag value into pieces, trimming whitespace and
+// dropping empties.
+[[nodiscard]] std::vector<std::string> ParseCommaList(const std::string& value);
+
+// Historical name, kept because --cors-origin is the older flag.
+[[nodiscard]] inline std::vector<std::string> ParseOriginList(
+    const std::string& value) {
+    return ParseCommaList(value);
+}
 
 // Build the options from CLI flag values, shared by `mcp --http` and
-// `catalog webui`. Warns on `err` about the two configurations worth
-// noticing — a wildcard origin, and binding somewhere other than loopback
-// without a token — but does not refuse either, so nothing that runs today
-// stops running. Returns nullopt only on an unusable configuration (an
+// `catalog webui`. Warns on `err` about the configurations worth noticing —
+// a wildcard origin or host, and binding somewhere other than loopback
+// without a token — but does not refuse any of them, so nothing that runs
+// today stops running. Returns nullopt only on an unusable configuration (an
 // --auth-token-env naming a variable that is not set), having reported it.
 [[nodiscard]] std::optional<HttpSecurityOptions> ResolveHttpSecurity(
     const std::string& cors_origin_flag,
+    const std::string& allowed_hosts_flag,
     const std::string& auth_token_flag,
     const std::string& auth_token_env_flag,
     const std::string& bind_host,

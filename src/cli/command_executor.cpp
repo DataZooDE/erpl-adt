@@ -2900,6 +2900,7 @@ int HandleCatalogWebui(const CommandArgs& args) {
     RegisterCatalogStoreTools(registry, store);
 
     auto security = ResolveHttpSecurity(GetFlag(args, "cors-origin"),
+                                        GetFlag(args, "allowed-hosts"),
                                         GetFlag(args, "auth-token"),
                                         GetFlag(args, "auth-token-env"), host,
                                         std::cerr);
@@ -7952,13 +7953,19 @@ void RegisterAllCommands(CommandRouter& router) {
             "having been run first, this serves an instructional message instead of the app.\n\n"
             "Access control: requests without an Origin header (curl, native clients), "
             "same-origin requests and loopback origins are allowed; any other browser "
-            "origin is refused with 403 unless named with --cors-origin. Binding beyond "
-            "127.0.0.1 without --auth-token exposes the catalog API — including the "
-            "curation writes of catalog_annotate — to everyone who can reach the port.";
+            "origin is refused with 403 unless named with --cors-origin. Origin alone "
+            "does not stop DNS rebinding, though: a page that points its own name at "
+            "127.0.0.1 arrives with a Host it controls and an Origin to match. Pass "
+            "--allowed-hosts to refuse any Host other than loopback, an IP literal and "
+            "the address bound; without it such a request is served with a warning. "
+            "Binding beyond 127.0.0.1 without --auth-token exposes the catalog API — "
+            "including the curation writes of catalog_annotate — to everyone who can "
+            "reach the port.";
         help.flags = {
             {"port", "<n>", "Port to listen on (default: 8383)", false},
             {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
             {"cors-origin", "<list>", "Comma-separated extra origins allowed to call the API", false},
+            {"allowed-hosts", "<list>", "Host headers this server answers to; passing it refuses any other with 403", false},
             {"auth-token", "<tok>", "Require 'Authorization: Bearer <tok>' on the API", false},
             {"auth-token-env", "<var>", "Read that token from an environment variable", false},
         };

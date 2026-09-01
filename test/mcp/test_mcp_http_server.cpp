@@ -466,3 +466,119 @@ TEST_CASE("McpHttpServer: the web UI catch-all does not swallow GET /mcp",
     server.Stop();
     server_thread.join();
 }
+
+// ===========================================================================
+// Host validation (DNS rebinding)
+// ===========================================================================
+
+namespace {
+
+// The message body used by the Host tests below — a tool call, so a request
+// that is wrongly let through is visible as an executed tool.
+std::string EchoCall() {
+    return nlohmann::json{{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "tools/call"},
+                          {"params", {{"name", "echo"},
+                                      {"arguments", {{"text", "hi"}}}}}}
+        .dump();
+}
+
+} // anonymous namespace
+
+TEST_CASE("McpHttpServer: an unknown Host is served by default",
+          "[mcp][http][security]") {
+    // Warn-only until the operator opts in: a deployment reached through a
+    // DNS name or a reverse proxy keeps working with no new flag.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 40);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    const httplib::Headers rebound{{"Host", "rebind.evil.example"}};
+    auto response = client.Post("/mcp", rebound, EchoCall(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: with --allowed-hosts, a rebound Host is refused",
+          "[mcp][http][security]") {
+    // The DNS-rebinding shape: evil.example points rebind.evil.example at
+    // 127.0.0.1, so the browser calls this server believing it is same-origin
+    // and sends an Origin the Origin check cannot fault. Host is the half the
+    // attacker cannot launder.
+    HttpSecurityOptions security;
+    security.allowed_hosts = {"mcp.internal.example"};
+    security.enforce_hosts = true;
+
+    McpHttpServer server(MakeEchoRegistry(), false, security);
+    auto port = static_cast<uint16_t>(TestPort() + 41);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+
+    const httplib::Headers rebound{
+        {"Host", "rebind.evil.example"},
+        {"Origin", "http://rebind.evil.example"}};
+    auto refused = client.Post("/mcp", rebound, EchoCall(), "application/json");
+    REQUIRE(refused != nullptr);
+    CHECK(refused->status == 403);
+    CHECK(refused->get_header_value("Access-Control-Allow-Origin").empty());
+    CHECK(refused->body.find("hi") == std::string::npos);  // the tool did not run
+
+    // Same request with no Origin at all — the other half of the shape, and
+    // the one an Origin-only check waves straight through.
+    const httplib::Headers rebound_no_origin{{"Host", "rebind.evil.example"}};
+    auto refused_silent =
+        client.Post("/mcp", rebound_no_origin, EchoCall(), "application/json");
+    REQUIRE(refused_silent != nullptr);
+    CHECK(refused_silent->status == 403);
+
+    // Loopback and the configured name still work.
+    const httplib::Headers loopback{{"Host", "127.0.0.1"}};
+    auto allowed = client.Post("/mcp", loopback, EchoCall(), "application/json");
+    REQUIRE(allowed != nullptr);
+    CHECK(allowed->status == 200);
+
+    const httplib::Headers configured{{"Host", "mcp.internal.example"}};
+    auto named = client.Post("/mcp", configured, EchoCall(), "application/json");
+    REQUIRE(named != nullptr);
+    CHECK(named->status == 200);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: enforcing hosts leaves the web UI's own origin alone",
+          "[mcp][http][security]") {
+    // The embedded UI is reached at whatever address the browser used, and
+    // its POSTs are same-origin. Enforcement must not cost it anything.
+    HttpSecurityOptions security;
+    security.allowed_hosts = {"catalog.internal"};
+    security.enforce_hosts = true;
+
+    McpHttpServer server(MakeEchoRegistry(), false, security);
+    auto port = static_cast<uint16_t>(TestPort() + 42);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    const httplib::Headers same_origin{{"Host", "catalog.internal"},
+                                       {"Origin", "http://catalog.internal"}};
+    auto response = client.Post("/mcp", same_origin, EchoCall(), "application/json");
+    REQUIRE(response != nullptr);
+    CHECK(response->status == 200);
+    CHECK(response->get_header_value("Access-Control-Allow-Origin") ==
+          "http://catalog.internal");
+
+    server.Stop();
+    server_thread.join();
+}

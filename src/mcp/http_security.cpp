@@ -59,6 +59,25 @@ bool IsLoopbackHost(const std::string& host) {
            host == "::1";
 }
 
+// Is this host an IP address rather than a name? Only names can be pointed at
+// 127.0.0.1 by an attacker's DNS server, so an IP literal cannot carry a
+// rebinding attack — which is what lets `--host 0.0.0.0` stay reachable at a
+// LAN address with no configuration.
+//
+// Deliberately loose: a bracketed value is IPv6, and anything made only of
+// digits and dots is IPv4. Both tests are cheap and neither can be satisfied
+// by a registrable domain name, which is the only property that matters here.
+bool IsIpLiteral(const std::string& host) {
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        return true;
+    }
+    if (host.empty()) {
+        return false;
+    }
+    return host.find_first_not_of("0123456789.") == std::string::npos &&
+           host.find('.') != std::string::npos;
+}
+
 }  // namespace
 
 OriginVerdict ClassifyOrigin(const std::string& origin, const std::string& host,
@@ -98,6 +117,43 @@ OriginVerdict ClassifyOrigin(const std::string& origin, const std::string& host,
     return OriginVerdict::Denied;
 }
 
+HostVerdict ClassifyHost(const std::string& host,
+                         const HttpSecurityOptions& options) {
+    const auto authority = Authority(host);
+    if (authority.empty()) {
+        // Browsers always send Host, so an absent one is not the shape this
+        // check exists for — it is an HTTP/1.0 or hand-rolled client.
+        return HostVerdict::NoHost;
+    }
+
+    for (const auto& allowed : options.allowed_hosts) {
+        if (Trim(allowed) == "*") {
+            return HostVerdict::Wildcard;
+        }
+    }
+
+    const auto name = HostOf(authority);
+    if (IsLoopbackHost(name)) {
+        return HostVerdict::Loopback;
+    }
+    if (IsIpLiteral(name)) {
+        return HostVerdict::IpLiteral;
+    }
+
+    for (const auto& allowed : options.allowed_hosts) {
+        const auto entry = Authority(allowed);
+        // An entry naming a port is held to it; a bare name matches any port,
+        // because "the host I serve on" is what the operator meant to say.
+        const bool matches = (HostOf(entry) == entry) ? (entry == name)
+                                                      : (entry == authority);
+        if (matches) {
+            return HostVerdict::Allowlisted;
+        }
+    }
+
+    return HostVerdict::Unrecognised;
+}
+
 bool BearerTokenMatches(const std::string& authorization_header,
                         const std::string& expected_token) {
     if (expected_token.empty()) {
@@ -128,11 +184,22 @@ bool BearerTokenMatches(const std::string& authorization_header,
 }
 
 std::optional<HttpSecurityOptions> ResolveHttpSecurity(
-    const std::string& cors_origin_flag, const std::string& auth_token_flag,
-    const std::string& auth_token_env_flag, const std::string& bind_host,
-    std::ostream& err) {
+    const std::string& cors_origin_flag, const std::string& allowed_hosts_flag,
+    const std::string& auth_token_flag, const std::string& auth_token_env_flag,
+    const std::string& bind_host, std::ostream& err) {
     HttpSecurityOptions options;
-    options.allowed_origins = ParseOriginList(cors_origin_flag);
+    options.allowed_origins = ParseCommaList(cors_origin_flag);
+    options.allowed_hosts = ParseCommaList(allowed_hosts_flag);
+    // Passing the flag at all is what turns refusal on. Without it an
+    // unrecognised Host is served with a warning, so no deployment reached
+    // through a DNS name today stops working.
+    options.enforce_hosts = !options.allowed_hosts.empty();
+    // The address the operator bound to is allowed without having to name it
+    // twice. Loopback and IP literals are already allowed by ClassifyHost.
+    const auto bind_name = HostOf(Authority(bind_host));
+    if (!bind_name.empty() && !IsLoopbackHost(bind_name) && !IsIpLiteral(bind_name)) {
+        options.allowed_hosts.push_back(bind_name);
+    }
     options.auth_token = auth_token_flag;
 
     if (options.auth_token.empty() && !auth_token_env_flag.empty()) {
@@ -153,6 +220,15 @@ std::optional<HttpSecurityOptions> ResolveHttpSecurity(
         }
     }
 
+    for (const auto& host : options.allowed_hosts) {
+        if (host == "*") {
+            err << "Warning: --allowed-hosts '*' accepts any Host header, which "
+                   "leaves DNS rebinding open. Name the hosts you serve on "
+                   "instead.\n";
+            break;
+        }
+    }
+
     if (options.auth_token.empty() && !IsLoopbackHost(HostOf(Authority(bind_host)))) {
         err << "Warning: binding " << bind_host
             << " exposes this server beyond this machine with no authentication. "
@@ -162,7 +238,7 @@ std::optional<HttpSecurityOptions> ResolveHttpSecurity(
     return options;
 }
 
-std::vector<std::string> ParseOriginList(const std::string& value) {
+std::vector<std::string> ParseCommaList(const std::string& value) {
     std::vector<std::string> out;
     size_t pos = 0;
     while (pos <= value.size()) {
