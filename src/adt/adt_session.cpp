@@ -215,25 +215,46 @@ struct AdtSession::Impl {
                              const std::string& path,
                              httplib::Error http_error) const {
         const auto category = CategoryFromHttpTransportError(http_error);
-        if (category != ErrorCategory::Timeout) {
-            return MakeSessionError(operation, path, std::nullopt,
-                                    "HTTP request failed: " +
-                                        httplib::to_string(http_error) +
-                                        " (connecting to " + base_url_ + ")",
-                                    category);
+
+        // Never reached the server at all: the limit that expired is the
+        // connection timeout, and --timeout would not have helped — saying
+        // otherwise sends people to raise the wrong number.
+        if (http_error == httplib::Error::ConnectionTimeout) {
+            auto error = MakeSessionError(
+                operation, path, std::nullopt,
+                "connection timed out after " +
+                    std::to_string(options.connect_timeout.count()) +
+                    "s (connecting to " + base_url_ + ")",
+                category);
+            if (!error.hint.has_value()) {
+                error.hint = "The server did not answer. Check the host, port "
+                             "and that it is reachable from here.";
+            }
+            return error;
         }
-        const auto seconds = std::to_string(options.read_timeout.count());
-        auto error = MakeSessionError(
-            operation, path, std::nullopt,
-            "request timed out after " + seconds + "s (connecting to " +
-                base_url_ + ")",
-            category);
-        if (!error.hint.has_value()) {
-            error.hint = "Raise it with --timeout <seconds>. Work already "
-                         "started on the server may still be running and may "
-                         "complete — check before repeating it.";
+
+        // The request was sent and the answer did not arrive in time.
+        if (http_error == httplib::Error::Read ||
+            http_error == httplib::Error::Timeout) {
+            auto error = MakeSessionError(
+                operation, path, std::nullopt,
+                "request timed out after " +
+                    std::to_string(options.read_timeout.count()) +
+                    "s (connecting to " + base_url_ + ")",
+                category);
+            if (!error.hint.has_value()) {
+                error.hint = "Raise it with --timeout <seconds>. Work already "
+                             "started on the server may still be running and "
+                             "may complete — check before repeating it.";
+            }
+            return error;
         }
-        return error;
+
+        return MakeSessionError(operation, path, std::nullopt,
+                                "HTTP request failed: " +
+                                    httplib::to_string(http_error) +
+                                    " (connecting to " + base_url_ + ")",
+                                category);
     }
 
     // Check if a request path targets the BW Modeling API.

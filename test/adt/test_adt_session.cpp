@@ -1059,10 +1059,12 @@ TEST_CASE("AdtSession: a read timeout is reported as a timeout, naming --timeout
     CHECK(error.hint->find("--timeout") != std::string::npos);
 }
 
-TEST_CASE("AdtSession: a connection failure is not dressed up as a timeout",
+TEST_CASE("AdtSession: an unreachable server is not blamed on the read timeout",
           "[adt][session][live]") {
-    // Only the timeout family gets the new wording; everything else keeps
-    // saying what it always said.
+    // Whether a closed port is refused (Linux) or quietly dropped until the
+    // connect timeout expires (Windows), the request never reached the
+    // server — so the read timeout is not the number that ran out, and
+    // --timeout is not the flag that would have helped.
     auto client = SapClient::Create("001");
     REQUIRE(client.IsOk());
     AdtSessionOptions opts;
@@ -1074,5 +1076,9 @@ TEST_CASE("AdtSession: a connection failure is not dressed up as a timeout",
 
     auto result = session.Get("/sap/bc/adt/test");
     REQUIRE(result.IsErr());
-    CHECK(result.Error().message.find("timed out") == std::string::npos);
+    const auto& error = result.Error();
+    CHECK(error.message.find("request timed out after") == std::string::npos);
+    if (error.hint.has_value()) {
+        CHECK(error.hint->find("--timeout") == std::string::npos);
+    }
 }
