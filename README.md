@@ -287,7 +287,9 @@ Both HTTP servers (`mcp --http` and `catalog webui`) refuse cross-origin browser
 with 403 — a page you visit cannot post writes to your SAP system through them. Requests
 without an `Origin` header (curl, native MCP clients), same-origin requests and loopback
 origins are always allowed; add others with `--cors-origin`, and require a token with
-`--auth-token` / `--auth-token-env`. See [docs/cli-usage.md](docs/cli-usage.md#http-transport-and-access-control).
+`--auth-token` / `--auth-token-env`. Origin checking cannot see DNS rebinding, where the
+attacker controls the `Host` too — pass `--allowed-hosts` to refuse any `Host` other than
+loopback, an IP literal and the address bound. See [docs/cli-usage.md](docs/cli-usage.md#http-transport-and-access-control).
 
 The web UI ([`flutter/erpl_catalog_kit`](flutter/erpl_catalog_kit), compiled and embedded straight into the `erpl-adt` binary — see [Building from source](#building-from-source)) is **read-only against the cache except for curation**: Search, Browse, Entity Detail, Lineage, and Driver Tree all query the same fast `catalog_*` MCP tools the CLI and AI agents use; the Curate screen is the only one that writes, via `catalog_annotate`. There's no build/sync button — `catalog webui` doesn't hold a live SAP connection, so building, exporting, and syncing stay CLI-only operations. The Sync Status screen shows past sync runs and cache health, and Feed Export surfaces the exact `erpl-adt catalog build --format ...` command to run for each format, rather than re-implementing either client-side.
 

@@ -3,7 +3,9 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <iostream>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -61,9 +63,29 @@ struct McpHttpServer::Impl {
     std::mutex mcp_mutex;
 
     HttpSecurityOptions security;
+    // Hosts already warned about, so a scripted attack cannot flood stderr
+    // with one line per request. Guarded by warned_hosts_mutex because the
+    // warning is emitted from the pre-routing hook, which runs on httplib's
+    // thread pool — before /mcp's own lock is taken.
+    std::set<std::string> warned_hosts;
+    std::mutex warned_hosts_mutex;
 
     Impl(ToolRegistry registry, HttpSecurityOptions security_options)
         : mcp(std::move(registry)), security(std::move(security_options)) {}
+
+    // Emit the DNS-rebinding warning once per distinct Host.
+    void WarnAboutHostOnce(const std::string& host) {
+        {
+            std::lock_guard<std::mutex> lock(warned_hosts_mutex);
+            if (!warned_hosts.insert(host).second) {
+                return;
+            }
+        }
+        std::cerr << "Warning: served a request for Host '" << host
+                  << "', which is not loopback, an IP literal, or a configured "
+                     "host. A page using DNS rebinding looks exactly like this. "
+                     "Pass --allowed-hosts to refuse it.\n";
+    }
 };
 
 McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui)
@@ -85,9 +107,25 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
     // can't accidentally omit it.
     impl_->http.set_pre_routing_handler([this](const httplib::Request& req,
                                                httplib::Response& res) {
+        // Host first, and on its own: DNS rebinding hands the attacker both
+        // the Host and the Origin, so the same-origin rule below cannot see
+        // it. Checking Host first means that once enforcement is on, a
+        // rebound name is refused whatever Origin it claims.
+        const auto host = req.get_header_value("Host");
+        const auto host_verdict = ClassifyHost(host, impl_->security);
+        if (!IsAllowed(host_verdict)) {
+            if (impl_->security.enforce_hosts) {
+                res.status = 403;
+                res.set_content(
+                    R"({"error":"host not allowed; pass --allowed-hosts to allow it"})",
+                    "application/json");
+                return httplib::Server::HandlerResponse::Handled;
+            }
+            impl_->WarnAboutHostOnce(host);
+        }
+
         const auto origin = req.get_header_value("Origin");
-        const auto verdict =
-            ClassifyOrigin(origin, req.get_header_value("Host"), impl_->security);
+        const auto verdict = ClassifyOrigin(origin, host, impl_->security);
 
         if (!IsAllowed(verdict)) {
             res.status = 403;

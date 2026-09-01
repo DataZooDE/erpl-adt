@@ -245,6 +245,7 @@ matters:
 | Flag | Effect |
 |------|--------|
 | `--cors-origin <list>` | Comma-separated extra browser origins allowed to call `/mcp`. `*` allows every origin. |
+| `--allowed-hosts <list>` | Comma-separated `Host` header values this server answers to. Passing it refuses any other `Host` with 403. `*` allows every host. |
 | `--auth-token <tok>` | Require `Authorization: Bearer <tok>`; requests without it get 401 and run nothing. |
 | `--auth-token-env <var>` | Read that token from an environment variable instead of the command line. |
 
@@ -255,6 +256,24 @@ by), and **loopback** origins. Any other browser origin is refused with **403** 
 the case where a page the developer merely visited could otherwise post writes to their
 SAP system, and binding to `127.0.0.1` does not prevent it because the browser is already
 inside the loopback boundary.
+
+Origin validation alone does not stop **DNS rebinding**, which is why `--allowed-hosts`
+exists. Once a page at `evil.example` makes `rebind.evil.example` resolve to `127.0.0.1`,
+the browser believes it is talking to its own origin: the request arrives with `Host:
+rebind.evil.example` and either a matching `Origin` or none at all, and both of those
+satisfy the rules above — the attacker controls each side of the comparison. The `Host`
+header is the half they cannot launder.
+
+`--allowed-hosts` names the hosts this server answers to; loopback names, IP literals (an
+IP address has no DNS name to rebind, so `--mcp-host 0.0.0.0` reached at a LAN address
+keeps working) and the address bound are always allowed. **Passing the flag is what turns
+refusal on.** Without it, an unrecognised `Host` is still served, with one warning per
+distinct host on stderr — so a deployment reached through a DNS name or a reverse proxy
+does not break on upgrade, and closing the hole is one flag:
+
+```bash
+erpl-adt mcp --http --mcp-host 0.0.0.0 --allowed-hosts mcp.internal.example
+```
 
 Authentication is off unless a token is configured. Binding beyond loopback without one
 warns on stderr; `/healthz` never requires the token so liveness probes keep working.
