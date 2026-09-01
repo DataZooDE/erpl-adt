@@ -40,6 +40,7 @@
 #include <erpl_adt/adt/catalog_sync.hpp>
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
 #include <erpl_adt/mcp/http_security.hpp>
+#include <erpl_adt/mcp/http_security_sources.hpp>
 #include <erpl_adt/mcp/mcp_http_server.hpp>
 #include <erpl_adt/mcp/tool_registry.hpp>
 #include <erpl_adt/adt/ddic.hpp>
@@ -2899,17 +2900,21 @@ int HandleCatalogWebui(const CommandArgs& args) {
     ToolRegistry registry;
     RegisterCatalogStoreTools(registry, store);
 
-    auto security = ResolveHttpSecurity(GetFlag(args, "cors-origin"),
-                                        GetFlag(args, "allowed-hosts"),
-                                        GetFlag(args, "auth-token"),
-                                        GetFlag(args, "auth-token-env"), host,
-                                        std::cerr);
+    HttpSecurityFlagValues security_flags;
+    security_flags.cors_origin = GetFlag(args, "cors-origin");
+    security_flags.allowed_hosts = GetFlag(args, "allowed-hosts");
+    security_flags.auth_token = GetFlag(args, "auth-token");
+    security_flags.auth_token_env = GetFlag(args, "auth-token-env");
+    security_flags.config_path = GetFlag(args, "config");
+    security_flags.bind_host = host;
+    auto security = ResolveHttpSecurityFromCli(security_flags, std::cerr);
     if (!security.has_value()) {
         return 99;
     }
 
     McpHttpServer server(std::move(registry), /*serve_webui=*/true, *security);
     std::cerr << "erpl-adt catalog web UI listening on http://" << host << ":" << port << "/\n";
+    PrintHttpSecurityPosture(*security, std::cerr);
     if (!server.Run(host, port)) {
         fmt.PrintError(Error{"CatalogWebui", "", std::nullopt,
                              "Failed to bind " + host + ":" + std::to_string(port), std::nullopt});
@@ -7955,17 +7960,20 @@ void RegisterAllCommands(CommandRouter& router) {
             "same-origin requests and loopback origins are allowed; any other browser "
             "origin is refused with 403 unless named with --cors-origin. Origin alone "
             "does not stop DNS rebinding, though: a page that points its own name at "
-            "127.0.0.1 arrives with a Host it controls and an Origin to match. Pass "
-            "--allowed-hosts to refuse any Host other than loopback, an IP literal and "
-            "the address bound; without it such a request is served with a warning. "
-            "Binding beyond 127.0.0.1 without --auth-token exposes the catalog API — "
-            "including the curation writes of catalog_annotate — to everyone who can "
-            "reach the port.";
+            "127.0.0.1 arrives with a Host it controls and an Origin to match. So the "
+            "Host is checked too — loopback, IP literals and the address bound are "
+            "always served, and a browser asking for any other name is refused with "
+            "403 until it is named with --allowed-hosts (or ERPL_ADT_ALLOWED_HOSTS, or "
+            "http.allowed_hosts in a --config file). Non-browser clients are "
+            "unaffected. Binding beyond 127.0.0.1 without --auth-token exposes the "
+            "catalog API — including the curation writes of catalog_annotate — to "
+            "everyone who can reach the port.";
         help.flags = {
             {"port", "<n>", "Port to listen on (default: 8383)", false},
             {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
             {"cors-origin", "<list>", "Comma-separated extra origins allowed to call the API", false},
-            {"allowed-hosts", "<list>", "Host headers this server answers to; passing it refuses any other with 403", false},
+            {"allowed-hosts", "<list>", "Host headers this server answers to beyond loopback and IP literals; a browser using any other is refused", false},
+            {"config", "<path>", "YAML file whose http: block supplies these settings", false},
             {"auth-token", "<tok>", "Require 'Authorization: Bearer <tok>' on the API", false},
             {"auth-token-env", "<var>", "Read that token from an environment variable", false},
         };

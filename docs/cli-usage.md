@@ -245,7 +245,8 @@ matters:
 | Flag | Effect |
 |------|--------|
 | `--cors-origin <list>` | Comma-separated extra browser origins allowed to call `/mcp`. `*` allows every origin. |
-| `--allowed-hosts <list>` | Comma-separated `Host` header values this server answers to. Passing it refuses any other `Host` with 403. `*` allows every host. |
+| `--allowed-hosts <list>` | Comma-separated `Host` header values this server answers to, beyond loopback, IP literals and the bound address. A **browser** asking for any other host is refused with 403. `*` allows every host. |
+| `-c, --config <path>` | YAML file whose `http:` block supplies any of these settings. |
 | `--auth-token <tok>` | Require `Authorization: Bearer <tok>`; requests without it get 401 and run nothing. |
 | `--auth-token-env <var>` | Read that token from an environment variable instead of the command line. |
 
@@ -264,16 +265,37 @@ rebind.evil.example` and either a matching `Origin` or none at all, and both of 
 satisfy the rules above — the attacker controls each side of the comparison. The `Host`
 header is the half they cannot launder.
 
-`--allowed-hosts` names the hosts this server answers to; loopback names, IP literals (an
+`--allowed-hosts` names the hosts this server answers to. Loopback names, IP literals (an
 IP address has no DNS name to rebind, so `--mcp-host 0.0.0.0` reached at a LAN address
-keeps working) and the address bound are always allowed. **Passing the flag is what turns
-refusal on.** Without it, an unrecognised `Host` is still served, with one warning per
-distinct host on stderr — so a deployment reached through a DNS name or a reverse proxy
-does not break on upgrade, and closing the hole is one flag:
+keeps working) and the address bound are always allowed. **Any other host is refused by
+default** — no flag needed to be protected:
 
 ```bash
 erpl-adt mcp --http --mcp-host 0.0.0.0 --allowed-hosts mcp.internal.example
+ERPL_ADT_ALLOWED_HOSTS=mcp.internal.example erpl-adt mcp --http --mcp-host 0.0.0.0
+erpl-adt mcp --http --mcp-host 0.0.0.0 -c erpl.yaml     # http.allowed_hosts
 ```
+
+```yaml
+# erpl.yaml
+http:
+  allowed_hosts: [mcp.internal.example, buildbox.corp]
+  cors_origin: [https://catalog.example]
+  auth_token_env: ERPL_ADT_MCP_TOKEN     # the variable's name, never the token
+```
+
+The check applies to **browser requests only** — those carrying an `Origin` or a
+`Sec-Fetch-*` header. That is not a loophole: rebinding is a browser attack by
+construction, `/mcp` accepts POST only, and a browser always sends `Origin` on a POST,
+same-origin ones included. So no rebinding request can reach `/mcp` without announcing
+itself, while curl, native MCP clients and server-to-server callers may go on addressing
+the server by whatever hostname they like. Those requests do produce one note per distinct
+host on stderr, since a browser using the same name *would* be refused.
+
+**If you reach the server through a DNS name in a browser** — a reverse proxy, a container
+name, a corporate hostname — name it once with any of the three forms above. A legitimate
+browser at `http://buildbox.corp:8383` and a rebound one are identical on the wire, which
+is why this is an allowlist and not a heuristic.
 
 Authentication is off unless a token is configured. Binding beyond loopback without one
 warns on stderr; `/healthz` never requires the token so liveness probes keep working.

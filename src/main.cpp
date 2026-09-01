@@ -11,6 +11,7 @@
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/catalog_tool_handlers.hpp>
 #include <erpl_adt/mcp/http_security.hpp>
+#include <erpl_adt/mcp/http_security_sources.hpp>
 #include <erpl_adt/mcp/mcp_http_server.hpp>
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
 #include <erpl_adt/storage/duckdb_catalog_store.hpp>
@@ -124,11 +125,13 @@ void PrintMcpHelp(std::ostream& out) {
     out << "                       header) requests are always allowed; anything else is\n";
     out << "                       refused with 403. '*' allows every origin.\n";
     out << "  --allowed-hosts <l>  Comma-separated Host header values this server answers\n";
-    out << "                       to. Loopback, IP literals and the bound address are\n";
-    out << "                       always allowed. Passing this refuses any other Host\n";
-    out << "                       with 403 (DNS-rebinding defence); without it such a\n";
-    out << "                       request is served with a warning. '*' allows every\n";
-    out << "                       Host.\n";
+    out << "                       to, beyond loopback, IP literals and the bound address,\n";
+    out << "                       which are always allowed. A browser request for any\n";
+    out << "                       other Host is refused with 403 — that is what DNS\n";
+    out << "                       rebinding looks like. Non-browser clients (no Origin,\n";
+    out << "                       no Sec-Fetch-*) are unaffected. '*' allows every Host.\n";
+    out << "                       Also settable as ERPL_ADT_ALLOWED_HOSTS, or as\n";
+    out << "                       http.allowed_hosts in a -c/--config YAML file.\n";
     out << "  --auth-token <tok>   Require 'Authorization: Bearer <tok>' on /mcp\n";
     out << "  --auth-token-env <v> Read that token from an environment variable\n";
 }
@@ -410,6 +413,13 @@ int HandleMcpServer(int argc, const char* const* argv) {
             PrintMcpHelp(std::cout);
             return 0;
         }
+        // -c is the only short flag that takes a value here; the long form
+        // falls through to the generic branch below.
+        if (arg == "-c" && i + 1 < argc) {
+            flags["config"] = argv[i + 1];
+            ++i;
+            continue;
+        }
         if (arg.substr(0, 2) == "--") {
             auto eq = arg.find('=');
             if (eq != std::string_view::npos) {
@@ -631,9 +641,14 @@ int HandleMcpServer(int argc, const char* const* argv) {
         }
         auto mcp_host = get("mcp-host", "127.0.0.1");
 
-        auto security = ResolveHttpSecurity(get("cors-origin"), get("allowed-hosts"),
-                                            get("auth-token"), get("auth-token-env"),
-                                            mcp_host, std::cerr);
+        HttpSecurityFlagValues security_flags;
+        security_flags.cors_origin = get("cors-origin");
+        security_flags.allowed_hosts = get("allowed-hosts");
+        security_flags.auth_token = get("auth-token");
+        security_flags.auth_token_env = get("auth-token-env");
+        security_flags.config_path = get("config");
+        security_flags.bind_host = mcp_host;
+        auto security = ResolveHttpSecurityFromCli(security_flags, std::cerr);
         if (!security.has_value()) {
             return kExitInternal;
         }
@@ -645,6 +660,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
         McpHttpServer server(std::move(registry), /*serve_webui=*/false, *security);
         std::cerr << "erpl-adt MCP HTTP server listening on http://" << mcp_host << ":"
                   << mcp_port << "/mcp\n";
+        PrintHttpSecurityPosture(*security, std::cerr);
         if (!server.Run(mcp_host, mcp_port)) {
             std::cerr << "Error: failed to bind " << mcp_host << ":" << mcp_port << "\n";
             Telemetry::Flush();

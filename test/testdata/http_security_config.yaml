@@ -1,0 +1,8 @@
+connection:
+  host: localhost
+  user: DEVELOPER
+
+http:
+  allowed_hosts: [mcp.internal.example, buildbox.corp]
+  cors_origin: [https://catalog.example]
+  auth_token_env: ERPL_ADT_MCP_TOKEN

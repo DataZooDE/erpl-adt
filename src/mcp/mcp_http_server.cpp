@@ -3,6 +3,8 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <mutex>
 #include <set>
@@ -17,6 +19,12 @@ CMRC_DECLARE(webui);
 namespace erpl_adt {
 
 namespace {
+
+std::string ToLowerAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
 
 #ifdef ERPL_ADT_HAVE_WEBUI
 // Maps a request path's extension to a Content-Type. Flutter web's build
@@ -46,6 +54,30 @@ std::string_view MimeTypeForPath(const std::string& path) {
 }
 #endif
 
+// The name part of a Host header, for quoting back in the remedy — the flag
+// takes a host, and "buildbox.corp:8383" would work but reads like a typo.
+// Does this request carry any Sec-Fetch-* header? Browsers set them on every
+// request; nothing else does.
+bool HasSecFetchHeader(const httplib::Request& req) {
+    for (const auto& [name, value] : req.headers) {
+        (void)value;
+        if (name.size() >= 10 &&
+            ToLowerAscii(name.substr(0, 10)) == "sec-fetch-") {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string HostOnly(const std::string& host) {
+    if (!host.empty() && host.front() == '[') {
+        const auto close = host.find(']');
+        return close == std::string::npos ? host : host.substr(0, close + 1);
+    }
+    const auto colon = host.find(':');
+    return colon == std::string::npos ? host : host.substr(0, colon);
+}
+
 } // anonymous namespace
 
 struct McpHttpServer::Impl {
@@ -73,18 +105,28 @@ struct McpHttpServer::Impl {
     Impl(ToolRegistry registry, HttpSecurityOptions security_options)
         : mcp(std::move(registry)), security(std::move(security_options)) {}
 
-    // Emit the DNS-rebinding warning once per distinct Host.
-    void WarnAboutHostOnce(const std::string& host) {
+    // Say something about an unrecognised Host once per distinct value, so a
+    // scripted attack cannot flood stderr with one line per request.
+    void ReportHostOnce(const std::string& host, bool refused) {
         {
             std::lock_guard<std::mutex> lock(warned_hosts_mutex);
             if (!warned_hosts.insert(host).second) {
                 return;
             }
         }
-        std::cerr << "Warning: served a request for Host '" << host
+        if (refused) {
+            std::cerr << "Refused a browser request for Host '" << host
+                      << "': not loopback, an IP literal, or a configured host. "
+                         "If that is an address you serve on, allow it with "
+                         "--allowed-hosts " << HostOnly(host)
+                      << " (or ERPL_ADT_ALLOWED_HOSTS). If it is not, this is "
+                         "what a DNS-rebinding attempt looks like.\n";
+            return;
+        }
+        std::cerr << "Note: served a non-browser request for Host '" << host
                   << "', which is not loopback, an IP literal, or a configured "
-                     "host. A page using DNS rebinding looks exactly like this. "
-                     "Pass --allowed-hosts to refuse it.\n";
+                     "host. Browsers using that name are refused — allow it "
+                     "with --allowed-hosts " << HostOnly(host) << ".\n";
     }
 };
 
@@ -109,22 +151,33 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
                                                httplib::Response& res) {
         // Host first, and on its own: DNS rebinding hands the attacker both
         // the Host and the Origin, so the same-origin rule below cannot see
-        // it. Checking Host first means that once enforcement is on, a
-        // rebound name is refused whatever Origin it claims.
+        // it — checking Host first is what makes a rebound name refusable
+        // whatever Origin it claims.
+        //
+        // Only browser-originated requests are held to it. Rebinding is a
+        // browser attack, and a browser announces itself: Origin on every
+        // POST, Sec-Fetch-* on everything modern. curl and native MCP clients
+        // may go on using whatever hostname they like.
         const auto host = req.get_header_value("Host");
-        const auto host_verdict = ClassifyHost(host, impl_->security);
-        if (!IsAllowed(host_verdict)) {
-            if (impl_->security.enforce_hosts) {
+        const auto origin = req.get_header_value("Origin");
+        if (!IsAllowed(ClassifyHost(host, impl_->security))) {
+            const bool browser = IsBrowserRequest(origin, HasSecFetchHeader(req));
+            impl_->ReportHostOnce(host, browser);
+            if (browser) {
                 res.status = 403;
                 res.set_content(
-                    R"({"error":"host not allowed; pass --allowed-hosts to allow it"})",
+                    nlohmann::json{
+                        {"error", "host '" + host +
+                                      "' not allowed; start the server with "
+                                      "--allowed-hosts " + HostOnly(host) +
+                                      " (or set ERPL_ADT_ALLOWED_HOSTS) if that "
+                                      "is an address you serve on"}}
+                        .dump(),
                     "application/json");
                 return httplib::Server::HandlerResponse::Handled;
             }
-            impl_->WarnAboutHostOnce(host);
         }
 
-        const auto origin = req.get_header_value("Origin");
         const auto verdict = ClassifyOrigin(origin, host, impl_->security);
 
         if (!IsAllowed(verdict)) {

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <erpl_adt/config/config_loader.hpp>
+#include <erpl_adt/config/http_security_config.hpp>
 
 #include <cstdlib>
 #include <string>
@@ -588,4 +589,51 @@ TEST_CASE("SortReposByDependency: empty list", "[config][topo]") {
     auto sort_result = SortReposByDependency(repos);
     REQUIRE(sort_result.IsOk());
     CHECK(sort_result.Value().empty());
+}
+
+// ===========================================================================
+// LoadHttpSecuritySettings — the `http:` block (#50)
+//
+// `mcp --http` and `catalog webui` parse their own flags and never build an
+// AppConfig, so this reads just the block they care about. A raw auth_token
+// key is deliberately not supported: a token in a file invites committing it.
+// ===========================================================================
+
+TEST_CASE("LoadHttpSecuritySettings: reads the http block", "[config][yaml][security]") {
+    auto result = LoadHttpSecuritySettings(TestDataPath("http_security_config.yaml"));
+    REQUIRE(result.IsOk());
+    const auto& settings = result.Value();
+
+    REQUIRE(settings.allowed_hosts.has_value());
+    CHECK(*settings.allowed_hosts == "mcp.internal.example,buildbox.corp");
+    REQUIRE(settings.cors_origin.has_value());
+    CHECK(*settings.cors_origin == "https://catalog.example");
+    REQUIRE(settings.auth_token_env.has_value());
+    CHECK(*settings.auth_token_env == "ERPL_ADT_MCP_TOKEN");
+}
+
+TEST_CASE("LoadHttpSecuritySettings: a comma-separated string works too",
+          "[config][yaml][security]") {
+    // A list is the natural YAML spelling, but people who know the flag will
+    // write the flag's value.
+    auto result = LoadHttpSecuritySettings(TestDataPath("http_security_string.yaml"));
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().allowed_hosts.has_value());
+    CHECK(*result.Value().allowed_hosts == "mcp.internal.example, buildbox.corp");
+}
+
+TEST_CASE("LoadHttpSecuritySettings: a config without an http block is not an error",
+          "[config][yaml][security]") {
+    // Every existing deploy config is in this shape.
+    auto result = LoadHttpSecuritySettings(TestDataPath("valid_config.yaml"));
+    REQUIRE(result.IsOk());
+    CHECK(!result.Value().allowed_hosts.has_value());
+    CHECK(!result.Value().cors_origin.has_value());
+    CHECK(!result.Value().auth_token_env.has_value());
+}
+
+TEST_CASE("LoadHttpSecuritySettings: a missing file is an error",
+          "[config][yaml][security]") {
+    auto result = LoadHttpSecuritySettings(TestDataPath("no_such_config.yaml"));
+    CHECK(result.IsErr());
 }
