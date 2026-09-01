@@ -154,6 +154,10 @@ HostVerdict ClassifyHost(const std::string& host,
     return HostVerdict::Unrecognised;
 }
 
+bool IsBrowserRequest(const std::string& origin, bool has_sec_fetch_header) {
+    return has_sec_fetch_header || !Trim(origin).empty();
+}
+
 bool BearerTokenMatches(const std::string& authorization_header,
                         const std::string& expected_token) {
     if (expected_token.empty()) {
@@ -190,10 +194,6 @@ std::optional<HttpSecurityOptions> ResolveHttpSecurity(
     HttpSecurityOptions options;
     options.allowed_origins = ParseCommaList(cors_origin_flag);
     options.allowed_hosts = ParseCommaList(allowed_hosts_flag);
-    // Passing the flag at all is what turns refusal on. Without it an
-    // unrecognised Host is served with a warning, so no deployment reached
-    // through a DNS name today stops working.
-    options.enforce_hosts = !options.allowed_hosts.empty();
     // The address the operator bound to is allowed without having to name it
     // twice. Loopback and IP literals are already allowed by ClassifyHost.
     const auto bind_name = HostOf(Authority(bind_host));
@@ -223,8 +223,9 @@ std::optional<HttpSecurityOptions> ResolveHttpSecurity(
     for (const auto& host : options.allowed_hosts) {
         if (host == "*") {
             err << "Warning: --allowed-hosts '*' accepts any Host header, which "
-                   "leaves DNS rebinding open. Name the hosts you serve on "
-                   "instead.\n";
+                   "turns off the DNS-rebinding defence entirely — any web page "
+                   "your browser loads can then reach this server. Name the "
+                   "hosts you serve on instead.\n";
             break;
         }
     }

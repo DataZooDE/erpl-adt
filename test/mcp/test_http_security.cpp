@@ -236,22 +236,41 @@ TEST_CASE("ClassifyHost: only Unrecognised is ever refused", "[mcp][security]") 
 // ResolveHttpSecurity — the flag-to-options mapping
 // ===========================================================================
 
-TEST_CASE("ResolveHttpSecurity: enforcement is off until --allowed-hosts",
-          "[mcp][security]") {
-    // The default has to stay warn-only: every deployment reached by a DNS
-    // name today keeps working, and enforcement is one flag away.
+TEST_CASE("ResolveHttpSecurity: a named host is allowed", "[mcp][security]") {
     std::ostringstream err;
-    auto options = ResolveHttpSecurity("", "", "", "", "127.0.0.1", err);
+    auto options =
+        ResolveHttpSecurity("", "mcp.internal.example", "", "", "0.0.0.0", err);
     REQUIRE(options.has_value());
-    CHECK(!options->enforce_hosts);
-
-    std::ostringstream err2;
-    auto enforcing =
-        ResolveHttpSecurity("", "mcp.internal.example", "", "", "0.0.0.0", err2);
-    REQUIRE(enforcing.has_value());
-    CHECK(enforcing->enforce_hosts);
-    CHECK(ClassifyHost("mcp.internal.example", *enforcing) ==
+    CHECK(ClassifyHost("mcp.internal.example", *options) ==
           HostVerdict::Allowlisted);
+    CHECK(ClassifyHost("other.example", *options) == HostVerdict::Unrecognised);
+}
+
+// ===========================================================================
+// Which requests the Host check applies to
+//
+// Refusing every unrecognised Host would break native MCP clients and scripts
+// that address the server by a hostname, and none of those can carry a
+// rebinding attack — it is a browser attack by construction. /mcp accepts
+// POST only, and per the Fetch spec a browser always sends Origin on a POST,
+// same-origin ones included, so no rebinding request can reach it without
+// one. Sec-Fetch-* is checked too, to cover the SPA's GET routes.
+// ===========================================================================
+
+TEST_CASE("IsBrowserRequest: an Origin marks a browser", "[mcp][security]") {
+    CHECK(IsBrowserRequest("http://rebind.evil.example", false));
+    CHECK(IsBrowserRequest("https://catalog.example", true));
+}
+
+TEST_CASE("IsBrowserRequest: Sec-Fetch-* alone marks a browser",
+          "[mcp][security]") {
+    CHECK(IsBrowserRequest("", true));
+}
+
+TEST_CASE("IsBrowserRequest: curl and native clients are not browsers",
+          "[mcp][security]") {
+    CHECK(!IsBrowserRequest("", false));
+    CHECK(!IsBrowserRequest("   ", false));
 }
 
 TEST_CASE("ResolveHttpSecurity: the bind host is allowed without naming it twice",

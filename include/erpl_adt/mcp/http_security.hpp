@@ -22,16 +22,25 @@ namespace erpl_adt {
 //   Host validation stops the same browser being aimed here by DNS
 //   rebinding, which Origin validation cannot see: once evil.example makes
 //   rebind.evil.example resolve to 127.0.0.1, the browser treats the call as
-//   same-origin and sends either a matching Origin or none at all. Both of
-//   those satisfy the Origin rules, because the attacker controls each side
-//   of the comparison. The Host header is the half they cannot launder.
+//   same-origin — so it may read the answers, not only send writes — and the
+//   Origin it sends matches the Host it sends, because the attacker wrote
+//   both. The Host header is the half they cannot launder: the browser sends
+//   the name the page used, never the IP it resolved to.
 //
 //   The bearer token stops everything else that can reach the port.
 //
-// All three are permissive by default so that no existing deployment breaks:
-// a request without an Origin header is not a browser and is allowed, an
-// unrecognised Host is served with a warning until --allowed-hosts opts in to
-// refusing it, and the token is only enforced once one is configured.
+// The Host check applies to browser-originated requests only — those carrying
+// an Origin or a Sec-Fetch-* header. That is not a weakening: rebinding is a
+// browser attack by construction, /mcp accepts POST only, and a browser
+// always sends Origin on a POST (Fetch, "Origin header" — set for every
+// method other than GET/HEAD, same-origin included). So no rebinding request
+// can reach /mcp without announcing itself, while curl, native MCP clients
+// and server-to-server callers that address the server by a hostname are
+// untouched.
+//
+// Origin and token stay permissive in the same spirit: a request without an
+// Origin header is not a browser and is allowed, and the token is only
+// enforced once one is configured.
 // ---------------------------------------------------------------------------
 struct HttpSecurityOptions {
     // Extra origins allowed beyond same-origin and loopback. The single
@@ -40,9 +49,6 @@ struct HttpSecurityOptions {
     // Hosts allowed beyond loopback and IP literals — the bind host and
     // anything named by --allowed-hosts. "*" allows every host.
     std::vector<std::string> allowed_hosts;
-    // Whether an unrecognised Host is refused (true) or served with a
-    // warning (false, the default). Set by passing --allowed-hosts.
-    bool enforce_hosts = false;
     // When non-empty, /mcp requires "Authorization: Bearer <token>".
     std::string auth_token;
 };
@@ -84,11 +90,15 @@ enum class HostVerdict {
 }
 
 // Classify a Host header against the options. `host` is the raw header value
-// ("name" or "name:port"); an empty one means the header was absent. Whether
-// an Unrecognised host is actually refused is the caller's decision, via
-// HttpSecurityOptions::enforce_hosts.
+// ("name" or "name:port"); an empty one means the header was absent.
 [[nodiscard]] HostVerdict ClassifyHost(const std::string& host,
                                        const HttpSecurityOptions& options);
+
+// Did this request come from a browser? An Origin header or any Sec-Fetch-*
+// header says yes, and only those are held to the Host allowlist — see the
+// reasoning at the top of this file. `origin` is the raw header value.
+[[nodiscard]] bool IsBrowserRequest(const std::string& origin,
+                                    bool has_sec_fetch_header);
 
 // True when `header` carries the configured bearer token. Comparison is
 // constant-time so a token cannot be recovered one byte at a time by timing

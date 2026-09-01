@@ -44,6 +44,19 @@ def get(url: str):
         return e.code, dict(e.headers or {}), e.read().decode("utf-8", "replace")
 
 
+def post(url: str, body: str, headers: dict):
+    """POST body to url, returning (status, headers, body) on any response."""
+    request = urllib.request.Request(url, data=body.encode(), method="POST")
+    request.add_header("Content-Type", "application/json")
+    for name, value in headers.items():
+        request.add_header(name, value)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            return resp.status, dict(resp.headers), resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers or {}), e.read().decode("utf-8", "replace")
+
+
 def wait_for_healthz(base_url: str, proc: subprocess.Popen) -> None:
     deadline = time.monotonic() + HEALTHZ_TIMEOUT_SECONDS
     last_error = None
@@ -88,6 +101,25 @@ def run_checks(base_url: str) -> None:
     assert status == 200, f"GET /entity/does-not-exist returned {status} (expected 200, SPA fallback)"
     assert deep_link_body == index_body, "SPA fallback body doesn't match index.html"
 
+    # DNS rebinding (#50), against the shipped default rather than a unit-test
+    # approximation. A page at evil.example that points its own name at
+    # 127.0.0.1 reaches this server believing it is same-origin, so its Origin
+    # matches its Host — both written by the attacker. The Host is the half
+    # they cannot launder, and it must be refused here with no flags set.
+    call = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    status, headers, _ = post(f"{base_url}/mcp", call,
+                              {"Host": "rebind.evil.example",
+                               "Origin": "http://rebind.evil.example"})
+    assert status == 403, f"a rebound Host was answered {status}, expected 403"
+    assert not headers.get("Access-Control-Allow-Origin"), (
+        "a refused request still carried an Access-Control-Allow-Origin header"
+    )
+
+    # And the developer on loopback is untouched, which is the whole point of
+    # scoping the rule to hosts rather than to browsers in general.
+    status, _, _ = post(f"{base_url}/mcp", call, {})
+    assert status == 200, f"a loopback POST /mcp returned {status}, expected 200"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -128,7 +160,8 @@ def main() -> int:
                 proc.kill()
                 proc.wait(timeout=PROCESS_TERMINATE_TIMEOUT_SECONDS)
 
-    print("PASS: embedded catalog web UI serves index.html, main.dart.js, and the SPA fallback")
+    print("PASS: embedded catalog web UI serves index.html, main.dart.js, the SPA "
+          "fallback, and refuses a rebound Host")
     return 0
 
 

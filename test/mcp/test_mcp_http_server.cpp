@@ -486,10 +486,14 @@ std::string EchoCall() {
 
 } // anonymous namespace
 
-TEST_CASE("McpHttpServer: an unknown Host is served by default",
+TEST_CASE("McpHttpServer: a rebound Host is refused with no flags at all",
           "[mcp][http][security]") {
-    // Warn-only until the operator opts in: a deployment reached through a
-    // DNS name or a reverse proxy keeps working with no new flag.
+    // The shape #50 is about, against the default configuration — which is
+    // the only configuration most people run. evil.example points
+    // rebind.evil.example at 127.0.0.1; the browser then believes it is
+    // calling its own origin, so it sends an Origin the Origin check cannot
+    // fault and can read the answers. Host is the half the attacker cannot
+    // launder.
     McpHttpServer server(MakeEchoRegistry());
     auto port = static_cast<uint16_t>(TestPort() + 40);
 
@@ -497,8 +501,47 @@ TEST_CASE("McpHttpServer: an unknown Host is served by default",
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     httplib::Client client("127.0.0.1", port);
-    const httplib::Headers rebound{{"Host", "rebind.evil.example"}};
-    auto response = client.Post("/mcp", rebound, EchoCall(), "application/json");
+    const httplib::Headers rebound{
+        {"Host", "rebind.evil.example"},
+        {"Origin", "http://rebind.evil.example"}};
+    auto refused = client.Post("/mcp", rebound, EchoCall(), "application/json");
+    REQUIRE(refused != nullptr);
+    CHECK(refused->status == 403);
+    CHECK(refused->get_header_value("Access-Control-Allow-Origin").empty());
+    CHECK(refused->body.find("hi") == std::string::npos);  // the tool did not run
+    // The refusal has to be actionable: the operator reads it in a browser
+    // console and needs to know which name to allow.
+    CHECK(refused->body.find("rebind.evil.example") != std::string::npos);
+    CHECK(refused->body.find("--allowed-hosts") != std::string::npos);
+
+    // A browser that sends no Origin still announces itself with Sec-Fetch-*
+    // (the SPA's GET routes), and is held to the same rule.
+    const httplib::Headers sec_fetch{{"Host", "rebind.evil.example"},
+                                     {"Sec-Fetch-Site", "same-origin"}};
+    auto also_refused =
+        client.Post("/mcp", sec_fetch, EchoCall(), "application/json");
+    REQUIRE(also_refused != nullptr);
+    CHECK(also_refused->status == 403);
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: a non-browser client may use any hostname",
+          "[mcp][http][security]") {
+    // curl, native MCP clients, a server-to-server caller behind a proxy:
+    // no Origin, no Sec-Fetch-*, and no way to carry a rebinding attack —
+    // rebinding needs a browser. Refusing these would cost real deployments
+    // and buy nothing.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 43);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    const httplib::Headers named{{"Host", "mcp.internal.example"}};
+    auto response = client.Post("/mcp", named, EchoCall(), "application/json");
     REQUIRE(response != nullptr);
     CHECK(response->status == 200);
 
@@ -506,7 +549,33 @@ TEST_CASE("McpHttpServer: an unknown Host is served by default",
     server_thread.join();
 }
 
-TEST_CASE("McpHttpServer: with --allowed-hosts, a rebound Host is refused",
+TEST_CASE("McpHttpServer: loopback and IP literals need no configuration",
+          "[mcp][http][security]") {
+    // The two cases that must never need a flag: the developer on localhost,
+    // and `--host 0.0.0.0` reached at a LAN address. An IP literal has no DNS
+    // name to rebind.
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 44);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client client("127.0.0.1", port);
+    for (const auto& host : {"127.0.0.1", "localhost", "192.168.1.5"}) {
+        const httplib::Headers headers{
+            {"Host", host}, {"Origin", std::string("http://") + host}};
+        auto response =
+            client.Post("/mcp", headers, EchoCall(), "application/json");
+        REQUIRE(response != nullptr);
+        INFO("Host: " << host);
+        CHECK(response->status == 200);
+    }
+
+    server.Stop();
+    server_thread.join();
+}
+
+TEST_CASE("McpHttpServer: --allowed-hosts names the hosts that are allowed",
           "[mcp][http][security]") {
     // The DNS-rebinding shape: evil.example points rebind.evil.example at
     // 127.0.0.1, so the browser calls this server believing it is same-origin
@@ -514,7 +583,6 @@ TEST_CASE("McpHttpServer: with --allowed-hosts, a rebound Host is refused",
     // attacker cannot launder.
     HttpSecurityOptions security;
     security.allowed_hosts = {"mcp.internal.example"};
-    security.enforce_hosts = true;
 
     McpHttpServer server(MakeEchoRegistry(), false, security);
     auto port = static_cast<uint16_t>(TestPort() + 41);
@@ -533,13 +601,13 @@ TEST_CASE("McpHttpServer: with --allowed-hosts, a rebound Host is refused",
     CHECK(refused->get_header_value("Access-Control-Allow-Origin").empty());
     CHECK(refused->body.find("hi") == std::string::npos);  // the tool did not run
 
-    // Same request with no Origin at all — the other half of the shape, and
-    // the one an Origin-only check waves straight through.
+    // The same request without browser markers is a native client, which
+    // cannot be carrying a rebinding attack, and is served.
     const httplib::Headers rebound_no_origin{{"Host", "rebind.evil.example"}};
-    auto refused_silent =
+    auto served =
         client.Post("/mcp", rebound_no_origin, EchoCall(), "application/json");
-    REQUIRE(refused_silent != nullptr);
-    CHECK(refused_silent->status == 403);
+    REQUIRE(served != nullptr);
+    CHECK(served->status == 200);
 
     // Loopback and the configured name still work.
     const httplib::Headers loopback{{"Host", "127.0.0.1"}};
@@ -562,7 +630,6 @@ TEST_CASE("McpHttpServer: enforcing hosts leaves the web UI's own origin alone",
     // its POSTs are same-origin. Enforcement must not cost it anything.
     HttpSecurityOptions security;
     security.allowed_hosts = {"catalog.internal"};
-    security.enforce_hosts = true;
 
     McpHttpServer server(MakeEchoRegistry(), false, security);
     auto port = static_cast<uint16_t>(TestPort() + 42);
