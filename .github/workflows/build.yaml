@@ -130,14 +130,14 @@ jobs:
 
       - name: Upload binary (Unix)
         if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: erpl-adt-${{ matrix.name }}
           path: build/erpl-adt
 
       - name: Upload binary (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: erpl-adt-${{ matrix.name }}
           path: build/erpl-adt.exe
