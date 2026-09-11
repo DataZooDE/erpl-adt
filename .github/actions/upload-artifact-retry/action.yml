@@ -1,0 +1,60 @@
+name: Upload artifact with retry
+description: >
+  Upload a build artifact, retrying when the artifact service is unreachable.
+  Uploads fail on a transient ETIMEDOUT from the artifact API often enough to
+  redden a build whose compile and test steps have already passed, which trains
+  everyone to ignore a red mark.
+
+inputs:
+  name:
+    description: Artifact name
+    required: true
+  path:
+    description: Path to upload
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Attempts 1 and 2 swallow failure so a later one can succeed; the last does
+    # not, so a genuinely broken upload still fails the job.
+    #
+    # overwrite is set on the retries because a CreateArtifact call can time out
+    # after the artifact was already registered server-side. Without it the retry
+    # would fail with "an artifact with this name already exists" and the retry
+    # would be useless in exactly the case it exists for.
+    - name: Upload ${{ inputs.name }} (attempt 1)
+      id: attempt1
+      uses: actions/upload-artifact@v7
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+
+    - name: Wait before retry
+      if: steps.attempt1.outcome == 'failure'
+      shell: bash
+      run: sleep 15
+
+    - name: Upload ${{ inputs.name }} (attempt 2)
+      id: attempt2
+      if: steps.attempt1.outcome == 'failure'
+      uses: actions/upload-artifact@v7
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        overwrite: true
+
+    - name: Wait before final retry
+      if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+      shell: bash
+      run: sleep 45
+
+    - name: Upload ${{ inputs.name }} (final attempt)
+      if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        overwrite: true
