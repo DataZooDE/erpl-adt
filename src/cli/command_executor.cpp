@@ -1155,6 +1155,9 @@ int HandleObjectCreate(const CommandArgs& args) {
         // it to the logon user rather than failing.
         params.responsible = ResolveUserName(args);
     }
+    if (HasFlag(args, "software-component")) {
+        params.software_component = GetFlag(args, "software-component");
+    }
 
     auto session = RequireSession(args, fmt);
     if (!session) {
@@ -7455,10 +7458,15 @@ void RegisterAllCommands(CommandRouter& router) {
             {"description", "<text>", "Object description", false},
             {"transport", "<id>", "Transport request number", false},
             {"responsible", "<user>", "Person responsible (defaults to the logon user)", false},
+            {"software-component", "<name>", "DEVC/K only: software component (default LOCAL, which is not transportable)", false},
         };
         help.long_description =
             "For DEVC/K (packages): SAP requires a person responsible; it defaults to the "
             "logon user and can be overridden with --responsible.\n"
+            "A package defaults to the LOCAL software component, which is not "
+            "transportable - passing --transport alongside it is rejected with "
+            "\"may not be assigned to software component LOCAL\". Pass "
+            "--software-component (commonly HOME) to create a transportable package.\n"
             "For TABL/DT (transparent tables): after create, write CDS source including "
             "@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE, "
             "@AbapCatalog.tableCategory : #TRANSPARENT, "
@@ -7468,6 +7476,7 @@ void RegisterAllCommands(CommandRouter& router) {
             "erpl-adt object create --type=CLAS/OC --name=ZCL_NEW --package=ZTEST",
             "erpl-adt object create --type=PROG/P --name=ZREPORT --package=ZTEST --description=\"My report\"",
             "erpl-adt object create --type=TABL/DT --name=ZMY_TABLE --package=ZTEST --description=\"My table\"",
+            "erpl-adt object create --type=DEVC/K --name=ZMY_PKG --package=ZPARENT --software-component=HOME --transport=A4HK900123",
         };
         router.Register("object", "create", "Create an ABAP object",
                          HandleObjectCreate, std::move(help));

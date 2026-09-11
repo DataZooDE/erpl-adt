@@ -131,7 +131,12 @@ std::string BuildCreateXml(const CreateObjectParams& params,
 
         auto* transport = doc.NewElement("pak:transport");
         auto* sw_component = doc.NewElement("pak:softwareComponent");
-        sw_component->SetAttribute("pak:name", "LOCAL");
+        // LOCAL keeps the historical behaviour - a local, non-transportable package -
+        // but it cannot be combined with a transport, so the caller has to be able to
+        // name the real component.
+        const std::string software_component =
+            params.software_component.empty() ? std::string("LOCAL") : params.software_component;
+        sw_component->SetAttribute("pak:name", software_component.c_str());
         transport->InsertEndChild(sw_component);
         auto* transport_layer = doc.NewElement("pak:transportLayer");
         transport_layer->SetAttribute("pak:name", "");
