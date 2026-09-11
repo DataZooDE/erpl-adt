@@ -65,6 +65,12 @@ struct CreateObjectParams {
     std::string description;     // human-readable description
     std::optional<std::string> transport_number;  // e.g. "NPLK900001"
     std::optional<std::string> responsible;        // owner (defaults to session user)
+
+    // DEVC/K only: the software component the package belongs to. Empty means LOCAL,
+    // which makes the package non-transportable - supplying a transport alongside it is
+    // rejected by SAP ("may not be assigned to software component LOCAL"). Use the real
+    // component (commonly HOME) to create a transportable package.
+    std::string software_component;
 };
 
 // ---------------------------------------------------------------------------

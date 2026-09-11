@@ -158,6 +158,81 @@ TEST_CASE("CreateObject: sends correct XML body", "[adt][object]") {
     CHECK(body.find("adtcore:name=\"ZTEST\"") != std::string::npos);
 }
 
+// A package is only transportable if it belongs to a real software component.
+// The DEVC/K payload hard-coded pak:softwareComponent="LOCAL", so every package
+// erpl-adt created was local-only: supplying a transport made SAP reject it with
+// "Package Z... may not be assigned to software component LOCAL", and there was no
+// flag to say otherwise.
+TEST_CASE("CreateObject: package uses the requested software component", "[adt][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {201, {},
+         "<pak:package xmlns:adtcore=\"http://www.sap.com/adt/core\" "
+         "adtcore:name=\"ZJR_ODP\" adtcore:type=\"DEVC/K\" "
+         "adtcore:uri=\"/sap/bc/adt/packages/zjr_odp\"/>"}));
+
+    CreateObjectParams params;
+    params.object_type = "DEVC/K";
+    params.name = "ZJR_ODP";
+    params.package_name = "ZPARENT";
+    params.description = "Transportable package";
+    params.software_component = "HOME";
+
+    auto result = CreateObject(mock, params);
+    REQUIRE(result.IsOk());
+
+    auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("pak:name=\"HOME\"") != std::string::npos);
+    CHECK(body.find("pak:name=\"LOCAL\"") == std::string::npos);
+}
+
+TEST_CASE("CreateObject: package defaults to the LOCAL software component", "[adt][object]") {
+    // Unchanged behaviour when the caller says nothing: a local, non-transportable
+    // package is the right default for $TMP-style scratch work.
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {201, {},
+         "<pak:package xmlns:adtcore=\"http://www.sap.com/adt/core\" "
+         "adtcore:name=\"ZLOCAL_PKG\" adtcore:type=\"DEVC/K\" "
+         "adtcore:uri=\"/sap/bc/adt/packages/zlocal_pkg\"/>"}));
+
+    CreateObjectParams params;
+    params.object_type = "DEVC/K";
+    params.name = "ZLOCAL_PKG";
+    params.package_name = "ZPARENT";
+    params.description = "Local package";
+
+    auto result = CreateObject(mock, params);
+    REQUIRE(result.IsOk());
+    CHECK(mock.PostCalls()[0].body.find("pak:name=\"LOCAL\"") != std::string::npos);
+}
+
+// Regression guard, not a bug fix: for a DEVC/K the "package" argument names the PARENT,
+// and pak:superPackage must carry it. Pinned because the software-component change edits
+// the same payload block.
+TEST_CASE("CreateObject: package nests under its parent package", "[adt][object]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {201, {},
+         "<pak:package xmlns:adtcore=\"http://www.sap.com/adt/core\" "
+         "adtcore:name=\"ZCHILD\" adtcore:type=\"DEVC/K\" "
+         "adtcore:uri=\"/sap/bc/adt/packages/zchild\"/>"}));
+
+    CreateObjectParams params;
+    params.object_type = "DEVC/K";
+    params.name = "ZCHILD";
+    params.package_name = "ZPARENT";
+    params.description = "Child package";
+
+    auto result = CreateObject(mock, params);
+    REQUIRE(result.IsOk());
+
+    auto& body = mock.PostCalls()[0].body;
+    const auto super_pos = body.find("pak:superPackage");
+    REQUIRE(super_pos != std::string::npos);
+    CHECK(body.find("adtcore:name=\"ZPARENT\"", super_pos) != std::string::npos);
+}
+
 TEST_CASE("CreateObject: unknown type returns error", "[adt][object]") {
     MockAdtSession mock;
 
