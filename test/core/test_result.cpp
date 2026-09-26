@@ -414,6 +414,18 @@ TEST_CASE("FromHttpStatus: 400 includes SAP message when available", "[error]") 
     CHECK(e.message.find("Malformed XML payload") != std::string::npos);
 }
 
+TEST_CASE("FromHttpStatus: SAP HTML service warm-up error is visible and retryable", "[error]") {
+    const std::string body =
+        "<html><head><title>Service cannot be reached</title></head>"
+        "<body>Session not found</body></html>";
+    auto e = Error::FromHttpStatus("LockObject", "/ep", 400, body);
+    CHECK(e.category == ErrorCategory::Connection);
+    CHECK(e.sap_error == "Service cannot be reached");
+    CHECK(e.message.find("Service cannot be reached") != std::string::npos);
+    REQUIRE(e.hint.has_value());
+    CHECK(e.hint->find("starting") != std::string::npos);
+}
+
 TEST_CASE("FromHttpStatus: 404 maps to NotFound", "[error]") {
     auto e = Error::FromHttpStatus("Op", "/ep", 404);
     CHECK(e.category == ErrorCategory::NotFound);

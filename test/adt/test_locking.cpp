@@ -98,6 +98,21 @@ TEST_CASE("LockObject: 400 session not found adds actionable hint", "[adt][locki
     CHECK(result.Error().hint->find("--session-file") != std::string::npos);
 }
 
+TEST_CASE("LockObject: HTML service warm-up error is not called session expiry", "[adt][locking]") {
+    MockAdtSession mock;
+    auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_ERR").Value();
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<html><head><title>Service cannot be reached</title></head>"
+                   "<body>Session not found</body></html>"}));
+
+    auto result = LockObject(mock, uri);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::Connection);
+    CHECK(result.Error().message.find("Service cannot be reached") != std::string::npos);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--session-file") == std::string::npos);
+}
+
 // ===========================================================================
 // UnlockObject
 // ===========================================================================
