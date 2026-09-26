@@ -98,6 +98,20 @@ class TestMcpToolsAnswer:
         assert "structuredContent" in result, "structuredContent missing"
         assert not isinstance(result["structuredContent"], str)
 
+    def test_list_tools_return_object_structured_content(self, cli):
+        """MCP clients require structuredContent to be an object, even for lists."""
+        calls = [
+            ("adt_search", {"query": "CL_ABAP_RANDOM", "max_results": 1}),
+            ("adt_list_package", {"package_name": "SABP_RANDOM"}),
+            ("adt_package_tree", {"root_package": "SABP_RANDOM", "max_depth": 1}),
+        ]
+        for (name, _), response in zip(calls, mcp_call(cli, calls)):
+            assert tool_error(response) is None, f"{name}: {tool_error(response)}"
+            result = response["result"]
+            structured = result["structuredContent"]
+            assert isinstance(structured, dict), f"{name}: {type(structured).__name__}"
+            assert structured["result"] == json.loads(result["content"][0]["text"])
+
     def test_bw_tools_that_only_ever_worked_from_the_cli(self, cli, bw_available):
         """The two that were broken as tools while the command line was fine.
 

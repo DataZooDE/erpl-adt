@@ -1245,6 +1245,9 @@ TEST_CASE("MCP end-to-end: tools/call adt_search", "[mcp][handlers][e2e]") {
     auto results = nlohmann::json::parse(content[0]["text"].get<std::string>());
     CHECK(results.size() == 3);
     CHECK(results[0]["name"] == "ZCL_EXAMPLE");
+    const auto& structured = (*response)["result"]["structuredContent"];
+    REQUIRE(structured.is_object());
+    CHECK(structured["result"] == results);
 }
 
 // ===========================================================================
@@ -1353,9 +1356,10 @@ TEST_CASE("The most-parsed tools declare an outputSchema",
         if (want_schema.count(tool.name) == 0) continue;
         INFO("tool: " << tool.name);
         REQUIRE(!tool.output_schema.is_null());
-        // Either an object shape or (for check_syntax) a bare array.
-        const auto type = tool.output_schema.value("type", "");
-        CHECK((type == "object" || type == "array"));
+        CHECK(tool.output_schema.value("type", "") == "object");
+        if (tool.name == "adt_check_syntax") {
+            CHECK(tool.output_schema["properties"]["result"]["type"] == "array");
+        }
         ++found;
     }
     CHECK(found == want_schema.size());
