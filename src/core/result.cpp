@@ -8,6 +8,14 @@ namespace erpl_adt {
 
 namespace {
 
+std::string Lowercase(const std::string& value) {
+    std::string lower;
+    lower.reserve(value.size());
+    std::transform(value.begin(), value.end(), std::back_inserter(lower),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lower;
+}
+
 // Extract text content of the first occurrence of an XML element by tag name.
 // Handles both plain tags (<message>) and tags with attributes (<message lang="EN">).
 // No tinyxml2 dependency — core/ must not depend on adt/ libraries.
@@ -41,6 +49,31 @@ std::optional<std::string> ExtractXmlMessage(const std::string& body,
     return msg;
 }
 
+// ICF failures can be HTML rather than an ADT XML error. The page title is
+// the useful diagnostic; the body can contain unrelated session text.
+std::optional<std::string> ExtractHtmlTitle(const std::string& body) {
+    const auto lower = Lowercase(body);
+    auto title_pos = lower.find("<title");
+    if (title_pos == std::string::npos) return std::nullopt;
+    const auto after_name = title_pos + 6;
+    if (after_name >= lower.size()) return std::nullopt;
+    const char next = lower[after_name];
+    if (next != '>' && next != ' ' && next != '\t' &&
+        next != '\n' && next != '\r') return std::nullopt;
+
+    auto content_start = lower.find('>', after_name);
+    if (content_start == std::string::npos) return std::nullopt;
+    ++content_start;
+    auto content_end = lower.find("</title>", content_start);
+    if (content_end == std::string::npos) return std::nullopt;
+
+    auto first = body.find_first_not_of(" \t\r\n", content_start);
+    if (first == std::string::npos || first >= content_end) return std::nullopt;
+    auto last = body.find_last_not_of(" \t\r\n", content_end - 1);
+    if (last == std::string::npos || last < first) return std::nullopt;
+    return body.substr(first, last - first + 1);
+}
+
 // Try to extract a human-readable SAP error message from an XML response body.
 // SAP ADT uses several patterns depending on the error path:
 //   <exc:message>       — ADT exceptions namespace (most specific)
@@ -61,16 +94,13 @@ std::optional<std::string> ExtractSapError(const std::string& body) {
     msg = ExtractXmlMessage(body, "localizedMessage");
     if (msg.has_value()) return msg;
 
-    return std::nullopt;
+    return ExtractHtmlTitle(body);
 }
 
 // SAP reports an enqueue conflict as a 403 with an application error rather
 // than a 409/423, e.g. "User DEVELOPER is currently editing ZCL_FOO".
 bool IsLockConflictText(const std::string& text) {
-    std::string lower;
-    lower.reserve(text.size());
-    std::transform(text.begin(), text.end(), std::back_inserter(lower),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto lower = Lowercase(text);
     static const char* kPhrases[] = {
         "currently editing",
         "locked by",
@@ -96,10 +126,17 @@ Error Error::FromHttpStatus(const std::string& operation,
 
     switch (status_code) {
         case 400:
-            category = ErrorCategory::Internal;
-            message = sap_error.has_value()
-                ? "Bad request: " + *sap_error
-                : "Bad request";
+            if (sap_error.has_value() &&
+                Lowercase(*sap_error).find("service cannot be reached") !=
+                    std::string::npos) {
+                category = ErrorCategory::Connection;
+                message = "SAP service unavailable: " + *sap_error;
+            } else {
+                category = ErrorCategory::Internal;
+                message = sap_error.has_value()
+                    ? "Bad request: " + *sap_error
+                    : "Bad request";
+            }
             break;
         case 401:
             category = ErrorCategory::Authentication;
@@ -166,6 +203,10 @@ Error Error::FromHttpStatus(const std::string& operation,
     }
 
     Error error{operation, endpoint, status_code, message, sap_error, category};
+    if (status_code == 400 && category == ErrorCategory::Connection) {
+        error.hint = "The SAP service may still be starting. Wait a few minutes "
+                     "and retry; if it persists, check service availability.";
+    }
     if (category == ErrorCategory::Authentication) {
         // The most common cause is a credential source the caller did not
         // expect to be in play — a stale .adt.creds outliving a system

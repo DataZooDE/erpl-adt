@@ -162,6 +162,33 @@ def test_contract_lock_conflict_maps_to_exit_6():
     assert err["exit_code"] == 6
 
 
+def test_contract_lock_html_warmup_error_is_not_session_expiry():
+    """Reproduce the SAP ICF warm-up page reported in issue #60 end-to-end."""
+    def csrf(_):
+        return 200, {"x-csrf-token": "stub-token"}, "<discovery/>"
+
+    def lock(_):
+        body = ("<html><head><title>Service cannot be reached</title></head>"
+                "<body>Session not found</body></html>")
+        return 400, {"Content-Type": "text/html"}, body
+
+    callbacks = {
+        ("GET", "/sap/bc/adt/discovery"): csrf,
+        ("POST", "*"): lock,
+    }
+
+    with StubAdtServer(callbacks) as server:
+        cli = _make_runner(server.port)
+        result = cli.run("object", "lock", "/sap/bc/adt/oo/classes/zcl_demo")
+
+    assert result.returncode == 1
+    err = json.loads(result.stderr)["error"]
+    assert err["category"] == "connection"
+    assert "Service cannot be reached" in err["message"]
+    assert "starting" in err["hint"]
+    assert "--session-file" not in err["hint"]
+
+
 def test_contract_timeout_maps_to_exit_10():
     def slow_discovery(_):
         time.sleep(2)
@@ -465,4 +492,3 @@ def test_contract_bw_read_query_auto_upstream_ambiguous_composes_all_candidates(
     assert sorted(resolution.get("composed_candidates", [])) == ["DTP_A", "DTP_B"]
     assert isinstance(payload.get("provenance"), list)
     assert any(p.startswith("bw.lineage.compose") for p in payload["provenance"])
-

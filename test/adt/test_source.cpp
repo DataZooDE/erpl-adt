@@ -252,6 +252,22 @@ TEST_CASE("WriteSource: 400 Session not found adds actionable hint", "[adt][sour
     CHECK(result.Error().hint->find("--session-file") != std::string::npos);
 }
 
+TEST_CASE("WriteSource: HTML service warm-up error is not called session expiry", "[adt][source]") {
+    MockAdtSession mock;
+    auto handle = LockHandle::Create("h").Value();
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok(
+        {400, {}, "<html><head><title>Service cannot be reached</title></head>"
+                   "<body>Session not found</body></html>"}));
+
+    auto result = WriteSource(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                              "CLASS zcl_test DEFINITION.", handle, std::nullopt);
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::Connection);
+    CHECK(result.Error().message.find("Service cannot be reached") != std::string::npos);
+    REQUIRE(result.Error().hint.has_value());
+    CHECK(result.Error().hint->find("--session-file") == std::string::npos);
+}
+
 TEST_CASE("WriteSource: 423 invalid lock handle hints at stateful session enhancement", "[adt][source]") {
     MockAdtSession mock;
     auto handle = LockHandle::Create("h").Value();
