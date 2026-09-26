@@ -77,8 +77,8 @@ json RunAtcSchema() {
 }
 
 // -- adt_check_syntax -------------------------------------------------------
-// The result is the bare array of messages, so the schema is an array, not an
-// object — JSON Schema 2020-12 and structuredContent both allow that.
+// The text block contains the bare array; structuredContent wraps it because
+// the MCP protocol revisions we serve require an object at its root.
 json CheckSyntaxSchema() {
     const json message = Obj({{"type", Str("Message type, e.g. E for error")},
                               {"text", Str("Message text")},
@@ -86,7 +86,8 @@ json CheckSyntaxSchema() {
                               {"line", Int("1-based line number")},
                               {"offset", Int("Column offset within the line")}},
                              {"type", "text", "line"});
-    return ArrayOf(message, "Syntax messages; empty when the object is clean");
+    return Obj({{"result", ArrayOf(message, "Syntax messages; empty when the object is clean")}},
+               {"result"});
 }
 
 // -- adt_read_table ---------------------------------------------------------

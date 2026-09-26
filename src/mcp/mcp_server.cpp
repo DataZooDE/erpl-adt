@@ -218,7 +218,11 @@ nlohmann::json McpServer::HandleToolsCall(
     // also serialize it into a text block, so clients that predate
     // structuredContent keep working unchanged.
     if (!result.structured.is_null()) {
-        response_result["structuredContent"] = result.structured;
+        // MCP revisions supported by this server require an object here.
+        // Keep the original JSON in the text block for existing consumers.
+        response_result["structuredContent"] = result.structured.is_object()
+            ? result.structured
+            : nlohmann::json{{"result", result.structured}};
     }
     if (result.is_error) {
         response_result["isError"] = true;
