@@ -763,6 +763,27 @@ TEST_CASE("adt_create_object: happy path", "[mcp][handlers][object]") {
     CHECK(j.contains("uri"));
 }
 
+TEST_CASE("adt_create_object: forwards RAP binding metadata", "[mcp][handlers][object][rap]") {
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({201, {}, ""}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_create_object",
+                           {{"object_type", "SRVB/SVB"},
+                            {"name", "Z_BINDING"},
+                            {"package_name", "$TMP"},
+                            {"binding_type", "ODATA"},
+                            {"binding_version", "V2"},
+                            {"binding_category", "1"},
+                            {"service_definition", "Z_SERVICE"}});
+    const auto j = ParseContent(result);
+    CHECK(j.at("uri") == "/sap/bc/adt/businessservices/bindings/z_binding");
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& body = mock.PostCalls().front().body;
+    CHECK(body.find("srvb:version=\"V2\"") != std::string::npos);
+    CHECK(body.find("srvb:category=\"1\"") != std::string::npos);
+    CHECK(body.find("adtcore:name=\"Z_SERVICE\"") != std::string::npos);
+}
+
 TEST_CASE("adt_create_object: missing required params", "[mcp][handlers][object]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
