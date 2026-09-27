@@ -1144,6 +1144,10 @@ int HandleObjectCreate(const CommandArgs& args) {
     params.name = name;
     params.package_name = package;
     params.description = description;
+    if (HasFlag(args, "binding-type")) params.binding_type = GetFlag(args, "binding-type");
+    if (HasFlag(args, "binding-version")) params.binding_version = GetFlag(args, "binding-version");
+    if (HasFlag(args, "binding-category")) params.binding_category = GetFlag(args, "binding-category");
+    if (HasFlag(args, "service-definition")) params.service_definition = GetFlag(args, "service-definition");
     if (HasFlag(args, "transport")) {
         params.transport_number = GetFlag(args, "transport");
     }
@@ -7459,8 +7463,14 @@ void RegisterAllCommands(CommandRouter& router) {
             {"transport", "<id>", "Transport request number", false},
             {"responsible", "<user>", "Person responsible (defaults to the logon user)", false},
             {"software-component", "<name>", "DEVC/K only: software component (default LOCAL, which is not transportable)", false},
+            {"binding-type", "<type>", "SRVB/SVB: required binding type, e.g. ODATA", false},
+            {"binding-version", "<version>", "SRVB/SVB: required binding version, e.g. V2 or V4", false},
+            {"binding-category", "<category>", "SRVB/SVB: required SAP binding category (0 or 1)", false},
+            {"service-definition", "<name>", "SRVB/SVB: required service definition to bind", false},
         };
         help.long_description =
+            "RAP objects BDEF/BDO, SRVD/SRV and SRVB/SVB are supported. "
+            "Service bindings require --binding-type, --binding-version, --binding-category and --service-definition.\n"
             "For DEVC/K (packages): SAP requires a person responsible; it defaults to the "
             "logon user and can be overridden with --responsible.\n"
             "A package defaults to the LOCAL software component, which is not "

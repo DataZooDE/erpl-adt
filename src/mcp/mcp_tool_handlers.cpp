@@ -708,6 +708,10 @@ ToolResult HandleCreateObject(IAdtSession& session,
     cp.name = *name;
     cp.package_name = *pkg;
     cp.description = OptString(params, "description");
+    if (params.contains("binding_type")) cp.binding_type = OptString(params, "binding_type");
+    if (params.contains("binding_version")) cp.binding_version = OptString(params, "binding_version");
+    if (params.contains("binding_category")) cp.binding_category = OptString(params, "binding_category");
+    if (params.contains("service_definition")) cp.service_definition = OptString(params, "service_definition");
     auto transport_str = OptString(params, "transport");
     if (!transport_str.empty()) {
         cp.transport_number = transport_str;
@@ -1049,11 +1053,15 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "adt_create_object",
-        "Create a new ABAP object (class, program, etc.).",
+        "Create an ABAP object, including RAP BDEF/BDO, SRVD/SRV and SRVB/SVB.",
         MakeSchema(
             {{"object_type", StringProp("Object type (e.g., CLAS/OC, PROG/P)")},
              {"name", StringProp("Object name (e.g., ZCL_MY_CLASS)")},
              {"package_name", StringProp("Target package")},
+             {"binding_type", StringProp("SRVB/SVB: required binding type, e.g. ODATA")},
+             {"binding_version", StringProp("SRVB/SVB: required binding version, e.g. V2 or V4")},
+             {"binding_category", StringProp("SRVB/SVB: required SAP binding category (0 or 1)")},
+             {"service_definition", StringProp("SRVB/SVB: required service definition name")},
              {"description", StringProp("Object description")},
              {"transport", StringProp("Transport request number")}},
             {"object_type", "name", "package_name"}),

@@ -74,10 +74,14 @@ struct ObjectTypeInfo {
     const char* root_element;
     const char* xml_namespace;
     const char* ns_prefix;
+    const char* content_type = "application/*";
 };
 
 // Table from protocol spec §10.3.
 const ObjectTypeInfo kObjectTypes[] = {
+    {"BDEF/BDO", "bo/behaviordefinitions", "blue:blueSource", "http://www.sap.com/wbobj/blue", "blue", "application/vnd.sap.adt.blues.v1+xml"},
+    {"SRVD/SRV", "ddic/srvd/sources", "srvd:srvdSource", "http://www.sap.com/adt/ddic/srvdsources", "srvd", "application/vnd.sap.adt.ddic.srvd.v1+xml"},
+    {"SRVB/SVB", "businessservices/bindings", "srvb:serviceBinding", "http://www.sap.com/adt/ddic/ServiceBindings", "srvb", "application/vnd.sap.adt.businessservices.servicebinding.v2+xml"},
     {"PROG/P",   "programs/programs",     "program:abapProgram",        "http://www.sap.com/adt/programs/programs",     "program"},
     {"CLAS/OC",  "oo/classes",            "class:abapClass",            "http://www.sap.com/adt/oo/classes",            "class"},
     {"INTF/OI",  "oo/interfaces",         "intf:abapInterface",         "http://www.sap.com/adt/oo/interfaces",         "intf"},
@@ -110,6 +114,9 @@ std::string BuildCreateXml(const CreateObjectParams& params,
     root->SetAttribute("adtcore:description", params.description.c_str());
     root->SetAttribute("adtcore:name", params.name.c_str());
     root->SetAttribute("adtcore:type", params.object_type.c_str());
+    if (params.object_type == "SRVD/SRV") {
+        root->SetAttribute("srvd:srvdSourceType", "S");
+    }
     if (params.responsible) {
         root->SetAttribute("adtcore:responsible", params.responsible->c_str());
     }
@@ -117,6 +124,26 @@ std::string BuildCreateXml(const CreateObjectParams& params,
     auto* pkg_ref = doc.NewElement("adtcore:packageRef");
     pkg_ref->SetAttribute("adtcore:name", params.package_name.c_str());
     root->InsertEndChild(pkg_ref);
+
+    if (params.object_type == "SRVB/SVB") {
+        if (params.service_definition) {
+            auto* services = doc.NewElement("srvb:services");
+            services->SetAttribute("srvb:name", params.name.c_str());
+            auto* content = doc.NewElement("srvb:content");
+            content->SetAttribute("srvb:version", "0001");
+            auto* definition = doc.NewElement("srvb:serviceDefinition");
+            definition->SetAttribute("adtcore:name", params.service_definition->c_str());
+            definition->SetAttribute("adtcore:type", "SRVD/SRV");
+            content->InsertEndChild(definition);
+            services->InsertEndChild(content);
+            root->InsertEndChild(services);
+        }
+        auto* binding = doc.NewElement("srvb:binding");
+        binding->SetAttribute("srvb:type", params.binding_type->c_str());
+        binding->SetAttribute("srvb:version", params.binding_version->c_str());
+        binding->SetAttribute("srvb:category", params.binding_category->c_str());
+        root->InsertEndChild(binding);
+    }
 
     if (params.object_type == "DEVC/K") {
         auto* attrs = doc.NewElement("pak:attributes");
@@ -188,6 +215,23 @@ Result<ObjectUri, Error> CreateObject(
             "Unknown object type: " + params.object_type, std::nullopt});
     }
 
+    if (params.object_type == "SRVB/SVB") {
+        if (!params.binding_type || params.binding_type->empty() ||
+            !params.binding_version || params.binding_version->empty() ||
+            !params.binding_category || params.binding_category->empty() ||
+            !params.service_definition || params.service_definition->empty()) {
+            return Result<ObjectUri, Error>::Err(Error{
+                "CreateObject", "", std::nullopt,
+                "SRVB/SVB requires binding_type, binding_version, binding_category and service_definition "
+                "(CLI: --binding-type, --binding-version, --binding-category, --service-definition)", std::nullopt});
+        }
+    } else if (params.binding_type || params.binding_version ||
+               params.binding_category || params.service_definition) {
+        return Result<ObjectUri, Error>::Err(Error{
+            "CreateObject", "", std::nullopt,
+            "Binding metadata is only supported for SRVB/SVB", std::nullopt});
+    }
+
     std::string url = "/sap/bc/adt/" + std::string(type_info->creation_path);
     if (params.transport_number) {
         url += "?corrNr=" + *params.transport_number;
@@ -195,7 +239,12 @@ Result<ObjectUri, Error> CreateObject(
 
     auto body = BuildCreateXml(params, *type_info);
 
-    auto response = session.Post(url, body, "application/*");
+    HttpHeaders headers;
+    if (params.object_type == "BDEF/BDO" || params.object_type == "SRVD/SRV" ||
+        params.object_type == "SRVB/SVB") {
+        headers["Accept"] = type_info->content_type;
+    }
+    auto response = session.Post(url, body, type_info->content_type, headers);
     if (response.IsErr()) {
         return Result<ObjectUri, Error>::Err(std::move(response).Error());
     }

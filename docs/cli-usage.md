@@ -63,6 +63,14 @@ erpl-adt object read ZCL_EXAMPLE          # name resolution shorthand
 # Create a new class
 erpl-adt object create --type CLAS/OC --name ZCL_NEW --package ZTEST --transport NPLK900001
 
+# Create RAP objects (write and activate their source after creation)
+erpl-adt object create --type BDEF/BDO --name ZI_ORDER --package ZTEST --description "Order behavior"
+erpl-adt object create --type SRVD/SRV --name ZORDER_SRV --package ZTEST --description "Order service"
+
+# Bind an existing service definition; all four binding flags are required
+erpl-adt object create --type SRVB/SVB --name ZORDER_BIND --package ZTEST --description "Order binding" \
+  --binding-type ODATA --binding-version V4 --binding-category 0 --service-definition ZORDER_SRV
+
 # Delete an object (auto-locks, then deletes)
 erpl-adt object delete /sap/bc/adt/oo/classes/ZCL_OLD --transport NPLK900001
 
@@ -82,6 +90,14 @@ erpl-adt object run ZCL_MY_RUNNER
 - `DeleteObject(session, uri, handle)` -- `DELETE {objectUri}?lockHandle=...`
 - `LockObject(session, uri)` -- `POST {objectUri}?_action=LOCK`
 - `UnlockObject(session, uri, handle)` -- `POST {objectUri}?_action=UNLOCK`
+
+RAP creation uses the type-specific ADT XML media types. Service definitions are
+created as definitions (`srvdSourceType="S"`). Service bindings require a binding
+type, version, SAP category, and service-definition name; OData V2 and V4 with
+categories `0` and `1` are covered by live integration tests. The initial service
+entry uses version `0001`. Creation does not publish the service. The MCP tool
+`adt_create_object` accepts the same fields as `binding_type`, `binding_version`,
+`binding_category`, and `service_definition`.
 
 ### source -- Source code read/write
 

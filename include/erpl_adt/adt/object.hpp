@@ -71,6 +71,11 @@ struct CreateObjectParams {
     // rejected by SAP ("may not be assigned to software component LOCAL"). Use the real
     // component (commonly HOME) to create a transportable package.
     std::string software_component;
+    // SRVB/SVB only: explicit binding metadata (e.g. ODATA, V4, 0).
+    std::optional<std::string> binding_type;
+    std::optional<std::string> binding_version;
+    std::optional<std::string> binding_category;
+    std::optional<std::string> service_definition;
 };
 
 // ---------------------------------------------------------------------------

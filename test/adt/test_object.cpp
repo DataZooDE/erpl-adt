@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <tinyxml2.h>
 
 #include <erpl_adt/adt/object.hpp>
 #include <erpl_adt/adt/locking.hpp>
@@ -111,6 +112,95 @@ TEST_CASE("GetObjectStructure: invalid XML returns error", "[adt][object]") {
 // ===========================================================================
 // CreateObject
 // ===========================================================================
+
+TEST_CASE("CreateObject: RAP XML and media types match SAP collections", "[adt][object][rap]") {
+    CreateObjectParams params;
+    params.name = "Z_RAP_TEST";
+    params.package_name = "$TMP";
+    params.description = "RAP & XML <escaping>";
+    std::string path;
+    std::string root_name;
+    std::string xml_namespace;
+    std::string media;
+    SECTION("behavior definition") {
+        params.object_type = "BDEF/BDO";
+        path = "bo/behaviordefinitions";
+        root_name = "blue:blueSource";
+        xml_namespace = "http://www.sap.com/wbobj/blue";
+        media = "application/vnd.sap.adt.blues.v1+xml";
+    }
+    SECTION("service definition") {
+        params.object_type = "SRVD/SRV";
+        path = "ddic/srvd/sources";
+        root_name = "srvd:srvdSource";
+        xml_namespace = "http://www.sap.com/adt/ddic/srvdsources";
+        media = "application/vnd.sap.adt.ddic.srvd.v1+xml";
+    }
+    SECTION("service binding") {
+        params.object_type = "SRVB/SVB";
+        params.binding_type = "ODATA";
+        params.binding_version = "V4";
+        params.binding_category = "1";
+        params.service_definition = "Z_SERVICE";
+        path = "businessservices/bindings";
+        root_name = "srvb:serviceBinding";
+        xml_namespace = "http://www.sap.com/adt/ddic/ServiceBindings";
+        media = "application/vnd.sap.adt.businessservices.servicebinding.v2+xml";
+    }
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({201, {}, ""}));
+    const auto result = CreateObject(mock, params);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().Value() == "/sap/bc/adt/" + path + "/z_rap_test");
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& call = mock.PostCalls().front();
+    CHECK(call.path == "/sap/bc/adt/" + path);
+    CHECK(call.content_type == media);
+    CHECK(call.headers.at("Accept") == media);
+    tinyxml2::XMLDocument doc;
+    REQUIRE(doc.Parse(call.body.c_str()) == tinyxml2::XML_SUCCESS);
+    const auto* root = doc.RootElement();
+    REQUIRE(root != nullptr);
+    CHECK(std::string(root->Name()) == root_name);
+    CHECK(std::string(root->Attribute(("xmlns:" + root_name.substr(0, root_name.find(':'))).c_str())) == xml_namespace);
+    CHECK(std::string(root->Attribute("adtcore:description")) == params.description);
+    if (params.object_type == "SRVD/SRV") {
+        CHECK(std::string(root->Attribute("srvd:srvdSourceType")) == "S");
+    }
+    if (params.object_type == "SRVB/SVB") {
+        const auto* binding = root->FirstChildElement("srvb:binding");
+        REQUIRE(binding != nullptr);
+        CHECK(std::string(binding->Attribute("srvb:type")) == "ODATA");
+        CHECK(std::string(binding->Attribute("srvb:version")) == "V4");
+        CHECK(std::string(binding->Attribute("srvb:category")) == "1");
+        const auto* services = root->FirstChildElement("srvb:services");
+        REQUIRE(services != nullptr);
+        const auto* content = services->FirstChildElement("srvb:content");
+        REQUIRE(content != nullptr);
+        const auto* definition = content->FirstChildElement("srvb:serviceDefinition");
+        REQUIRE(definition != nullptr);
+        CHECK(std::string(definition->Attribute("adtcore:name")) == "Z_SERVICE");
+    }
+}
+
+TEST_CASE("CreateObject: rejects missing or misplaced binding metadata before HTTP", "[adt][object][rap]") {
+    CreateObjectParams params;
+    params.object_type = "SRVB/SVB";
+    params.binding_type = "ODATA";
+    params.binding_version = "V4";
+    params.binding_category = "0";
+    params.service_definition = "Z_SERVICE";
+    SECTION("missing type") { params.binding_type.reset(); }
+    SECTION("missing version") { params.binding_version.reset(); }
+    SECTION("missing category") { params.binding_category.reset(); }
+    SECTION("missing service definition") { params.service_definition.reset(); }
+    SECTION("empty category") { params.binding_category = ""; }
+    SECTION("wrong object type") { params.object_type = "CLAS/OC"; }
+    MockAdtSession mock;
+    const auto result = CreateObject(mock, params);
+    REQUIRE(result.IsErr());
+    CHECK(mock.PostCallCount() == 0);
+}
 
 TEST_CASE("CreateObject: creates class and returns URI from response", "[adt][object]") {
     MockAdtSession mock;
