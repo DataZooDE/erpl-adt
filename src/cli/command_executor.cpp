@@ -52,10 +52,12 @@
 #include <erpl_adt/adt/packages.hpp>
 #include <erpl_adt/adt/search.hpp>
 #include <erpl_adt/adt/source.hpp>
+#include <erpl_adt/adt/screen.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
 #include <erpl_adt/adt/xml_codec.hpp>
 #include <erpl_adt/workflow/lock_workflow.hpp>
+#include <erpl_adt/workflow/screen_workflow.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -145,7 +147,7 @@ inline std::string SectionUriSegment(const std::string& section) {
 
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
-    "transport", "ddic", "package", "discover", "catalog"};
+    "transport", "ddic", "package", "discover", "catalog", "screen"};
 
 // ---------------------------------------------------------------------------
 // DeriveActivationParamsFromUri
@@ -1244,6 +1246,242 @@ int HandleObjectDelete(const CommandArgs& args) {
     }
 
     fmt.PrintSuccess("Deleted: " + args.positional[0]);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// screen create / read / delete
+//
+// ADT has no REST collection for classic Dynpro screens (confirmed against a
+// live system's discovery document and a 404 probe — see adt/screen.hpp).
+// The only genuine backend path is SAP's own repository function modules
+// (RPY_DYNPRO_INSERT / RPY_DYNPRO_READ / RS_SCRP_DELETE), executed through a
+// disposable IF_OO_ADT_CLASSRUN helper class that erpl-adt writes, activates
+// and runs on demand, then deletes again. See workflow/screen_workflow.hpp.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Parses "--fields NAME:Text:line:col:len,NAME2:Text2:line:col:len" into
+// ScreenFieldSpec entries. Returns an error string on malformed input.
+Result<std::vector<ScreenFieldSpec>, std::string> ParseScreenFieldsFlag(
+    const std::string& raw) {
+    std::vector<ScreenFieldSpec> fields;
+    if (raw.empty()) {
+        return Result<std::vector<ScreenFieldSpec>, std::string>::Ok(fields);
+    }
+
+    std::stringstream entries(raw);
+    std::string entry;
+    while (std::getline(entries, entry, ',')) {
+        std::vector<std::string> parts;
+        std::stringstream field_stream(entry);
+        std::string part;
+        while (std::getline(field_stream, part, ':')) {
+            parts.push_back(part);
+        }
+        if (parts.size() != 5) {
+            return Result<std::vector<ScreenFieldSpec>, std::string>::Err(
+                "Invalid --fields entry '" + entry +
+                "'. Expected NAME:Text:line:col:len");
+        }
+        ScreenFieldSpec field;
+        field.name = parts[0];
+        field.text = parts[1];
+        try {
+            field.line = std::stoi(parts[2]);
+            field.column = std::stoi(parts[3]);
+            field.length = std::stoi(parts[4]);
+        } catch (const std::exception&) {
+            return Result<std::vector<ScreenFieldSpec>, std::string>::Err(
+                "Invalid numeric value in --fields entry '" + entry + "'");
+        }
+        fields.push_back(std::move(field));
+    }
+    return Result<std::vector<ScreenFieldSpec>, std::string>::Ok(std::move(fields));
+}
+
+// Default helper class name derived from the target program, kept well
+// within the 30-char ABAP object name limit.
+std::string DefaultScreenHelperClass(const std::string& program) {
+    std::string base = program;
+    std::transform(base.begin(), base.end(), base.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (base.size() > 22) {
+        base = base.substr(0, 22);
+    }
+    return base + "_SCRHLP";
+}
+
+Result<ScreenWorkflowTarget, std::string> ParseScreenTarget(const CommandArgs& args) {
+    ScreenWorkflowTarget target;
+    target.program = GetFlag(args, "program");
+    target.screen = GetFlag(args, "screen");
+    target.package = GetFlag(args, "package");
+    if (target.program.empty() || target.screen.empty() || target.package.empty()) {
+        return Result<ScreenWorkflowTarget, std::string>::Err(
+            "Missing required flags: --program, --screen, --package");
+    }
+    target.helper_class = HasFlag(args, "helper-class")
+                              ? GetFlag(args, "helper-class")
+                              : DefaultScreenHelperClass(target.program);
+    target.keep_helper = HasFlag(args, "keep-helper");
+    return Result<ScreenWorkflowTarget, std::string>::Ok(std::move(target));
+}
+
+}  // namespace
+
+int HandleScreenCreate(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto target_result = ParseScreenTarget(args);
+    if (target_result.IsErr()) {
+        fmt.PrintError(MakeValidationError(
+            target_result.Error() +
+            ". Usage: erpl-adt screen create --program <PROG> --screen <NNNN> "
+            "--package <PKG> --fields NAME:Text:line:col:len[,...]"));
+        return 99;
+    }
+
+    auto fields_result = ParseScreenFieldsFlag(GetFlag(args, "fields"));
+    if (fields_result.IsErr()) {
+        fmt.PrintError(MakeValidationError(fields_result.Error()));
+        return 99;
+    }
+    if (fields_result.Value().empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing --fields. Usage: --fields NAME:Text:line:col:len[,...]"));
+        return 99;
+    }
+
+    ScreenCreateWorkflowParams params;
+    params.target = target_result.Value();
+    params.description = HasFlag(args, "description")
+                             ? GetFlag(args, "description")
+                             : "Disposable test screen (erpl-adt)";
+    params.next_screen = GetFlag(args, "next-screen");
+    params.lines = HasFlag(args, "lines") ? std::stoi(GetFlag(args, "lines")) : 24;
+    params.columns = HasFlag(args, "columns") ? std::stoi(GetFlag(args, "columns")) : 83;
+    params.fields = fields_result.Value();
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+    // A separate, independently-authenticated session for the classrun step
+    // — see workflow/screen_workflow.hpp for why reusing `session` there can
+    // see a stale generated-program buffer.
+    auto classrun_session = RequireSession(args, fmt);
+    if (!classrun_session) {
+        return 99;
+    }
+
+    auto result = RunScreenCreateWorkflow(*session, *classrun_session, params);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["program"] = params.target.program;
+        j["screen"] = params.target.screen;
+        fmt.PrintJson(j.dump());
+    } else {
+        fmt.PrintSuccess("Screen created: " + params.target.program + " " +
+                         params.target.screen);
+    }
+    return 0;
+}
+
+int HandleScreenRead(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto target_result = ParseScreenTarget(args);
+    if (target_result.IsErr()) {
+        fmt.PrintError(MakeValidationError(
+            target_result.Error() +
+            ". Usage: erpl-adt screen read --program <PROG> --screen <NNNN> --package <PKG>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+    auto classrun_session = RequireSession(args, fmt);
+    if (!classrun_session) {
+        return 99;
+    }
+
+    auto result = RunScreenReadWorkflow(*session, *classrun_session, target_result.Value());
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    const auto& screen = result.Value();
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["program"] = screen.program;
+        j["screen"] = screen.screen;
+        j["lines"] = screen.lines;
+        j["columns"] = screen.columns;
+        nlohmann::json fields = nlohmann::json::array();
+        for (const auto& field : screen.fields) {
+            nlohmann::json f;
+            f["name"] = field.name;
+            f["line"] = field.line;
+            f["column"] = field.column;
+            f["length"] = field.length;
+            f["input"] = field.input;
+            f["output"] = field.output;
+            fields.push_back(f);
+        }
+        j["fields"] = fields;
+        fmt.PrintJson(j.dump());
+    } else {
+        std::ostringstream out;
+        out << screen.program << " " << screen.screen << " (" << screen.lines
+            << "x" << screen.columns << ")\n";
+        for (const auto& field : screen.fields) {
+            out << "  " << field.name << "  line=" << field.line
+                << " col=" << field.column << " len=" << field.length
+                << " input=" << (field.input ? "X" : "") << "\n";
+        }
+        fmt.PrintSuccess(out.str());
+    }
+    return 0;
+}
+
+int HandleScreenDelete(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+
+    auto target_result = ParseScreenTarget(args);
+    if (target_result.IsErr()) {
+        fmt.PrintError(MakeValidationError(
+            target_result.Error() +
+            ". Usage: erpl-adt screen delete --program <PROG> --screen <NNNN> --package <PKG>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+    auto classrun_session = RequireSession(args, fmt);
+    if (!classrun_session) {
+        return 99;
+    }
+
+    auto result = RunScreenDeleteWorkflow(*session, *classrun_session, target_result.Value());
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+
+    fmt.PrintSuccess("Screen deleted: " + target_result.Value().program + " " +
+                     target_result.Value().screen);
     return 0;
 }
 
@@ -6854,7 +7092,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     // Group ordering.
     const std::vector<std::string> group_order = {
         "search", "object", "source", "activate", "test", "check",
-        "transport", "ddic", "package", "discover", "bw", "catalog"};
+        "transport", "ddic", "package", "discover", "bw", "catalog", "screen"};
 
     // Group display names and short descriptions (overrides for cleaner display).
     struct GroupMeta {
@@ -6874,6 +7112,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"discover",  {"DISCOVER", ""}},
         {"bw",        {"BW", "SAP BW/4HANA Modeling operations"}},
         {"catalog",   {"CATALOG", "Unified cross-domain metadata catalog"}},
+        {"screen",    {"SCREEN", "Disposable classic Dynpro (Screen Painter) screens"}},
     };
 
     // Pre-compute max left-column width across ALL groups for alignment.
@@ -7388,6 +7627,87 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt discover services",
         "$ erpl-adt --json discover services",
     });
+
+    router.SetGroupDescription(
+        "screen", "Disposable classic Dynpro (Screen Painter) screens");
+    router.SetGroupExamples("screen", {
+        "$ erpl-adt screen create --program ZJR66_HOST --screen 9001 --package "
+        "'$TMP' --fields HEADERNAME:Header:5:3:30,VALUE:Value:7:3:30",
+        "$ erpl-adt screen read --program ZJR66_HOST --screen 9001 --package '$TMP'",
+        "$ erpl-adt screen delete --program ZJR66_HOST --screen 9001 --package '$TMP'",
+    });
+
+    // -----------------------------------------------------------------------
+    // screen create / read / delete
+    //
+    // ADT has no REST collection for classic screens. These commands drive
+    // SAP's own repository function modules through a disposable
+    // IF_OO_ADT_CLASSRUN helper class (created, run, and deleted again on
+    // every call unless --keep-helper is passed). See workflow/screen_workflow.hpp.
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt screen create --program <PROG> --screen <NNNN> "
+                     "--package <PKG> --fields <NAME:Text:line:col:len,...> [flags]";
+        help.flags = {
+            {"program", "<name>", "Owning program (ideally a disposable $TMP program)", true},
+            {"screen", "<number>", "Screen number, e.g. 9001", true},
+            {"package", "<pkg>", "Package for the disposable helper class, e.g. $TMP", true},
+            {"fields", "<spec>", "Comma-separated NAME:Text:line:col:len entries", true},
+            {"description", "<text>", "Screen description", false},
+            {"next-screen", "<number>", "Next screen after this one (default: self-loop)", false},
+            {"lines", "<n>", "Screen height (default 24)", false},
+            {"columns", "<n>", "Screen width (default 83)", false},
+            {"helper-class", "<name>", "Disposable helper class name (default: derived from --program)", false},
+            {"keep-helper", "", "Do not delete the helper class afterwards", false},
+        };
+        help.long_description =
+            "There is no ADT REST endpoint for classic Dynpro screens (confirmed "
+            "against live discovery). This command generates and runs a disposable "
+            "IF_OO_ADT_CLASSRUN helper class that calls RPY_DYNPRO_INSERT, the same "
+            "backend API the Screen Painter uses, then deletes the helper class again.";
+        help.examples = {
+            "erpl-adt screen create --program ZJR66_HOST --screen 9001 --package "
+            "'$TMP' --fields HEADERNAME:Header:5:3:30,VALUE:Value:7:3:30",
+        };
+        router.Register("screen", "create", "Create a disposable classic Dynpro screen",
+                         HandleScreenCreate, std::move(help));
+    }
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt screen read --program <PROG> --screen <NNNN> --package <PKG> [flags]";
+        help.flags = {
+            {"program", "<name>", "Owning program", true},
+            {"screen", "<number>", "Screen number, e.g. 9001", true},
+            {"package", "<pkg>", "Package for the disposable helper class", true},
+            {"helper-class", "<name>", "Disposable helper class name (default: derived from --program)", false},
+            {"keep-helper", "", "Do not delete the helper class afterwards", false},
+        };
+        help.long_description =
+            "Reads the screen's real deployed layout via RPY_DYNPRO_READ (the same "
+            "API RPY_DYNPRO_INSERT/Screen Painter use) so a create can be verified.";
+        help.examples = {
+            "erpl-adt screen read --program ZJR66_HOST --screen 9001 --package '$TMP'",
+        };
+        router.Register("screen", "read", "Read a classic Dynpro screen's layout",
+                         HandleScreenRead, std::move(help));
+    }
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt screen delete --program <PROG> --screen <NNNN> --package <PKG> [flags]";
+        help.flags = {
+            {"program", "<name>", "Owning program", true},
+            {"screen", "<number>", "Screen number, e.g. 9001", true},
+            {"package", "<pkg>", "Package for the disposable helper class", true},
+            {"helper-class", "<name>", "Disposable helper class name (default: derived from --program)", false},
+            {"keep-helper", "", "Do not delete the helper class afterwards", false},
+        };
+        help.examples = {
+            "erpl-adt screen delete --program ZJR66_HOST --screen 9001 --package '$TMP'",
+        };
+        router.Register("screen", "delete", "Delete a classic Dynpro screen",
+                         HandleScreenDelete, std::move(help));
+    }
 
     // -----------------------------------------------------------------------
     // activate run (default action — "erpl-adt activate <name>" works)
