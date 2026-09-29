@@ -214,6 +214,30 @@ def test_class(cli, test_class_name):
 
 
 # ---------------------------------------------------------------------------
+# Test program fixture (owning program for classic Dynpro screen tests)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def test_program(cli):
+    """Create a disposable $TMP program, yield its name, delete on teardown."""
+    name = f"ZTEST_SCR_{random.randint(10000, 99999)}"
+
+    data = cli.run_ok(
+        "object", "create",
+        "--type", "PROG/P",
+        "--name", name,
+        "--package", "$TMP",
+        "--description", "Integration test screen host",
+    )
+    uri = data.get("uri", f"/sap/bc/adt/programs/programs/{name.lower()}")
+
+    yield name
+
+    # Teardown: auto-lock mode handles lock→delete→unlock atomically.
+    cli.run("object", "delete", uri)
+
+
+# ---------------------------------------------------------------------------
 # E2E test context (class-scoped)
 # ---------------------------------------------------------------------------
 
