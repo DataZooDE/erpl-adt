@@ -1630,6 +1630,9 @@ Result<AbapGitRunOptions, Error> ParseAbapGitOptions(const CommandArgs& args) {
     options.dry_run = HasFlag(args, "dry-run");
     options.force = HasFlag(args, "force");
     options.strict = HasFlag(args, "strict");
+    if (!JsonMode(args) && IsStderrTty()) {
+        options.progress = [](const std::string& line) { std::cerr << line << std::endl; };
+    }
     return Result<AbapGitRunOptions, Error>::Ok(std::move(options));
 }
 

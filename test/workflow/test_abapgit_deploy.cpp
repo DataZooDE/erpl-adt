@@ -748,3 +748,41 @@ TEST_CASE("abapGit report: the most severe category decides the exit code",
     missing.objects = {with(ErrorCategory::NotFound), with(ErrorCategory::CheckError)};
     CHECK(missing.ExitCode() == 8);
 }
+
+// ---------------------------------------------------------------------------
+// Dependency order: a failed object's dependents are skipped, not attempted.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("abapGit deploy: dependents of a failed object are skipped",
+          "[workflow][abapgit_deploy][deps]") {
+    Fixture f;
+    f.handler->fail_apply_for = "ZERPL_D_A";
+    // ZERPL_D_B mentions ZERPL_D_A (as a DTEL names its domain); ZERPL_D_C not.
+    auto a = f.repo.Doma("zerpl_d_a", "A");
+    auto b = f.repo.Doma("zerpl_d_b", "uses ZERPL_D_A");
+    auto c = f.repo.Doma("zerpl_d_c", "independent");
+    c.key.name = "ZERPL_D_C";
+
+    auto report = f.Workflow().Deploy({a, b, c}, f.Options());
+
+    REQUIRE(report.objects.size() == 3);
+    CHECK(report.objects[0].action == ObjectAction::Failed);
+    CHECK(report.objects[1].action == ObjectAction::Skipped);
+    CHECK(report.objects[1].message == "dependency DOMA ZERPL_D_A failed");
+    CHECK(report.objects[2].action == ObjectAction::Created);
+    CHECK(f.handler->applied == std::vector<std::string>{"ZERPL_D_C"});
+    CHECK(report.ExitCode() == 6);  // the failure's own exit code
+}
+
+TEST_CASE("abapGit deploy: progress is reported per object before it is written",
+          "[workflow][abapgit_deploy][deps]") {
+    Fixture f;
+    std::vector<std::string> lines;
+    auto options = f.Options();
+    options.progress = [&](const std::string& line) { lines.push_back(line); };
+    auto report = f.Workflow().Deploy(
+        {f.repo.Doma("zerpl_d_a", "A"), f.repo.Doma("zerpl_d_b", "B")}, options);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0] == "[1/2] creating DOMA ZERPL_D_A");
+    CHECK(lines[1] == "[2/2] creating DOMA ZERPL_D_B");
+}

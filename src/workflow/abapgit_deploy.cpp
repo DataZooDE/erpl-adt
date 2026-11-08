@@ -166,6 +166,33 @@ std::string StartingFolder(const AbapGitLayout& layout) {
     return folder;
 }
 
+bool IsNameChar(char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '/';
+}
+
+// Whether `files` mention `name` as a whole word (case-insensitive): a DTEL
+// names its DOMNAME, a TRAN its PGMNA, a program the types it uses.
+bool Mentions(const ObjectFileSet& files, const std::string& name) {
+    std::string upper_name = name;
+    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    for (const auto& [file, bytes] : files) {
+        std::string text = bytes;
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        for (auto at = text.find(upper_name); at != std::string::npos;
+             at = text.find(upper_name, at + 1)) {
+            const bool starts = at == 0 || !IsNameChar(text[at - 1]);
+            const size_t end = at + upper_name.size();
+            const bool ends = end >= text.size() || !IsNameChar(text[end]);
+            if (starts && ends) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool SafeForShell(const std::string& s) {
     return s.find_first_of("\"'`$\\\n\r") == std::string::npos;
 }
@@ -232,6 +259,7 @@ std::string ToString(ObjectAction action) {
         case ObjectAction::Exported: return "exported";
         case ObjectAction::Failed: return "failed";
         case ObjectAction::Refused: return "refused";
+        case ObjectAction::Skipped: return "skipped";
     }
     return "unknown";
 }
@@ -548,6 +576,18 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
     }
     auto states = ReadStates(keys, options);
 
+    // Objects that failed (or were skipped) in this run; later objects that
+    // depend on them are not attempted.
+    std::vector<AbapGitObjectKey> broken;
+    auto failed_dependency = [&](size_t i) -> std::optional<AbapGitObjectKey> {
+        for (const auto& key : broken) {
+            if (Mentions(desired[i], key.name)) {
+                return key;
+            }
+        }
+        return std::nullopt;
+    };
+
     for (size_t i = 0; i < eligible.size(); ++i) {
         const auto& object = *eligible[i];
         const auto& state = states.states[i];
@@ -573,6 +613,9 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         if (valid.IsErr()) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Failed, valid.Error()));
+            if (!current.exists) {
+                broken.push_back(object.key);
+            }
             continue;
         }
         if (current.exists && !options.force) {
@@ -594,13 +637,25 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             report.objects.push_back(std::move(outcome));
             continue;
         }
-        LogInfo(kComponent, (current.exists ? "Updating " : "Creating ") + object.key.type +
-                                " " + object.key.name);
+        if (auto dependency = failed_dependency(i)) {
+            auto skipped = Outcome(object.key, object.package, ObjectAction::Skipped);
+            skipped.message = "dependency " + dependency->type + " " + dependency->name + " failed";
+            report.objects.push_back(std::move(skipped));
+            broken.push_back(object.key);
+            continue;
+        }
+        const std::string verb = current.exists ? "updating " : "creating ";
+        LogInfo(kComponent, verb + object.key.type + " " + object.key.name);
+        if (options.progress) {
+            options.progress("[" + std::to_string(i + 1) + "/" + std::to_string(eligible.size()) +
+                             "] " + verb + object.key.type + " " + object.key.name);
+        }
         TypeContext ctx{session_, engine_, object.package, options.transport, options.language};
         auto applied = Handler(object.key.type)->Apply(object.key, desired[i], current, ctx);
         if (applied.IsErr()) {
             report.objects.push_back(FailedOutcome(object.key, object.package,
                                                    ObjectAction::Failed, applied.Error()));
+            broken.push_back(object.key);
             continue;
         }
         auto outcome = Outcome(object.key, object.package, action);
@@ -670,6 +725,10 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
         if (options.dry_run) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Deleted));
             continue;
+        }
+        if (options.progress) {
+            options.progress("[" + std::to_string(i + 1) + "/" + std::to_string(eligible.size()) +
+                             "] deleting " + object.key.type + " " + object.key.name);
         }
         TypeContext ctx{session_, engine_, object.package, options.transport, options.language};
         auto deleted = Handler(object.key.type)->Delete(object.key, ctx);

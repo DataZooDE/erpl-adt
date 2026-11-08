@@ -7,6 +7,7 @@
 #include <erpl_adt/workflow/classrun_helper.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -121,7 +122,10 @@ private:
     int max_versions_;
 };
 
-enum class ObjectAction { Created, Updated, Unchanged, Deleted, Missing, Exported, Failed, Refused };
+enum class ObjectAction {
+    Created, Updated, Unchanged, Deleted, Missing, Exported, Failed, Refused,
+    Skipped,  // not attempted: an object it depends on failed
+};
 std::string ToString(ObjectAction action);
 
 struct ObjectOutcome {
@@ -143,6 +147,9 @@ struct AbapGitRunOptions {
     // dry_run: a missing --transport for a transportable package is only an
     // annotation (a PR check has no request); strict makes it a refusal.
     bool strict = false;
+    // Called before each object is written ("[3/8] updating PROG ZFOO"), for
+    // progress output on a terminal. Optional.
+    std::function<void(const std::string&)> progress;
     std::string user;                              // deploying user; default: SAP logon user
     // Namespaced objects and packages (/ACME/...) are allowed only when the
     // namespace is changeable in the system (SE03, TRNSPACE-EDITFLAG) — the
