@@ -34,6 +34,11 @@ struct ObjectState {
     std::string changed_by;  // last changed by (for drift protection)
     std::string changed_on;  // YYYYMMDD
     ObjectFileSet files;     // the object exactly as abapGit would export it
+    // Parts with an inactive version in the system (e.g. left by a deploy
+    // whose activation failed). Not part of the files — export shows the
+    // active version — but a deploy must rewrite and activate them even when
+    // the files equal the active version.
+    std::vector<std::string> pending;
 };
 
 // Everything a handler may use while applying changes.

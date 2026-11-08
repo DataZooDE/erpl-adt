@@ -53,6 +53,7 @@ public:
     mutable std::vector<std::string> deleted;
     std::string fail_apply_for;
     std::string changed_by = "DEVELOPER";
+    std::vector<std::string> pending;  // reported as inactive leftovers
 
     std::string Type() const override { return type_; }
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
@@ -69,6 +70,7 @@ public:
             state.exists = true;
             state.files = it->second;
             state.changed_by = changed_by;
+            state.pending = pending;
         }
         return Result<ObjectState, Error>::Ok(state);
     }
@@ -167,6 +169,20 @@ TEST_CASE("abapGit deploy: identical object is left alone", "[workflow][abapgit_
 
     CHECK(second.objects[0].action == ObjectAction::Unchanged);
     CHECK(f.handler->applied.empty());
+}
+
+TEST_CASE("abapGit deploy: identical files with inactive leftovers are still applied",
+          "[workflow][abapgit_deploy]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE(f.Workflow().Deploy({obj}, f.Options()).objects[0].action == ObjectAction::Created);
+    f.handler->applied.clear();
+    f.handler->pending = {"DYNP0100"};
+
+    auto report = f.Workflow().Deploy({obj}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+    CHECK(f.handler->applied == std::vector<std::string>{"ZERPL_D_A"});
 }
 
 TEST_CASE("abapGit deploy: changed object is updated in place", "[workflow][abapgit_deploy]") {

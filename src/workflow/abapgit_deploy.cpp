@@ -385,7 +385,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
                 continue;
             }
         }
-        if (current.exists && current.files == desired[i]) {
+        if (current.exists && current.files == desired[i] && current.pending.empty()) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Unchanged));
             continue;
         }

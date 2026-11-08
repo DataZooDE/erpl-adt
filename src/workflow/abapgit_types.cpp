@@ -20,7 +20,8 @@ bool Contains(const std::string& haystack, const std::string& needle) {
 }  // namespace
 
 std::vector<std::shared_ptr<const IClassicTypeHandler>> MakeClassicTypeHandlers() {
-    return {MakeDomaHandler(), MakeDtelHandler(), MakeFugrHandler(), MakeTranHandler()};
+    return {MakeDomaHandler(), MakeDtelHandler(), MakeFugrHandler(), MakeProgHandler(),
+            MakeTranHandler()};
 }
 
 Error EngineFailure(const std::string& what, const EngineOpResult& result) {

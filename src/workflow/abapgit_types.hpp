@@ -18,6 +18,7 @@ std::shared_ptr<const IClassicTypeHandler> MakeDomaHandler();
 std::shared_ptr<const IClassicTypeHandler> MakeDtelHandler();
 std::shared_ptr<const IClassicTypeHandler> MakeFugrHandler();
 std::shared_ptr<const IClassicTypeHandler> MakeTranHandler();
+std::shared_ptr<const IClassicTypeHandler> MakeProgHandler();
 
 // --- shared helpers --------------------------------------------------------
 
