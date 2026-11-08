@@ -1,11 +1,11 @@
-"! Transactions (TRAN): RPY_TRANSACTION_READ / RPY_TRANSACTION_INSERT /
-"! RPY_TRANSACTION_DELETE -- the calls SE93 and abapGit's
-"! ZCL_ABAPGIT_OBJECT_TRAN make. RPY_TRANSACTION_INSERT locks the
-"! transaction and records it on the transport itself (RS_CORR_INSERT with
-"! transport_number); there is no update API, so an update is delete +
-"! insert, exactly as in abapGit.
-"! Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
-"! SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
+* Transactions (TRAN): RPY_TRANSACTION_READ / RPY_TRANSACTION_INSERT /
+* RPY_TRANSACTION_DELETE -- the calls SE93 and abapGit's
+* ZCL_ABAPGIT_OBJECT_TRAN make. RPY_TRANSACTION_INSERT locks the
+* transaction and records it on the transport itself (RS_CORR_INSERT with
+* transport_number); there is no update API, so an update is delete +
+* insert, exactly as in abapGit.
+* Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
+* SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
 "@@DEFINITIONS
     METHODS tran_get
       IMPORTING name     TYPE tcode

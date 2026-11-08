@@ -1,7 +1,7 @@
-"! Data elements (DTEL): DDIF_DTEL_GET / RS_CORR_INSERT + DDIF_DTEL_PUT +
-"! DDIF_DTEL_ACTIVATE / RS_DD_DELETE_OBJ -- the calls SE11 and abapGit make.
-"! Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
-"! SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
+* Data elements (DTEL): DDIF_DTEL_GET / RS_CORR_INSERT + DDIF_DTEL_PUT +
+* DDIF_DTEL_ACTIVATE / RS_DD_DELETE_OBJ -- the calls SE11 and abapGit make.
+* Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
+* SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
 "@@DEFINITIONS
     METHODS dtel_get
       IMPORTING name     TYPE ddobjname

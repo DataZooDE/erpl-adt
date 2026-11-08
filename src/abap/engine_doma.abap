@@ -1,7 +1,7 @@
-"! Domains (DOMA): DDIF_DOMA_GET / RS_CORR_INSERT + DDIF_DOMA_PUT +
-"! DDIF_DOMA_ACTIVATE / RS_DD_DELETE_OBJ -- the calls SE11 and abapGit make.
-"! Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
-"! SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
+* Domains (DOMA): DDIF_DOMA_GET / RS_CORR_INSERT + DDIF_DOMA_PUT +
+* DDIF_DOMA_ACTIVATE / RS_DD_DELETE_OBJ -- the calls SE11 and abapGit make.
+* Engine part: the section after @@DEFINITIONS goes into the class's PRIVATE
+* SECTION, the section after @@IMPLEMENTATIONS into its IMPLEMENTATION.
 "@@DEFINITIONS
     METHODS doma_get
       IMPORTING name     TYPE ddobjname

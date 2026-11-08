@@ -1,15 +1,15 @@
-"! Programs (PROG): reports and module pools with their screens, GUI status /
-"! titles and text pool -- mirrors abapGit's ZCL_ABAPGIT_OBJECTS_PROGRAM.
-"!   read:     READ_PROGDIR, READ REPORT, RS_SCREEN_LIST + RPY_DYNPRO_READ
-"!             (+ RPY_DYNPRO_READ_NATIVE for abapGit's flag fixes),
-"!             RS_CUA_INTERNAL_FETCH, READ TEXTPOOL
-"!   write:    RS_CORR_INSERT, RPY_PROGRAM_INSERT (create), UPDATE_PROGDIR,
-"!             RPY_DYNPRO_INSERT / RS_SCRP_DELETE, RS_CUA_INTERNAL_WRITE,
-"!             INSERT TEXTPOOL -- everything saved inactive
-"!   activate: RS_WORKING_OBJECTS_ACTIVATE (REPS / DYNP / CUAD / REPT), run as
-"!             its own engine run after the writes
-"!   delete:   RS_DELETE_PROGRAM
-"! Source code of an existing program is written over ADT (lock + PUT), not here.
+* Programs (PROG): reports and module pools with their screens, GUI status /
+* titles and text pool -- mirrors abapGit's ZCL_ABAPGIT_OBJECTS_PROGRAM.
+*   read:     READ_PROGDIR, READ REPORT, RS_SCREEN_LIST + RPY_DYNPRO_READ
+*             (+ RPY_DYNPRO_READ_NATIVE for abapGit's flag fixes),
+*             RS_CUA_INTERNAL_FETCH, READ TEXTPOOL
+*   write:    RS_CORR_INSERT, RPY_PROGRAM_INSERT (create), UPDATE_PROGDIR,
+*             RPY_DYNPRO_INSERT / RS_SCRP_DELETE, RS_CUA_INTERNAL_WRITE,
+*             INSERT TEXTPOOL -- everything saved inactive
+*   activate: RS_WORKING_OBJECTS_ACTIVATE (REPS / DYNP / CUAD / REPT), run as
+*             its own engine run after the writes
+*   delete:   RS_DELETE_PROGRAM
+* Source code of an existing program is written over ADT (lock + PUT), not here.
 "@@DEFINITIONS
     "! abapGit's ZIF_ABAPGIT_SAP_REPORT=>TY_PROGDIR (component order = XML order).
     TYPES:

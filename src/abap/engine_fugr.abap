@@ -1,15 +1,15 @@
-"! Function groups (FUGR): read side of abapGit's ZCL_ABAPGIT_OBJECT_FUGR.
-"! RS_FUNCTION_POOL_EXISTS, RS_FUNCTION_POOL_CONTENTS, RPY_FUNCTIONMODULE_READ_NEW,
-"! RS_GET_ALL_INCLUDES, READ_PROGDIR, READ REPORT / READ TEXTPOOL -- the same
-"! calls abapGit's serializer makes, with its normalization. Writing goes
-"! through ADT (the function module source in signature form), see
-"! src/workflow/abapgit_type_fugr.cpp.
-"!
-"! Output of fugr_get:
-"!   DATA XML           AREAT / INCLUDES / FUNCTIONS (abapGit <fg>.fugr.xml values)
-"!   DATA FM:<name>     function module source as abapGit writes it (old style, LF)
-"!   DATA SRC:<include> include source (LF)
-"!   DATA DIR:<include> PROGDIR (+ TPOOL) of the include (<fg>.fugr.<include>.xml values)
+* Function groups (FUGR): read side of abapGit's ZCL_ABAPGIT_OBJECT_FUGR.
+* RS_FUNCTION_POOL_EXISTS, RS_FUNCTION_POOL_CONTENTS, RPY_FUNCTIONMODULE_READ_NEW,
+* RS_GET_ALL_INCLUDES, READ_PROGDIR, READ REPORT / READ TEXTPOOL -- the same
+* calls abapGit's serializer makes, with its normalization. Writing goes
+* through ADT (the function module source in signature form), see
+* src/workflow/abapgit_type_fugr.cpp.
+* 
+* Output of fugr_get:
+*   DATA XML           AREAT / INCLUDES / FUNCTIONS (abapGit <fg>.fugr.xml values)
+*   DATA FM:<name>     function module source as abapGit writes it (old style, LF)
+*   DATA SRC:<include> include source (LF)
+*   DATA DIR:<include> PROGDIR (+ TPOOL) of the include (<fg>.fugr.<include>.xml values)
 "@@DEFINITIONS
     METHODS fugr_get
       IMPORTING name     TYPE rs38l-area

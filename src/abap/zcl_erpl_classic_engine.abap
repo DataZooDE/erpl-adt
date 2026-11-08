@@ -1,25 +1,25 @@
-"! erpl-adt classic-object engine (temporary console helper class).
-"!
-"! erpl-adt generates one throwaway copy of this class per run: the class
-"! name placeholder is replaced, the per-type parts (engine_<type>.abap) are
-"! inserted at the TYPE_DEFINITIONS / TYPE_IMPLEMENTATIONS markers, and the
-"! generated operation calls go in at the OPS marker inside RUN_OPS. The class is written to $TMP, activated,
-"! run through ADT classrun and deleted again.
-"!
-"! It only calls SAP's own workbench function modules -- the ones SE51, SE41,
-"! SE93 and SE11 use internally -- so CTS recording, enqueue locks, version
-"! management and authorization checks behave exactly as in the GUI tools.
-"! It never writes repository tables directly.
-"!
-"! Output protocol (one line per fact, parsed by src/adt/classic_engine.cpp):
-"!   @<op> EXISTS 0|1
-"!   @<op> META <changed-by> <changed-on> <changed-at>
-"!   @<op> DATA <tag> <base64 chunk>      (chunks of one tag concatenate)
-"!   @<op> MSG <type> <class> <number> <text>
-"!   @<op> ERR <text>                     (activation / check log lines)
-"!   @<op> RC <n>                         (last line of every operation)
-"!   @<op> EXC <text>                     (unexpected exception)
-"!   @END
+* erpl-adt classic-object engine (temporary console helper class).
+* 
+* erpl-adt generates one throwaway copy of this class per run: the class
+* name placeholder is replaced, the per-type parts (engine_<type>.abap) are
+* inserted at the TYPE_DEFINITIONS / TYPE_IMPLEMENTATIONS markers, and the
+* generated operation calls go in at the OPS marker inside RUN_OPS. The class is written to $TMP, activated,
+* run through ADT classrun and deleted again.
+* 
+* It only calls SAP's own workbench function modules -- the ones SE51, SE41,
+* SE93 and SE11 use internally -- so CTS recording, enqueue locks, version
+* management and authorization checks behave exactly as in the GUI tools.
+* It never writes repository tables directly.
+* 
+* Output protocol (one line per fact, parsed by src/adt/classic_engine.cpp):
+*   @<op> EXISTS 0|1
+*   @<op> META <changed-by> <changed-on> <changed-at>
+*   @<op> DATA <tag> <base64 chunk>      (chunks of one tag concatenate)
+*   @<op> MSG <type> <class> <number> <text>
+*   @<op> ERR <text>                     (activation / check log lines)
+*   @<op> RC <n>                         (last line of every operation)
+*   @<op> EXC <text>                     (unexpected exception)
+*   @END
 CLASS zcl_erpl_classic_engine DEFINITION PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
     INTERFACES if_oo_adt_classrun.
