@@ -71,6 +71,19 @@ def adt(sap_config):
     return _AdtReader(sap_config)
 
 
+def _helper_classes(cli):
+    data = cli.run_ok("search", "ZCL_ERPLHLP*", "--max", "500")
+    rows = data if isinstance(data, list) else data.get("results", [])
+    return {r.get("name") for r in rows}
+
+
+@pytest.fixture(scope="module")
+def helpers_before(cli):
+    """Helper classes that already existed before this module ran (e.g. left
+    by runs interrupted by an outage) — not this run's responsibility."""
+    return _helper_classes(cli)
+
+
 @pytest.mark.abapgit_deploy
 class TestDomain:
     """Slice 1: a domain with fixed values (sales order lifecycle status)."""
@@ -78,7 +91,7 @@ class TestDomain:
     DOMA = "ZERPL_D_SO_STATUS"
     FILE = SRC / "zerpl_d_so_status.doma.xml"
 
-    def test_deploy_creates_domain_with_fixed_values(self, cli, adt):
+    def test_deploy_creates_domain_with_fixed_values(self, cli, adt, helpers_before):
         cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
 
         result = cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE)
@@ -157,7 +170,57 @@ class TestGuardRails:
         status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_d_so_status")
         assert status == 404
 
-    def test_no_helper_classes_are_left_behind(self, cli):
-        data = cli.run_ok("search", "ZCL_ERPLHLP*")
-        names = [r.get("name") for r in (data if isinstance(data, list) else data.get("results", []))]
-        assert names == [], f"leftover helper classes: {names}"
+    def test_no_helper_classes_are_left_behind(self, cli, helpers_before):
+        leftovers = _helper_classes(cli) - helpers_before
+        assert leftovers == set(), f"this run left helper classes behind: {leftovers}"
+
+
+@pytest.mark.abapgit_deploy
+class TestRepositoryRoundTrip:
+    """The whole demo repository: domain, data element, function group with
+    function modules, a module pool with five screens and GUI status, a report
+    with text pool, and three transactions — deployed in one call."""
+
+    def _keys(self):
+        keys = []
+        for f in sorted(SRC.iterdir()):
+            parts = f.name.split(".")
+            if len(parts) == 3 and parts[2] == "xml" and parts[1] != "devc":
+                keys.append(f"{parts[1].upper()}:{parts[0].upper()}")
+        return keys
+
+    def test_deploy_whole_repository_in_dependency_order(self, cli):
+        data = cli.run_ok("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,
+                          timeout=1800)
+
+        order = [o["type"] for o in data["objects"]]
+        rank = {"DOMA": 0, "DTEL": 1, "FUGR": 2, "PROG": 3, "TRAN": 4}
+        assert order == sorted(order, key=rank.get), order
+        assert not [o for o in data["objects"] if o["action"] in ("failed", "refused")]
+
+    def test_redeploy_whole_repository_changes_nothing(self, cli):
+        data = cli.run_ok("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,
+                          timeout=1800)
+        assert {o["action"] for o in data["objects"]} == {"unchanged"}, data["objects"]
+
+    def test_export_deploy_export_is_byte_identical(self, cli, tmp_path):
+        first = tmp_path / "first"
+        cli.run_ok("abapgit", "export", str(first), "--package", PACKAGE,
+                   "--object", ",".join(self._keys()), timeout=1800)
+        # Deploy what was exported, then export again.
+        cli.run_ok("abapgit", "deploy", str(first), "--package", PACKAGE, timeout=1800)
+        second = tmp_path / "second"
+        cli.run_ok("abapgit", "export", str(second), "--package", PACKAGE,
+                   "--object", ",".join(self._keys()), timeout=1800)
+
+        def files(root):
+            return {p.relative_to(root).as_posix(): p.read_bytes()
+                    for p in root.rglob("*") if p.is_file()}
+
+        a, b = files(first), files(second)
+        assert a.keys() == b.keys()
+        assert [k for k in a if a[k] != b[k]] == []
+        # ... and both equal the files in git.
+        fixtures = {k: v for k, v in files(FIXTURES).items() if not k.endswith("package.devc.xml")}
+        assert {k: v for k, v in a.items() if k != ".abapgit.xml"} == \
+               {k: v for k, v in fixtures.items() if k != ".abapgit.xml"}
