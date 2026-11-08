@@ -660,6 +660,24 @@ Result<HttpResponse, Error> AdtSession::Put(std::string_view path,
 // SetStateful / IsStateful
 // ---------------------------------------------------------------------------
 void AdtSession::SetStateful(bool enabled) {
+    // Leaving stateful mode ends the server-side ABAP session as well, like
+    // Eclipse does when it drops a session. Merely forgetting the context id
+    // leaves the session open on the server until rdisp/plugin_auto_logout
+    // (30 min by default); under load (CI, several parallel runs as one user)
+    // the per-user session limit is then exhausted and every new stateful
+    // request fails with "400 Session not found" (observed live on A4H).
+    // sap-sessioncmd=close is the ICF parameter for that; the URL is the
+    // cheapest ADT resource (a few hundred bytes).
+    if (!enabled && impl_->stateful_ && impl_->cookies_.count("sap-contextid") > 0) {
+        auto closed = Get(
+            "/sap/bc/adt/repository/informationsystem/objecttypes"
+            "?maxItemCount=1&name=PROG&data=usedByProvider&sap-sessioncmd=close");
+        if (closed.IsErr()) {
+            LogDebug("http", "Closing the stateful session failed (it will time out on the "
+                             "server): " + closed.Error().message);
+        }
+        impl_->cookies_.erase("sap-contextid");
+    }
     impl_->stateful_ = enabled;
     if (!enabled) {
         impl_->sap_context_id_.clear();
