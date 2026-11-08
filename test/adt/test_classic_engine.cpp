@@ -32,6 +32,19 @@ TEST_CASE("Engine source: class name placeholder is replaced everywhere", "[clas
     CHECK(src.find("CLASS zcl_erplhlp_1a2b3c4d IMPLEMENTATION") != std::string::npos);
 }
 
+TEST_CASE("Engine source: per-type parts are composed into the class", "[classic_engine]") {
+    auto src = BuildEngineSource("ZCL_H", {});
+    // The DOMA part (src/abap/engine_doma.abap) contributes definition and implementation.
+    auto def = src.find("METHODS doma_get");
+    auto impl = src.find("METHOD doma_get.");
+    auto impl_start = src.find("CLASS zcl_h IMPLEMENTATION.");
+    REQUIRE(def != std::string::npos);
+    REQUIRE(impl != std::string::npos);
+    CHECK(def < impl_start);
+    CHECK(impl > impl_start);
+    CHECK(src.find("@@") == std::string::npos);
+}
+
 TEST_CASE("Engine source: operations are numbered and called in order", "[classic_engine]") {
     auto src = BuildEngineSource("ZCL_H", {DomaGetOp("ZA", "E"), DomaDeleteOp("ZB", "")});
     auto ops = Between(src, "METHOD run_ops.", "ENDMETHOD.");

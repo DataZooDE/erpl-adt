@@ -2,6 +2,7 @@
 
 #include <cmrc/cmrc.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <sstream>
@@ -17,12 +18,47 @@ constexpr const char* kTemplateClass = "zcl_erpl_classic_engine";
 constexpr const char* kOpsMarker = "\"@@OPS@@";
 constexpr size_t kChunk = 200;
 
+void ReplaceAll(std::string& text, const std::string& from, const std::string& to);
+
+// The engine class: the base file plus every per-type part
+// (engine_<type>.abap, sorted by name). A part holds its definitions after
+// the line "@@DEFINITIONS and its implementations after "@@IMPLEMENTATIONS.
+std::string ComposeEngineTemplate() {
+    auto fs = cmrc::erpl_abap::get_filesystem();
+    auto base_file = fs.open(kEngineResource);
+    std::string base(base_file.begin(), base_file.end());
+
+    std::vector<std::string> parts;
+    for (const auto& entry : fs.iterate_directory("")) {
+        const auto& name = entry.filename();
+        if (entry.is_file() && name.rfind("engine_", 0) == 0) {
+            parts.push_back(name);
+        }
+    }
+    std::sort(parts.begin(), parts.end());
+
+    std::string definitions;
+    std::string implementations;
+    for (const auto& name : parts) {
+        auto file = fs.open(name);
+        std::string text(file.begin(), file.end());
+        const std::string def_marker = "\"@@DEFINITIONS\n";
+        const std::string impl_marker = "\"@@IMPLEMENTATIONS\n";
+        auto def = text.find(def_marker);
+        auto impl = text.find(impl_marker);
+        if (def == std::string::npos || impl == std::string::npos || impl < def) {
+            continue;  // malformed part: caught by the unit test on composition
+        }
+        definitions += text.substr(def + def_marker.size(), impl - def - def_marker.size());
+        implementations += text.substr(impl + impl_marker.size());
+    }
+    ReplaceAll(base, "    \"@@TYPE_DEFINITIONS@@\n", definitions);
+    ReplaceAll(base, "  \"@@TYPE_IMPLEMENTATIONS@@\n", implementations);
+    return base;
+}
+
 const std::string& EngineTemplate() {
-    static const std::string text = [] {
-        auto fs = cmrc::erpl_abap::get_filesystem();
-        auto file = fs.open(kEngineResource);
-        return std::string(file.begin(), file.end());
-    }();
+    static const std::string text = ComposeEngineTemplate();
     return text;
 }
 
