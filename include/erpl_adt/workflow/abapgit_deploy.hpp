@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,35 @@ public:
 // The handlers for all supported types, keyed by abapGit type.
 std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> DefaultTypeHandlers();
 
+// Earlier committed versions of a file (newest first), used by drift
+// protection to tell "the system holds an older version from git" (a normal
+// update) from "someone changed the object in the system" (refused).
+class IFileHistory {
+public:
+    virtual ~IFileHistory() = default;
+    [[nodiscard]] virtual std::vector<std::string> PreviousVersions(
+        const std::filesystem::path& file) const = 0;
+};
+
+// For folders that are not git work trees.
+class NoFileHistory final : public IFileHistory {
+public:
+    std::vector<std::string> PreviousVersions(const std::filesystem::path&) const override {
+        return {};
+    }
+};
+
+// Reads `git log` / `git show` for the file (up to `max_versions` commits).
+// Returns nothing when git is not installed or the file is not tracked.
+class GitFileHistory final : public IFileHistory {
+public:
+    explicit GitFileHistory(int max_versions = 50) : max_versions_(max_versions) {}
+    std::vector<std::string> PreviousVersions(const std::filesystem::path& file) const override;
+
+private:
+    int max_versions_;
+};
+
 enum class ObjectAction { Created, Updated, Unchanged, Deleted, Missing, Exported, Failed, Refused };
 std::string ToString(ObjectAction action);
 
@@ -87,8 +117,10 @@ struct AbapGitRunOptions {
     std::string transport;
     std::string language = "E";
     bool dry_run = false;
-    bool force = false;
-    std::vector<std::string> customer_namespaces;  // e.g. "/ACME/"
+    bool force = false;                            // overwrite drifted objects
+    std::string user;                              // deploying user; default: SAP logon user
+    std::vector<std::string> customer_namespaces;  // e.g. "/ACME/"; merged with the
+                                                   // namespaces changeable in the system
 };
 
 struct AbapGitRunReport {
@@ -101,7 +133,8 @@ struct AbapGitRunReport {
 class AbapGitWorkflow {
 public:
     AbapGitWorkflow(IAdtSession& session, IEngineRunner& engine,
-                    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers);
+                    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
+                    const IFileHistory& history);
 
     // `objects` must already be in dependency order (ScanAbapGitFolder does that).
     [[nodiscard]] AbapGitRunReport Deploy(const std::vector<AbapGitObjectFiles>& objects,
@@ -117,14 +150,20 @@ public:
 private:
     struct ReadResult {
         std::vector<Result<ObjectState, Error>> states;
+        std::string user;                     // SAP logon user
+        std::vector<std::string> namespaces;  // changeable in the system
     };
     ReadResult ReadStates(const std::vector<AbapGitObjectKey>& keys,
                           const AbapGitRunOptions& options);
     const IClassicTypeHandler* Handler(const std::string& type) const;
+    std::optional<Error> DetectDrift(const AbapGitObjectFiles& object,
+                                     const ObjectFileSet& desired, const ObjectState& current,
+                                     const std::string& user) const;
 
     IAdtSession& session_;
     IEngineRunner& engine_;
     std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers_;
+    const IFileHistory& history_;
 };
 
 // Reads an object's files from disk and normalizes them to the exact bytes

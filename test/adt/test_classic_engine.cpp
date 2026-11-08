@@ -177,3 +177,11 @@ TEST_CASE("Engine output: SummarizeFailure prefers SAP messages over return code
     bare.rc = 4;
     CHECK(SummarizeFailure(bare).find("return code 4") != std::string::npos);
 }
+
+TEST_CASE("Engine output: other kinds are kept as values", "[classic_engine]") {
+    auto parsed = ParseEngineOutput(
+        "@1 META DEVELOPER 20261108 120000\n@1 NS /ACME/\n@1 NS /DZOO/\n@1 RC 0\n@END\n", 1);
+    REQUIRE(parsed.IsOk());
+    CHECK(parsed.Value()[0].changed_by == "DEVELOPER");
+    CHECK(parsed.Value()[0].values.at("NS") == std::vector<std::string>{"/ACME/", "/DZOO/"});
+}

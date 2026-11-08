@@ -6,6 +6,7 @@
 #include "abapgit_types.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -68,14 +69,41 @@ bool EndsWith(const std::string& s, const std::string& suffix) {
            s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Guard rails that must pass before anything touches the system.
+// Bytes exactly as abapGit would write them: XML re-rendered, ABAP with LF.
+Result<std::string, Error> NormalizeFile(const std::string& name, const std::string& bytes) {
+    if (EndsWith(name, ".xml")) {
+        auto parsed = ParseAbapGitXml(bytes);
+        if (parsed.IsErr()) {
+            return Result<std::string, Error>::Err(parsed.Error());
+        }
+        return Result<std::string, Error>::Ok(RenderAbapGitXml(parsed.Value()));
+    }
+    return Result<std::string, Error>::Ok(ToLf(bytes));
+}
+
+// "/ACME/D_STATUS" -> "/ACME/"; "" for names outside a namespace.
+std::string NamespaceOf(const std::string& name) {
+    if (name.size() < 3 || name[0] != '/') {
+        return "";
+    }
+    auto end = name.find('/', 1);
+    return end == std::string::npos ? "" : name.substr(0, end + 1);
+}
+
+// Guard rails that must pass before anything touches the system. A
+// namespaced object passes here if its namespace is syntactically valid; it
+// is checked against the namespaces changeable in the system after the read.
 std::optional<Error> CheckGuardRails(const AbapGitObjectFiles& object,
                                      const AbapGitRunOptions& options) {
-    auto customer = CheckCustomerObject(object.key, options.customer_namespaces);
+    auto namespaces = options.customer_namespaces;
+    if (!NamespaceOf(object.key.name).empty()) {
+        namespaces.push_back(NamespaceOf(object.key.name));
+    }
+    auto customer = CheckCustomerObject(object.key, namespaces);
     if (customer.IsErr()) {
         return customer.Error();
     }
-    auto package = CheckTargetPackage(object.package, options.customer_namespaces);
+    auto package = CheckTargetPackage(object.package, namespaces);
     if (package.IsErr()) {
         return package.Error();
     }
@@ -88,7 +116,61 @@ std::optional<Error> CheckGuardRails(const AbapGitObjectFiles& object,
     return std::nullopt;
 }
 
+bool SafeForShell(const std::string& s) {
+    return s.find_first_of("\"'`$\\\n\r") == std::string::npos;
+}
+
+// Runs `command` and returns its stdout (empty on any failure).
+std::string Capture(const std::string& command) {
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "rb");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    if (pipe == nullptr) {
+        return "";
+    }
+    std::string out;
+    char buffer[4096];
+    size_t n = 0;
+    while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0) {
+        out.append(buffer, n);
+    }
+#ifdef _WIN32
+    const int status = _pclose(pipe);
+#else
+    const int status = pclose(pipe);
+#endif
+    return status == 0 ? out : "";
+}
+
 }  // namespace
+
+std::vector<std::string> GitFileHistory::PreviousVersions(const std::filesystem::path& file) const {
+    const std::string dir = file.parent_path().string();
+    const std::string name = file.filename().string();
+    if (dir.empty() || !SafeForShell(dir) || !SafeForShell(name)) {
+        return {};
+    }
+#ifdef _WIN32
+    const std::string quiet = " 2>NUL";
+#else
+    const std::string quiet = " 2>/dev/null";
+#endif
+    const std::string git = "git -C \"" + dir + "\" ";
+    std::istringstream hashes(Capture(git + "log --format=%H -n " +
+                                      std::to_string(max_versions_) + " -- \"" + name + "\"" +
+                                      quiet));
+    std::vector<std::string> versions;
+    std::string hash;
+    while (std::getline(hashes, hash)) {
+        if (hash.size() != 40 || hash.find_first_not_of("0123456789abcdef") != std::string::npos) {
+            continue;
+        }
+        versions.push_back(Capture(git + "show " + hash + ":./" + name + quiet));
+    }
+    return versions;
+}
 
 std::string ToString(ObjectAction action) {
     switch (action) {
@@ -128,17 +210,13 @@ Result<ObjectFileSet, Error> LoadObjectFiles(const AbapGitObjectFiles& object) {
             return Result<ObjectFileSet, Error>::Err(std::move(bytes).Error());
         }
         const std::string name = stem + "." + part;
-        if (EndsWith(part, "xml")) {
-            auto parsed = ParseAbapGitXml(bytes.Value());
-            if (parsed.IsErr()) {
-                auto err = parsed.Error();
-                err.message = path.string() + ": " + err.message;
-                return Result<ObjectFileSet, Error>::Err(err);
-            }
-            files[name] = RenderAbapGitXml(parsed.Value());
-        } else {
-            files[name] = ToLf(bytes.Value());
+        auto normalized = NormalizeFile(name, bytes.Value());
+        if (normalized.IsErr()) {
+            auto err = normalized.Error();
+            err.message = path.string() + ": " + err.message;
+            return Result<ObjectFileSet, Error>::Err(err);
         }
+        files[name] = normalized.Value();
     }
     return Result<ObjectFileSet, Error>::Ok(std::move(files));
 }
@@ -153,8 +231,9 @@ std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> DefaultTypeHan
 
 AbapGitWorkflow::AbapGitWorkflow(
     IAdtSession& session, IEngineRunner& engine,
-    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers)
-    : session_(session), engine_(engine), handlers_(std::move(handlers)) {}
+    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
+    const IFileHistory& history)
+    : session_(session), engine_(engine), handlers_(std::move(handlers)), history_(history) {}
 
 const IClassicTypeHandler* AbapGitWorkflow::Handler(const std::string& type) const {
     auto it = handlers_.find(type);
@@ -164,7 +243,9 @@ const IClassicTypeHandler* AbapGitWorkflow::Handler(const std::string& type) con
 AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGitObjectKey>& keys,
                                                         const AbapGitRunOptions& options) {
     ReadResult result;
-    std::vector<EngineOp> ops;
+    // Op 1 is always the system info (logon user, changeable namespaces),
+    // so guard rails cost no extra round trip.
+    std::vector<EngineOp> ops{SystemInfoOp()};
     std::vector<std::pair<size_t, size_t>> slices;  // offset, count per key
     for (const auto& key : keys) {
         auto key_ops = Handler(key.type)->ReadOps(key, options.language);
@@ -172,16 +253,21 @@ AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGi
         ops.insert(ops.end(), key_ops.begin(), key_ops.end());
     }
 
-    std::vector<EngineOpResult> all;
-    if (!ops.empty()) {
-        auto run = engine_.Run(ops);
-        if (run.IsErr()) {
-            for (size_t i = 0; i < keys.size(); ++i) {
-                result.states.push_back(Result<ObjectState, Error>::Err(run.Error()));
-            }
-            return result;
+    if (keys.empty()) {
+        return result;
+    }
+    auto run = engine_.Run(ops);
+    if (run.IsErr()) {
+        for (size_t i = 0; i < keys.size(); ++i) {
+            result.states.push_back(Result<ObjectState, Error>::Err(run.Error()));
         }
-        all = std::move(run).Value();
+        return result;
+    }
+    std::vector<EngineOpResult> all = std::move(run).Value();
+    result.user = all.at(0).changed_by;
+    auto ns = all.at(0).values.find("NS");
+    if (ns != all.at(0).values.end()) {
+        result.namespaces = ns->second;
     }
 
     for (size_t i = 0; i < keys.size(); ++i) {
@@ -193,6 +279,50 @@ AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGi
         result.states.push_back(Handler(keys[i].type)->BuildState(keys[i], slice, ctx));
     }
     return result;
+}
+
+std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& object,
+                                                  const ObjectFileSet& desired,
+                                                  const ObjectState& current,
+                                                  const std::string& user) const {
+    auto same_user = [](std::string a, std::string b) {
+        auto up = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            return s;
+        };
+        return up(std::move(a)) == up(std::move(b));
+    };
+    if (current.changed_by.empty() || same_user(current.changed_by, user)) {
+        return std::nullopt;  // last change is ours (or unknown): a normal update
+    }
+    // Changed by someone else: fine if every differing file is a version from
+    // the file's git history (an earlier deploy, e.g. by the CI user).
+    for (const auto& [name, bytes] : current.files) {
+        auto wanted = desired.find(name);
+        if (wanted != desired.end() && wanted->second == bytes) {
+            continue;
+        }
+        bool known = false;
+        for (const auto& version : history_.PreviousVersions(object.folder / name)) {
+            auto normalized = NormalizeFile(name, version);
+            if (normalized.IsOk() && normalized.Value() == bytes) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            return MakeError(
+                object.key.type + " " + object.key.name + " was last changed in the system by " +
+                    current.changed_by +
+                    (current.changed_on.empty() ? "" : " on " + current.changed_on) +
+                    ", and that version is not in the git history of its files. Pull it into "
+                    "git first with 'erpl-adt abapgit export <repo> --package " + object.package +
+                    "', or overwrite it with --force.",
+                ErrorCategory::LockConflict);
+        }
+    }
+    return std::nullopt;
 }
 
 AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& objects,
@@ -245,9 +375,27 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             continue;
         }
         const auto& current = state.Value();
+        if (!NamespaceOf(object.key.name).empty()) {
+            auto namespaces = options.customer_namespaces;
+            namespaces.insert(namespaces.end(), states.namespaces.begin(), states.namespaces.end());
+            auto allowed = CheckCustomerObject(object.key, namespaces);
+            if (allowed.IsErr()) {
+                report.objects.push_back(FailedOutcome(object.key, object.package,
+                                                       ObjectAction::Refused, allowed.Error()));
+                continue;
+            }
+        }
         if (current.exists && current.files == desired[i]) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Unchanged));
             continue;
+        }
+        if (current.exists && !options.force) {
+            const auto& user = options.user.empty() ? states.user : options.user;
+            if (auto drift = DetectDrift(object, desired[i], current, user)) {
+                report.objects.push_back(
+                    FailedOutcome(object.key, object.package, ObjectAction::Refused, *drift));
+                continue;
+            }
         }
         const auto action = current.exists ? ObjectAction::Updated : ObjectAction::Created;
         if (options.dry_run) {

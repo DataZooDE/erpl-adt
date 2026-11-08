@@ -137,6 +137,10 @@ EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
             ""};
 }
 
+EngineOp SystemInfoOp() {
+    return {"system_info( ).", ""};
+}
+
 std::string BuildEngineSource(const std::string& class_name, const std::vector<EngineOp>& ops) {
     std::ostringstream body;
     for (size_t i = 0; i < ops.size(); ++i) {
@@ -221,6 +225,8 @@ Result<std::vector<EngineOpResult>, Error> ParseEngineOutput(const std::string& 
             r.messages.push_back(std::move(m));
         } else if (kind == "ERR") {
             r.errors.push_back(rest);
+        } else {
+            r.values[kind].push_back(rest);
         }
     }
 

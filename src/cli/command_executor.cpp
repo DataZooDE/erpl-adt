@@ -1698,7 +1698,8 @@ int WithAbapGitEngine(const CommandArgs& args, OutputFormatter& fmt, Body body) 
         return 99;
     }
     ClassrunEngineRunner engine(*session, *classrun_session, AbapGitHelperOptions(args));
-    AbapGitWorkflow workflow(*session, engine, DefaultTypeHandlers());
+    GitFileHistory history;
+    AbapGitWorkflow workflow(*session, engine, DefaultTypeHandlers(), history);
     return body(workflow);
 }
 

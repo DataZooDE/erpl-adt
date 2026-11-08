@@ -38,6 +38,8 @@ EngineOp DomaPutOp(const std::string& name, const std::string& language,
                    const std::string& devclass, const std::string& trkorr,
                    const std::string& asx_xml);
 EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr);
+// Logon user (META changed_by field) and changeable namespaces (values["NS"]).
+EngineOp SystemInfoOp();
 
 // Escapes `value` as an ABAP character literal ('...', quotes doubled).
 std::string AbapQuote(const std::string& value);
@@ -62,6 +64,7 @@ struct EngineOpResult {
     std::map<std::string, std::string> data;  // tag -> decoded bytes
     std::vector<EngineMessage> messages;
     std::vector<std::string> errors;           // activation / check log lines
+    std::map<std::string, std::vector<std::string>> values;  // other kinds, e.g. "NS"
 };
 
 // Parses the engine's line protocol (see the ABAP file's header). Fails if

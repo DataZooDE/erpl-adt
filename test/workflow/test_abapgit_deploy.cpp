@@ -34,6 +34,15 @@ public:
     }
 };
 
+class FakeHistory final : public IFileHistory {
+public:
+    std::map<std::string, std::vector<std::string>> versions;  // file name -> old bytes
+    std::vector<std::string> PreviousVersions(const std::filesystem::path& file) const override {
+        auto it = versions.find(file.filename().string());
+        return it == versions.end() ? std::vector<std::string>{} : it->second;
+    }
+};
+
 // A handler whose "system" is an in-memory map, so the workflow's decisions
 // can be checked without SAP.
 class FakeHandler final : public IClassicTypeHandler {
@@ -43,6 +52,7 @@ public:
     mutable std::vector<std::string> applied;
     mutable std::vector<std::string> deleted;
     std::string fail_apply_for;
+    std::string changed_by = "DEVELOPER";
 
     std::string Type() const override { return type_; }
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
@@ -58,6 +68,7 @@ public:
         if (it != system->end()) {
             state.exists = true;
             state.files = it->second;
+            state.changed_by = changed_by;
         }
         return Result<ObjectState, Error>::Ok(state);
     }
@@ -120,14 +131,16 @@ struct Fixture {
     FakeEngine engine;
     std::map<std::string, ObjectFileSet> system;
     std::shared_ptr<FakeHandler> handler = std::make_shared<FakeHandler>("DOMA");
+    FakeHistory history;
     TempRepo repo;
     Fixture() { handler->system = &system; }
     AbapGitWorkflow Workflow() {
-        return AbapGitWorkflow(session, engine, {{"DOMA", handler}});
+        return AbapGitWorkflow(session, engine, {{"DOMA", handler}}, history);
     }
     AbapGitRunOptions Options() {
         AbapGitRunOptions o;
         o.root_package = "$TMP";
+        o.user = "DEVELOPER";
         return o;
     }
 };
@@ -169,7 +182,7 @@ TEST_CASE("abapGit deploy: all states are read in one engine run", "[workflow][a
     auto report = f.Workflow().Deploy(
         {f.repo.Doma("zerpl_d_a", "A"), f.repo.Doma("zerpl_d_b", "B")}, f.Options());
     REQUIRE(f.engine.runs.size() == 1);
-    CHECK(f.engine.runs[0].size() == 2);
+    CHECK(f.engine.runs[0].size() == 3);  // system info + one read per object
     CHECK(report.objects.size() == 2);
 }
 
@@ -273,4 +286,89 @@ TEST_CASE("LoadObjectFiles: XML is normalized to abapGit's exact rendering",
     CHECK(xml.rfind("\xEF\xBB\xBF<?xml", 0) == 0);
     CHECK(xml.find("\n   <DD01V>\n    <DDTEXT>A</DDTEXT>\n   </DD01V>\n") != std::string::npos);
     CHECK(files.Value().at("zerpl_d_a.doma.abap") == "REPORT zerpl_p.\n");
+}
+
+// ---------------------------------------------------------------------------
+// Drift protection: never silently overwrite changes made in the system.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("abapGit deploy: change made in the system by someone else is refused",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    // A colleague edits the domain in SE11; the files still hold another version.
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE11/>";
+    f.handler->changed_by = "COLLEAGUE";
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[0].message.find("COLLEAGUE") != std::string::npos);
+    CHECK(report.objects[0].message.find("--force") != std::string::npos);
+    CHECK(report.objects[0].message.find("abapgit export") != std::string::npos);
+    CHECK(f.handler->applied.empty());
+    CHECK(report.FirstError()->category == ErrorCategory::LockConflict);
+}
+
+TEST_CASE("abapGit deploy: --force overwrites a drifted object",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE11/>";
+    f.handler->changed_by = "COLLEAGUE";
+    auto options = f.Options();
+    options.force = true;
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, options);
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+}
+
+TEST_CASE("abapGit deploy: system holding an older git version is a normal update",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    auto old_obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({old_obj}, f.Options()).Failed());
+    const auto deployed = f.system["ZERPL_D_A"].begin()->second;
+    // Deployed by the CI user from an earlier commit of the same file.
+    f.handler->changed_by = "CI_DEPLOY";
+    f.history.versions["zerpl_d_a.doma.xml"] = {"<older/>", deployed};
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+}
+
+TEST_CASE("abapGit deploy: own earlier change is a normal update",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+}
+
+TEST_CASE("abapGit status: drift is reported as refused without writing",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    f.handler->changed_by = "COLLEAGUE";
+    f.system["ZERPL_D_A"].begin()->second = "<edited/>";
+    auto options = f.Options();
+    options.dry_run = true;
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, options);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+}
+
+TEST_CASE("abapGit deploy: namespaced object needs a namespace changeable in the system",
+          "[workflow][abapgit_deploy]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    obj.key.name = "/ACME/D_STATUS";
+    auto report = f.Workflow().Deploy({obj}, f.Options());
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+
+    auto options = f.Options();
+    options.customer_namespaces = {"/ACME/"};
+    auto allowed = f.Workflow().Deploy({obj}, options);
+    CHECK(allowed.objects[0].action == ObjectAction::Created);
 }
