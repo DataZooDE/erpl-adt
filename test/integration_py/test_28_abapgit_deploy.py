@@ -289,6 +289,64 @@ class TestColleagueChanges:
 
 
 @pytest.mark.abapgit_deploy
+class TestSubPackageRepository:
+    """A repository with a sub-package folder (PREFIX: src/sub/ -> <root>_SUB).
+
+    Uses the local packages $ZERPL_GIT and $ZERPL_GIT_SUB (created once on
+    A4H for these tests) and a test-only copy of the status domain."""
+
+    ROOT = "$ZERPL_GIT"
+    SUB = "$ZERPL_GIT_SUB"
+    DOMA = "ZERPL_D_SUB_STATUS"
+
+    def _repo(self, tmp_path, cli):
+        if cli.run("object", "read", "/sap/bc/adt/packages/%24zerpl_git_sub").returncode != 0:
+            pytest.skip("local test packages $ZERPL_GIT / $ZERPL_GIT_SUB do not exist")
+        repo = tmp_path / "repo"
+        (repo / "src" / "sub").mkdir(parents=True)
+        shutil.copy(FIXTURES / ".abapgit.xml", repo / ".abapgit.xml")
+        file = repo / "src" / "sub" / "zerpl_d_sub_status.doma.xml"
+        file.write_bytes((SRC / "zerpl_d_so_status.doma.xml").read_bytes().replace(
+            b"ZERPL_D_SO_STATUS", self.DOMA.encode()))
+        return repo, file
+
+    def test_deploy_export_refresh_and_delete_keep_the_folder(self, cli, adt, tmp_path):
+        repo, file = self._repo(tmp_path, cli)
+        try:
+            deployed = cli.run_ok("abapgit", "deploy", str(repo), "--package", self.ROOT)
+            assert _entry(deployed, "DOMA", self.DOMA)["package"] == self.SUB
+
+            # --object: lands in the folder of its TADIR package.
+            fresh = tmp_path / "fresh"
+            exported = cli.run_ok("abapgit", "export", str(fresh), "--package", self.ROOT,
+                                  "--object", f"DOMA:{self.DOMA}")
+            assert _entry(exported, "DOMA", self.DOMA)["package"] == self.SUB
+            assert (fresh / "src" / "sub" / file.name).read_bytes() == file.read_bytes()
+            assert not (fresh / "src" / file.name).exists()
+
+            # Refresh in place: written back into src/sub/, an obsolete part
+            # file of the object is removed (and git would show it).
+            obsolete = file.parent / "zerpl_d_sub_status.doma.screen_0200.abap"
+            obsolete.write_text("obsolete\n")
+            refreshed = cli.run_ok("abapgit", "export", str(repo), "--package", self.ROOT)
+            entry = _entry(refreshed, "DOMA", self.DOMA)
+            assert "removed " + obsolete.name in entry["parts"]
+            assert not obsolete.exists()
+            assert sorted(p.name for p in (repo / "src").rglob("*.xml")) == [file.name]
+            again = cli.run_ok("abapgit", "status", str(repo), "--package", self.ROOT)
+            assert _entry(again, "DOMA", self.DOMA)["action"] == "unchanged"
+        finally:
+            cli.run("abapgit", "delete", str(repo), "--package", self.ROOT, "--force")
+        status, _ = adt.get(f"/sap/bc/adt/ddic/domains/{self.DOMA.lower()}")
+        assert status == 404
+
+    def test_single_file_inside_the_repo_uses_the_folder_package(self, cli, tmp_path):
+        repo, file = self._repo(tmp_path, cli)
+        data = cli.run_ok("abapgit", "status", str(file), "--package", self.ROOT)
+        assert _entry(data, "DOMA", self.DOMA)["package"] == self.SUB
+
+
+@pytest.mark.abapgit_deploy
 class TestRepositoryRoundTrip:
     """The whole demo repository: domain, data element, function group with
     function modules, a module pool with five screens and GUI status, a report
