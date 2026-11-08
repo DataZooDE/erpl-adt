@@ -4,6 +4,7 @@
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/object.hpp>
 #include <erpl_adt/adt/object_exists.hpp>
+#include <erpl_adt/adt/search.hpp>
 #include <erpl_adt/core/log.hpp>
 #include <erpl_adt/core/types.hpp>
 #include <erpl_adt/workflow/lock_workflow.hpp>
@@ -151,13 +152,104 @@ void DeleteHelper(IAdtSession& session, const std::string& helper_class) {
     }
     auto deleted = DeleteObjectWithAutoLock(session, object_uri.Value(), std::nullopt);
     if (deleted.IsErr()) {
+        // One retry: a lock left by the run's own write can take a moment to clear.
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        deleted = DeleteObjectWithAutoLock(session, object_uri.Value(), std::nullopt);
+    }
+    if (deleted.IsErr()) {
         LogWarn(kComponent, "Failed to delete temporary helper class " + helper_class +
                                 " (delete it in SE24 or with 'erpl-adt object delete'): " +
                                 deleted.Error().message);
     }
 }
 
+bool IsHelperName(const std::string& name) {
+    const std::string prefix = "ZCL_ERPLHLP_";
+    if (name.size() != prefix.size() + 8 || name.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    return name.find_first_not_of("0123456789ABCDEF", prefix.size()) == std::string::npos;
+}
+
+// Days since 1970-01-01 for a proleptic Gregorian date (H. Hinnant's algorithm).
+long long DaysFromCivil(int y, unsigned m, unsigned d) {
+    y -= m <= 2 ? 1 : 0;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return static_cast<long long>(era) * 146097 + static_cast<long long>(doe) - 719468;
+}
+
 }  // namespace
+
+std::optional<std::chrono::system_clock::time_point> ParseAdtTimestamp(const std::string& iso) {
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+    if (iso.size() < 19 || std::sscanf(iso.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi,
+                                       &sec) != 6) {
+        return std::nullopt;
+    }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 60) {
+        return std::nullopt;
+    }
+    const long long days = DaysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d));
+    const long long seconds = days * 86400 + h * 3600 + mi * 60 + sec;
+    return std::chrono::system_clock::time_point(std::chrono::seconds(seconds));
+}
+
+bool IsStaleHelper(const ObjectInfo& info, const std::string& user,
+                   std::chrono::system_clock::time_point now, std::chrono::minutes min_age) {
+    if (!IsHelperName(info.name)) {
+        return false;
+    }
+    auto upper = [](std::string v) {
+        std::transform(v.begin(), v.end(), v.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return v;
+    };
+    if (upper(info.responsible) != upper(user)) {
+        return false;
+    }
+    auto changed = ParseAdtTimestamp(info.changed_at);
+    return changed.has_value() && now - *changed >= min_age;
+}
+
+HelperCleanupReport CleanupStaleHelpers(IAdtSession& session, const std::string& user,
+                                        std::chrono::minutes min_age) {
+    HelperCleanupReport report;
+    SearchOptions search;
+    search.query = "ZCL_ERPLHLP_*";
+    search.max_results = 500;
+    search.object_type = "CLAS";
+    auto found = SearchObjects(session, search);
+    if (found.IsErr()) {
+        report.failed.emplace_back("search", found.Error().message);
+        return report;
+    }
+    const auto now = std::chrono::system_clock::now();
+    for (const auto& hit : found.Value()) {
+        auto uri = ObjectUri::Create(hit.uri);
+        if (uri.IsErr()) {
+            continue;
+        }
+        auto structure = GetObjectStructure(session, uri.Value());
+        if (structure.IsErr()) {
+            report.failed.emplace_back(hit.name, structure.Error().message);
+            continue;
+        }
+        if (!IsStaleHelper(structure.Value().info, user, now, min_age)) {
+            report.kept.push_back(hit.name);
+            continue;
+        }
+        auto deleted = DeleteObjectWithAutoLock(session, uri.Value(), std::nullopt);
+        if (deleted.IsErr()) {
+            report.failed.emplace_back(hit.name, deleted.Error().message);
+        } else {
+            report.deleted.push_back(hit.name);
+        }
+    }
+    return report;
+}
 
 std::string MakeHelperClassName() {
     static std::mt19937 engine{std::random_device{}()};

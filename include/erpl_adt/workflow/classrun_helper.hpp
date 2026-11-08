@@ -2,8 +2,11 @@
 
 #include <erpl_adt/adt/classic_engine.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
+#include <erpl_adt/adt/object.hpp>
 #include <erpl_adt/core/result.hpp>
 
+#include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +44,31 @@ std::string MakeHelperClassName();
 [[nodiscard]] Result<std::string, Error> RunClassrunHelper(
     IAdtSession& session, IAdtSession& classrun_session,
     const ClassrunHelperOptions& options, const std::string& source);
+
+// --- cleanup after interrupted runs ----------------------------------------
+//
+// A run interrupted by a network outage or a short dump can leave its helper
+// class behind (SAP keeps the edit lock of the dead session for a while, so
+// the delete fails). These helpers find and remove such leftovers safely:
+// only genuine helper names (ZCL_ERPLHLP_ + 8 hex digits), only classes owned
+// by the given user, and only when they are old enough that no run in
+// progress can still be using them.
+
+// "2026-11-08T11:57:46Z" (ADT adtcore:changedAt, UTC) -> time point.
+std::optional<std::chrono::system_clock::time_point> ParseAdtTimestamp(const std::string& iso);
+
+bool IsStaleHelper(const ObjectInfo& info, const std::string& user,
+                   std::chrono::system_clock::time_point now, std::chrono::minutes min_age);
+
+struct HelperCleanupReport {
+    std::vector<std::string> deleted;
+    std::vector<std::string> kept;                              // too young / not ours
+    std::vector<std::pair<std::string, std::string>> failed;    // name, reason
+};
+
+// Searches ZCL_ERPLHLP_*, deletes the stale ones owned by `user`.
+HelperCleanupReport CleanupStaleHelpers(IAdtSession& session, const std::string& user,
+                                        std::chrono::minutes min_age);
 
 // Runs engine operations (adt/classic_engine.hpp) and returns one result per
 // operation. An interface so workflows take it by constructor injection and

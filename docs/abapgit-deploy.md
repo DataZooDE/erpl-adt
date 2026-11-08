@@ -86,8 +86,11 @@ ABAP source. The class body is a real ABAP file in this repository
 (`src/abap/`), so it can be read and reviewed like any other code. A class
 that fails to compile is never run (SAP would otherwise run its previous
 version). If a run is interrupted (network, short dump), a leftover helper is
-reported by name; `erpl-adt search 'ZCL_ERPLHLP*'` lists them and
-`erpl-adt object delete /sap/bc/adt/oo/classes/<name>` removes one.
+reported by name. Every `abapgit` command quietly removes your own helpers
+that are older than two hours; `erpl-adt abapgit cleanup [--older-than 60]`
+does it on demand. Only genuine helper names (`ZCL_ERPLHLP_` + 8 hex digits)
+owned by the logon user are touched, never a helper young enough to belong to
+a run in progress.
 
 ## Working in a team
 

@@ -162,3 +162,57 @@ TEST_CASE("ClassrunEngineRunner: keep_helper leaves the class in place",
     }
     CHECK(mock.DeleteCallCount() == 0);
 }
+
+// ---------------------------------------------------------------------------
+// Stale helper detection (cleanup after interrupted runs)
+// ---------------------------------------------------------------------------
+
+namespace {
+ObjectInfo Helper(const std::string& name, const std::string& owner, const std::string& changed) {
+    ObjectInfo info;
+    info.name = name;
+    info.type = "CLAS/OC";
+    info.responsible = owner;
+    info.changed_at = changed;
+    return info;
+}
+std::chrono::system_clock::time_point At(const std::string& iso) {
+    auto t = ParseAdtTimestamp(iso);
+    REQUIRE(t.has_value());
+    return *t;
+}
+}  // namespace
+
+TEST_CASE("ParseAdtTimestamp: ADT UTC timestamps", "[workflow][classrun_helper]") {
+    auto a = ParseAdtTimestamp("2026-11-08T11:57:46Z");
+    auto b = ParseAdtTimestamp("2026-11-08T12:57:46Z");
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    CHECK(std::chrono::duration_cast<std::chrono::minutes>(*b - *a).count() == 60);
+    CHECK(std::chrono::system_clock::to_time_t(*a) == 1794139066);
+    CHECK_FALSE(ParseAdtTimestamp("").has_value());
+    CHECK_FALSE(ParseAdtTimestamp("yesterday").has_value());
+}
+
+TEST_CASE("IsStaleHelper: only own, old, genuine helper classes", "[workflow][classrun_helper]") {
+    const auto now = At("2026-11-08T14:00:00Z");
+    const std::chrono::minutes age{60};
+    CHECK(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "DEVELOPER", "2026-11-08T11:57:46Z"),
+                        "DEVELOPER", now, age));
+    // too young: may belong to a run in progress
+    CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "DEVELOPER", "2026-11-08T13:30:00Z"),
+                              "DEVELOPER", now, age));
+    // someone else's helper
+    CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "COLLEAGUE", "2026-11-08T11:00:00Z"),
+                              "DEVELOPER", now, age));
+    // owner comparison is case-insensitive
+    CHECK(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "developer", "2026-11-08T11:00:00Z"),
+                        "DEVELOPER", now, age));
+    // names that merely look similar are never touched
+    CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_MYCLASS", "DEVELOPER", "2026-11-08T11:00:00Z"),
+                              "DEVELOPER", now, age));
+    CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD1", "DEVELOPER", "2026-11-08T11:00:00Z"),
+                              "DEVELOPER", now, age));
+    // unknown change time: keep
+    CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "DEVELOPER", ""), "DEVELOPER", now, age));
+}

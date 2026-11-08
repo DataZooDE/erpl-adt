@@ -4,6 +4,7 @@
 #include <erpl_adt/cli/login_wizard.hpp>
 #include <erpl_adt/cli/output_formatter.hpp>
 #include <erpl_adt/core/ansi.hpp>
+#include <erpl_adt/core/log.hpp>
 #include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/terminal.hpp>
 
@@ -1697,6 +1698,12 @@ int WithAbapGitEngine(const CommandArgs& args, OutputFormatter& fmt, Body body) 
     if (!classrun_session) {
         return 99;
     }
+    // Best effort: remove our own helpers that interrupted runs left behind
+    // more than two hours ago (never someone else's, never a fresh one).
+    auto swept = CleanupStaleHelpers(*session, session->LogonUserName(), std::chrono::minutes(120));
+    for (const auto& name : swept.deleted) {
+        LogInfo("abapgit", "Removed stale helper class " + name);
+    }
     ClassrunEngineRunner engine(*session, *classrun_session, AbapGitHelperOptions(args));
     GitFileHistory history;
     AbapGitWorkflow workflow(*session, engine, DefaultTypeHandlers(), history);
@@ -1748,6 +1755,51 @@ int HandleAbapGitDeploy(const CommandArgs& args) {
                               target.Value().skipped.end());
         return PrintAbapGitReport(fmt, "deploy", opts, report);
     });
+}
+
+int HandleAbapGitCleanup(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    int minutes = 60;
+    if (HasFlag(args, "older-than")) {
+        try {
+            minutes = std::stoi(GetFlag(args, "older-than"));
+        } catch (...) {
+            minutes = -1;
+        }
+        if (minutes < 0) {
+            fmt.PrintError(MakeValidationError("Invalid --older-than: expected minutes, e.g. 60"));
+            return 99;
+        }
+    }
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+    auto report = CleanupStaleHelpers(*session, session->LogonUserName(),
+                                      std::chrono::minutes(minutes));
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["deleted"] = report.deleted;
+        j["kept"] = report.kept;
+        j["failed"] = nlohmann::json::array();
+        for (const auto& [name, reason] : report.failed) {
+            j["failed"].push_back({{"name", name}, {"reason", reason}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::ostringstream out;
+        for (const auto& n : report.deleted) {
+            out << "deleted  " << n << "\n";
+        }
+        for (const auto& [name, reason] : report.failed) {
+            out << "failed   " << name << "  " << reason << "\n";
+        }
+        out << report.deleted.size() << " deleted, " << report.kept.size()
+            << " kept (younger than " << minutes << " min or not yours), " << report.failed.size()
+            << " failed";
+        std::cout << out.str() << std::endl;
+    }
+    return report.failed.empty() ? 0 : 6;
 }
 
 int HandleAbapGitStatus(const CommandArgs& args) {
@@ -8187,6 +8239,21 @@ void RegisterAllCommands(CommandRouter& router) {
             help.examples = {"erpl-adt abapgit delete ./erpl-demo --package '$TMP'"};
             router.Register("abapgit", "delete", "Delete the objects described by abapGit files",
                             HandleAbapGitDelete, std::move(help));
+        }
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit cleanup [--older-than <minutes>]";
+            help.flags = {
+                {"older-than", "<minutes>", "Only helpers last changed at least this long ago (default 60)", false},
+            };
+            help.long_description =
+                "Deletes temporary helper classes (ZCL_ERPLHLP_<8 hex>) that interrupted runs left "
+                "behind — only your own, and only old ones, so runs in progress are never "
+                "disturbed. Every abapgit command already does this quietly for helpers older "
+                "than two hours.";
+            help.examples = {"erpl-adt abapgit cleanup", "erpl-adt abapgit cleanup --older-than 10"};
+            router.Register("abapgit", "cleanup", "Remove helper classes left by interrupted runs",
+                            HandleAbapGitCleanup, std::move(help));
         }
     }
 
