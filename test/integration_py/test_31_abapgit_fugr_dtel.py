@@ -92,7 +92,7 @@ class TestDataElement:
     """Sales order status data element on the status domain."""
 
     def test_folder_deploy_creates_domain_before_data_element(self, cli, adt, tmp_path):
-        cli.run("abapgit", "delete", str(DTEL_FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(DTEL_FILE), "--package", PACKAGE, "--force")
         repo = _repo_with(tmp_path, DOMA_FILE, DTEL_FILE)
 
         result = cli.run_ok("abapgit", "deploy", str(repo), "--package", PACKAGE)
@@ -183,7 +183,7 @@ class TestFunctionGroup:
     """Function group with two function modules on the EPM sales order model."""
 
     def test_deploy_creates_group_and_function_modules(self, cli, adt):
-        cli.run("abapgit", "delete", str(FUGR_FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(FUGR_FILE), "--package", PACKAGE, "--force")
 
         result = cli.run_ok("abapgit", "deploy", str(FUGR_FILE), "--package", PACKAGE)
 

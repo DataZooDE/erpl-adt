@@ -137,7 +137,7 @@ class TestModulePool:
     XML = SRC / "zerpl_so_display.prog.xml"
 
     def test_deploy_creates_program_with_all_parts(self, cli, adt):
-        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE)
+        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE, "--force")
 
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
 
@@ -255,7 +255,20 @@ class TestModulePool:
         message = _entry(json.loads(result.stdout), "PROG", self.PROG)["message"]
         assert 'Input/output field "GV_UNKNOWN" not defined' in message
         assert "Screen 0100" in message
-        assert adt.inactive(self.PROG) == []  # nothing was saved
+        assert adt.inactive(self.PROG) == []
+        # RPY_DYNPRO_INSERT saves the screen before it generates it, so the
+        # rejected flow logic is in the system (saved, not generated) - as
+        # after a failed save in SE51. A plain redeploy of the fixed file is
+        # therefore refused as drift; once the attempt is committed, the git
+        # history knows that version and the fix goes through.
+        refused = cli.run("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
+        assert refused.returncode == 6, refused.stdout + refused.stderr
+        _commit(tmp_path, "broken attempt")
+        shutil.copy(SRC / flow.name, flow)
+        fixed = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
+        entry = _entry(fixed, "PROG", self.PROG)
+        assert entry["action"] == "updated"
+        assert entry["parts"] == ["screen 0100"]
 
     def test_broken_source_fails_activation_with_sap_error(self, cli, adt, tmp_path):
         xml = _copy(self.STEM, tmp_path)
@@ -301,7 +314,7 @@ class TestReport:
     XML = SRC / "zerpl_po_report.prog.xml"
 
     def test_deploy_creates_report_with_text_pool(self, cli, adt):
-        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE)
+        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE, "--force")
 
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
 

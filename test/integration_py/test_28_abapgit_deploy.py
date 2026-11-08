@@ -96,7 +96,7 @@ class TestDomain:
     FILE = SRC / "zerpl_d_so_status.doma.xml"
 
     def test_deploy_creates_domain_with_fixed_values(self, cli, adt, helpers_before):
-        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
 
         result = cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE)
 
@@ -142,7 +142,7 @@ class TestGuardRails:
     FILE = SRC / "zerpl_d_so_status.doma.xml"
 
     def test_transportable_package_without_request_is_refused(self, cli, adt):
-        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
         # ZCLASSIC_DEVELOPMENT is a transportable customer package on A4H.
         result = cli.run("abapgit", "deploy", str(self.FILE), "--package", "ZCLASSIC_DEVELOPMENT")
 
@@ -157,7 +157,7 @@ class TestGuardRails:
     def test_status_without_request_annotates_instead_of_refusing(self, cli):
         # A pull-request check has no transport request: status reports what
         # a deploy would do and notes the missing --transport; --strict refuses.
-        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
 
         data = cli.run_ok("abapgit", "status", str(self.FILE), "--package",
                           "ZCLASSIC_DEVELOPMENT")
@@ -182,7 +182,7 @@ class TestGuardRails:
         assert _entry(json.loads(result.stdout), "DOMA", "XFELD")["action"] == "refused"
 
     def test_status_reports_without_writing(self, cli, adt):
-        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
 
         data = cli.run_ok("abapgit", "status", str(self.FILE), "--package", PACKAGE)
 
@@ -361,6 +361,11 @@ class TestRepositoryRoundTrip:
         return keys
 
     def test_deploy_whole_repository_in_dependency_order(self, cli):
+        # From a clean state: earlier suites may have left (or interrupted
+        # runs may have left) versions of these objects that are in no git
+        # history, which a deploy rightly refuses to overwrite.
+        cli.run("abapgit", "delete", str(FIXTURES), "--package", PACKAGE, "--force",
+                timeout=1800)
         data = cli.run_ok("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,
                           timeout=1800)
 

@@ -161,7 +161,7 @@ class TestTransactions:
     @pytest.mark.parametrize("path", [VA03, ME2L, SO_LIST], ids=lambda p: p.stem)
     def test_deploy_creates_transaction(self, cli, programs, path):
         tcode = path.name.split(".")[0].upper()
-        cli.run("abapgit", "delete", str(path), "--package", PACKAGE)
+        cli.run("abapgit", "delete", str(path), "--package", PACKAGE, "--force")
         assert _tstc(tcode) is None
 
         result = cli.run_ok("abapgit", "deploy", str(path), "--package", PACKAGE)

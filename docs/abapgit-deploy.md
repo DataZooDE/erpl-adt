@@ -206,3 +206,8 @@ problems in the code being deployed.
   2.9 s). A program change costs two runs (write, then activate). Runs are not
   batched across objects yet.
 * abapGit's MIXED folder logic is not supported (PREFIX and FULL are).
+* A screen whose flow logic SAP rejects (e.g. a `FIELD` that is not on the
+  screen) is still saved: `RPY_DYNPRO_INSERT` saves before it generates, as
+  SE51 does. The deploy fails with SAP's message (exit 5), and because dynpros
+  record no last changer, the next deploy of the fixed file is refused as
+  drift until the failed attempt is committed (or with `--force`).
