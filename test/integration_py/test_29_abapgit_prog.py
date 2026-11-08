@@ -126,11 +126,16 @@ class TestModulePool:
 
     def test_screen_read_shows_the_overview_fields(self, cli):
         screen = _screen_fields(cli, self.PROG, "0200")
-        text = str(screen)
-        for name in ("SNWD_SO-SO_ID", "SNWD_BPA-COMPANY_NAME", "SNWD_SO-GROSS_AMOUNT",
-                     "SNWD_SO-CURRENCY_CODE", "SNWD_SO-LIFECYCLE_STATUS", "GV_BILLED",
-                     "GV_NET", "GV_GROSS", "TS_DETAIL", "TAB_ITEMS", "TAB_NOTES"):
-            assert name in text, f"{name} missing on screen 0200: {text[:2000]}"
+        fields = {f["name"]: f for f in screen["fields"]}
+        for name in ("BOX_HEADER", "SNWD_SO-SO_ID", "SNWD_BPA-COMPANY_NAME",
+                     "SNWD_SO-GROSS_AMOUNT", "SNWD_SO-CURRENCY_CODE",
+                     "SNWD_SO-LIFECYCLE_STATUS", "GV_BILLED", "GV_NET", "GV_GROSS",
+                     "BTN_REFRESH", "TAB_ITEMS", "TAB_NOTES", "OK_CODE"):
+            assert name in fields, f"{name} missing on screen 0200: {sorted(fields)}"
+        company = fields["SNWD_BPA-COMPANY_NAME"]
+        assert (company["line"], company["column"]) == (3, 20)
+        assert company["output"] and not company["input"]
+        assert (screen["lines"], screen["columns"]) == (27, 120)
 
     def test_redeploy_unchanged_changes_nothing(self, cli):
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
