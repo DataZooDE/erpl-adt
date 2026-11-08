@@ -185,3 +185,17 @@ TEST_CASE("Engine output: other kinds are kept as values", "[classic_engine]") {
     CHECK(parsed.Value()[0].changed_by == "DEVELOPER");
     CHECK(parsed.Value()[0].values.at("NS") == std::vector<std::string>{"/ACME/", "/DZOO/"});
 }
+
+TEST_CASE("Engine source: DDIC deletes record the deletion on the given request",
+          "[classic_engine]") {
+    // RS_DD_DELETE_OBJ's own CHANGING corrnum feeds its internal corr_insert
+    // (the CTS entry for the deletion); without it SAP picks or asks.
+    const auto src = BuildEngineSource("ZCL_H", {});
+    for (const char* method : {"METHOD doma_delete.", "METHOD dtel_delete."}) {
+        const auto begin = src.find(method);
+        REQUIRE(begin != std::string::npos);
+        const auto body = src.substr(begin, src.find("ENDMETHOD.", begin) - begin);
+        CHECK(body.find("corrnum") != std::string::npos);
+        CHECK(body.find("= trkorr") != std::string::npos);
+    }
+}

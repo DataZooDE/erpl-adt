@@ -146,12 +146,18 @@
 
   METHOD doma_delete.
     DATA objname TYPE rsedd0-ddobjname.
+    " The deletion is recorded on this request by RS_DD_DELETE_OBJ's own
+    " corr_insert (CHANGING corrnum); space for local packages.
+    DATA corrnum TYPE e070-trkorr.
+    corrnum = trkorr.
     objname = name.
     CALL FUNCTION 'RS_DD_DELETE_OBJ'
       EXPORTING
         no_ask               = abap_true
         objname              = objname
         objtype              = 'D'
+      CHANGING
+        corrnum              = corrnum
       EXCEPTIONS
         not_executed         = 1
         object_not_found     = 2
