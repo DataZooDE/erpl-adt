@@ -120,10 +120,20 @@ bool SameUser(std::string a, std::string b) {
     return up(std::move(a)) == up(std::move(b));
 }
 
-// Arguments for the export command that pulls exactly this object into git.
-std::string ExportHint(const AbapGitObjectFiles& object) {
-    return "<repo> --package " + object.package + " --object " + object.key.type + ":" +
-           object.key.name;
+// Shell-quoted ('...') for copy-paste; ' inside becomes '\''.
+std::string ShellQuote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    }
+    return out + "'";
+}
+
+// The export command that pulls exactly this object into git.
+std::string ExportHint(const AbapGitObjectFiles& object, const std::filesystem::path& repo_root) {
+    const auto root = repo_root.empty() ? object.folder : repo_root;
+    return "erpl-adt abapgit export " + ShellQuote(root.string()) + " --package " +
+           ShellQuote(object.package) + " --object " + object.key.type + ":" + object.key.name;
 }
 
 // TADIR package of the object and its parent packages (TDEVC-PARENTCL).
@@ -490,7 +500,8 @@ std::optional<Error> AbapGitWorkflow::CheckAgainstSystem(
 std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& object,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,
-                                                  const std::string& user) const {
+                                                  const std::string& user,
+                                                  const std::filesystem::path& repo_root) const {
     // A differing file is safe to overwrite when
     //   - the deployer is provably the last changer of every differing part, or
     //   - the system holds a version from the file's git history (an earlier
@@ -576,8 +587,8 @@ std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& obje
                     (unknown ? " (SAP records no last changer for this part)" : "") +
                     (!unknown && !current.changed_on.empty() ? " on " + current.changed_on : "") +
                     ", and that version is not in the git history of the file. Pull it into "
-                    "git first with 'erpl-adt abapgit export " + ExportHint(object) +
-                    "' and commit it, or overwrite it with --force.",
+                    "git first and commit it: " + ExportHint(object, repo_root) +
+                    " - or overwrite it with --force.",
                 ErrorCategory::LockConflict);
         }
     }
@@ -673,7 +684,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         }
         if (current.exists && !options.force) {
             const auto& user = options.user.empty() ? states.user : options.user;
-            if (auto drift = DetectDrift(object, desired[i], current, user)) {
+            if (auto drift = DetectDrift(object, desired[i], current, user, options.repo_root)) {
                 report.objects.push_back(
                     FailedOutcome(object.key, object.package, ObjectAction::Refused, *drift));
                 continue;
@@ -769,7 +780,7 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
         }
         if (!options.force && current.files != files_on_disk[i]) {
             const auto& user = options.user.empty() ? states.user : options.user;
-            if (auto drift = DetectDrift(object, files_on_disk[i], current, user)) {
+            if (auto drift = DetectDrift(object, files_on_disk[i], current, user, options.repo_root)) {
                 report.objects.push_back(
                     FailedOutcome(object.key, object.package, ObjectAction::Refused, *drift));
                 continue;

@@ -1506,6 +1506,7 @@ struct AbapGitTarget {
     std::vector<std::string> skipped;
     std::string language = "E";
     AbapGitRepoConfig config;
+    std::filesystem::path repo_root;  // folder of the governing .abapgit.xml, if any
 };
 
 // Finds the .abapgit.xml that governs `start` (the folder itself or a parent).
@@ -1569,6 +1570,7 @@ Result<AbapGitTarget, Error> ResolveAbapGitTarget(const std::string& path,
         target.config = config.Value();
         target.language = target.config.master_language.empty() ? "E"
                                                                  : target.config.master_language;
+        target.repo_root = dot->parent_path();
     }
 
     if (std::filesystem::is_regular_file(path, ec) && dot) {
@@ -1691,7 +1693,12 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
     } else {
         std::ostringstream out;
         for (const auto& o : report.objects) {
-            out << (options.dry_run ? "would be " : "") << ToString(o.action) << "  "
+            // Only what a real run would do is "would be ..."; unchanged,
+            // refused, failed and skipped read the same in a dry run.
+            const bool would = options.dry_run && (o.action == ObjectAction::Created ||
+                                                   o.action == ObjectAction::Updated ||
+                                                   o.action == ObjectAction::Deleted);
+            out << (would ? "would be " : "") << ToString(o.action) << "  "
                 << o.key.type << " " << o.key.name << "  (" << o.package << ")";
             if (!o.parts.empty()) {
                 out << "  ";
@@ -1788,6 +1795,7 @@ int HandleAbapGitDeploy(const CommandArgs& args) {
     }
     auto opts = options.Value();
     opts.language = target.Value().language;
+    opts.repo_root = target.Value().repo_root;
     return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
         auto report = workflow.Deploy(target.Value().objects, opts);
         report.skipped.insert(report.skipped.end(), target.Value().skipped.begin(),
@@ -1867,6 +1875,7 @@ int HandleAbapGitDelete(const CommandArgs& args) {
     }
     auto opts = options.Value();
     opts.language = target.Value().language;
+    opts.repo_root = target.Value().repo_root;
     return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
         return PrintAbapGitReport(fmt, "delete", opts,
                                   workflow.Delete(target.Value().objects, opts));
@@ -8241,8 +8250,10 @@ void RegisterAllCommands(CommandRouter& router) {
                 "Creates or updates every object in dependency order (DOMA, DTEL, FUGR, PROG "
                 "with text pool, dynpros and GUI status, TRAN) and activates it. Objects whose "
                 "system state already equals the files are left alone, so re-running is safe. "
-                "Exit code is non-zero if any object failed; SAP's messages are shown per "
-                "object. " + how_it_works;
+                "SAP's messages are shown per object. Exit codes (the most severe object "
+                "decides): 0 ok, 1 authorization / guard rail / connection, 2 not found, "
+                "5 activation, 6 lock or drift, 8 part the deploy cannot write, 9 transport, "
+                "10 timeout, 99 usage. " + how_it_works;
             help.examples = {
                 "erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900042",
                 "erpl-adt abapgit deploy ./erpl-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'",

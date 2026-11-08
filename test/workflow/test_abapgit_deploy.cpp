@@ -833,3 +833,20 @@ TEST_CASE("GitFileHistory: paths with shell metacharacters are not passed to a s
         CHECK(history.PreviousVersions(repo.root / name).empty());
     }
 }
+
+TEST_CASE("abapGit deploy: the drift hint is a copy-pasteable export command",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE11/>";
+    f.handler->changed_by = "COLLEAGUE";
+    auto options = f.Options();
+    options.repo_root = f.repo.root;
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, options);
+
+    const auto& message = report.objects[0].message;
+    CHECK(message.find("erpl-adt abapgit export '" + f.repo.root.string() +
+                       "' --package '$TMP' --object DOMA:ZERPL_D_A") != std::string::npos);
+    CHECK(message.find("<repo>") == std::string::npos);
+}

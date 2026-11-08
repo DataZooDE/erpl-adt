@@ -154,6 +154,9 @@ struct AbapGitRunOptions {
     // progress output on a terminal. Optional.
     std::function<void(const std::string&)> progress;
     std::string user;                              // deploying user; default: SAP logon user
+    // Repository root, for the export command printed in drift refusals
+    // (default: the object's folder).
+    std::filesystem::path repo_root;
     // Namespaced objects and packages (/ACME/...) are allowed only when the
     // namespace is changeable in the system (SE03, TRNSPACE-EDITFLAG) — the
     // same rule SE80 applies. There is deliberately no override.
@@ -226,7 +229,8 @@ private:
                                                    const std::vector<std::string>& namespaces);
     std::optional<Error> DetectDrift(const AbapGitObjectFiles& object,
                                      const ObjectFileSet& desired, const ObjectState& current,
-                                     const std::string& user) const;
+                                     const std::string& user,
+                                     const std::filesystem::path& repo_root) const;
 
     IAdtSession& session_;
     IEngineRunner& engine_;
