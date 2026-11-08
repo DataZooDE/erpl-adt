@@ -124,8 +124,9 @@ struct AbapGitRunOptions {
     bool dry_run = false;
     bool force = false;                            // overwrite drifted objects
     std::string user;                              // deploying user; default: SAP logon user
-    std::vector<std::string> customer_namespaces;  // e.g. "/ACME/"; merged with the
-                                                   // namespaces changeable in the system
+    // Namespaced objects and packages (/ACME/...) are allowed only when the
+    // namespace is changeable in the system (SE03, TRNSPACE-EDITFLAG) — the
+    // same rule SE80 applies. There is deliberately no override.
 };
 
 struct AbapGitRunReport {
@@ -161,6 +162,12 @@ private:
     ReadResult ReadStates(const std::vector<AbapGitObjectKey>& keys,
                           const AbapGitRunOptions& options);
     const IClassicTypeHandler* Handler(const std::string& type) const;
+    // The one guard-rail phase every command runs once the system facts are
+    // known: object and package must be customer names (Y*/Z* or a
+    // namespace changeable in the system).
+    static std::optional<Error> CheckAgainstSystem(const AbapGitObjectKey& key,
+                                                   const std::string& package,
+                                                   const std::vector<std::string>& namespaces);
     std::optional<Error> DetectDrift(const AbapGitObjectFiles& object,
                                      const ObjectFileSet& desired, const ObjectState& current,
                                      const std::string& user) const;

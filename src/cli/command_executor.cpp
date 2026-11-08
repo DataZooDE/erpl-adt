@@ -8241,9 +8241,12 @@ void RegisterAllCommands(CommandRouter& router) {
                 "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
             help.flags = common;
             help.flags.push_back({"dry-run", "", "Only report what would be deleted", false});
+            help.flags.push_back({"force", "", "Also delete objects changed in the system outside git", false});
             help.long_description =
                 "Deletes the objects described by the files, in reverse dependency order. "
-                "Objects that do not exist are reported as missing, not as errors.";
+                "Objects that do not exist are reported as missing, not as errors. An object "
+                "whose system version differs from the files (and from their git history) "
+                "and was last changed by someone else is refused unless --force is given.";
             help.examples = {"erpl-adt abapgit delete ./erpl-demo --package '$TMP'"};
             router.Register("abapgit", "delete", "Delete the objects described by abapGit files",
                             HandleAbapGitDelete, std::move(help));

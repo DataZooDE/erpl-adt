@@ -81,34 +81,28 @@ Result<std::string, Error> NormalizeFile(const std::string& name, const std::str
     return Result<std::string, Error>::Ok(ToLf(bytes));
 }
 
-// "/ACME/D_STATUS" -> "/ACME/"; "" for names outside a namespace.
-std::string NamespaceOf(const std::string& name) {
-    if (name.size() < 3 || name[0] != '/') {
-        return "";
-    }
-    auto end = name.find('/', 1);
-    return end == std::string::npos ? "" : name.substr(0, end + 1);
-}
-
 // Guard rails that must pass before anything touches the system. A
-// namespaced object passes here if its namespace is syntactically valid; it
-// is checked against the namespaces changeable in the system after the read.
-std::optional<Error> CheckGuardRails(const AbapGitObjectFiles& object,
-                                     const AbapGitRunOptions& options) {
-    auto namespaces = options.customer_namespaces;
-    if (!NamespaceOf(object.key.name).empty()) {
-        namespaces.push_back(NamespaceOf(object.key.name));
+// namespaced object or package passes here if its namespace is well formed;
+// the namespace itself is checked against the namespaces changeable in the
+// system (CheckAgainstSystem) once the system facts are read.
+std::optional<Error> CheckGuardRails(const AbapGitObjectKey& key, const std::string& package,
+                                     bool needs_transport, const AbapGitRunOptions& options) {
+    std::vector<std::string> provisional;
+    for (const auto& name : {key.name, package}) {
+        if (auto ns = AbapNamespaceOf(name)) {
+            provisional.push_back(*ns);
+        }
     }
-    auto customer = CheckCustomerObject(object.key, namespaces);
+    auto customer = CheckCustomerObject(key, provisional);
     if (customer.IsErr()) {
         return customer.Error();
     }
-    auto package = CheckTargetPackage(object.package, namespaces);
-    if (package.IsErr()) {
-        return package.Error();
+    auto target = CheckTargetPackage(package, provisional);
+    if (target.IsErr()) {
+        return target.Error();
     }
-    if (!IsLocalPackage(object.package) && options.transport.empty()) {
-        return MakeError("Package " + object.package +
+    if (needs_transport && !IsLocalPackage(package) && options.transport.empty()) {
+        return MakeError("Package " + package +
                              " is transportable: pass --transport <request> so the changes "
                              "are recorded like in SE80 (or deploy into a local $ package).",
                          ErrorCategory::TransportError);
@@ -281,6 +275,20 @@ AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGi
     return result;
 }
 
+std::optional<Error> AbapGitWorkflow::CheckAgainstSystem(
+    const AbapGitObjectKey& key, const std::string& package,
+    const std::vector<std::string>& namespaces) {
+    auto customer = CheckCustomerObject(key, namespaces);
+    if (customer.IsErr()) {
+        return customer.Error();
+    }
+    auto target = CheckTargetPackage(package, namespaces);
+    if (target.IsErr()) {
+        return target.Error();
+    }
+    return std::nullopt;
+}
+
 std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& object,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,
@@ -342,7 +350,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
                                      " (object type not supported yet)");
             continue;
         }
-        if (auto refused = CheckGuardRails(object, options)) {
+        if (auto refused = CheckGuardRails(object.key, object.package, true, options)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
             continue;
@@ -375,15 +383,10 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             continue;
         }
         const auto& current = state.Value();
-        if (!NamespaceOf(object.key.name).empty()) {
-            auto namespaces = options.customer_namespaces;
-            namespaces.insert(namespaces.end(), states.namespaces.begin(), states.namespaces.end());
-            auto allowed = CheckCustomerObject(object.key, namespaces);
-            if (allowed.IsErr()) {
-                report.objects.push_back(FailedOutcome(object.key, object.package,
-                                                       ObjectAction::Refused, allowed.Error()));
-                continue;
-            }
+        if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
+            report.objects.push_back(
+                FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
+            continue;
         }
         if (current.exists && current.files == desired[i] && current.pending.empty()) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Unchanged));
@@ -422,17 +425,28 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
                                          const AbapGitRunOptions& options) {
     AbapGitRunReport report;
     std::vector<const AbapGitObjectFiles*> eligible;
+    std::vector<ObjectFileSet> files_on_disk;
     for (auto it = objects.rbegin(); it != objects.rend(); ++it) {
         if (it->key.type == "DEVC" || Handler(it->key.type) == nullptr) {
             report.skipped.push_back(it->key.type + " " + it->key.name);
             continue;
         }
-        if (auto refused = CheckGuardRails(*it, options)) {
+        if (auto refused = CheckGuardRails(it->key, it->package, true, options)) {
             report.objects.push_back(
                 FailedOutcome(it->key, it->package, ObjectAction::Refused, *refused));
             continue;
         }
+        // The files are what the caller means to delete; a system version
+        // that differs from them (and from their git history) is someone
+        // else's work and is not deleted without --force.
+        auto files = LoadObjectFiles(*it);
+        if (files.IsErr()) {
+            report.objects.push_back(
+                FailedOutcome(it->key, it->package, ObjectAction::Failed, files.Error()));
+            continue;
+        }
         eligible.push_back(&*it);
+        files_on_disk.push_back(std::move(files).Value());
     }
     std::vector<AbapGitObjectKey> keys;
     for (const auto* object : eligible) {
@@ -446,9 +460,23 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
                                                    ObjectAction::Failed, states.states[i].Error()));
             continue;
         }
-        if (!states.states[i].Value().exists) {
+        const auto& current = states.states[i].Value();
+        if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
+            report.objects.push_back(
+                FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
+            continue;
+        }
+        if (!current.exists) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Missing));
             continue;
+        }
+        if (!options.force && current.files != files_on_disk[i]) {
+            const auto& user = options.user.empty() ? states.user : options.user;
+            if (auto drift = DetectDrift(object, files_on_disk[i], current, user)) {
+                report.objects.push_back(
+                    FailedOutcome(object.key, object.package, ObjectAction::Refused, *drift));
+                continue;
+            }
         }
         if (options.dry_run) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Deleted));
@@ -476,6 +504,11 @@ AbapGitRunReport AbapGitWorkflow::Export(const std::vector<AbapGitObjectKey>& ke
             report.skipped.push_back(key.type + " " + key.name + " (object type not supported yet)");
             continue;
         }
+        if (auto refused = CheckGuardRails(key, options.root_package, false, options)) {
+            report.objects.push_back(
+                FailedOutcome(key, options.root_package, ObjectAction::Refused, *refused));
+            continue;
+        }
         eligible.push_back(key);
     }
     auto states = ReadStates(eligible, options);
@@ -484,6 +517,11 @@ AbapGitRunReport AbapGitWorkflow::Export(const std::vector<AbapGitObjectKey>& ke
         if (states.states[i].IsErr()) {
             report.objects.push_back(FailedOutcome(key, options.root_package,
                                                    ObjectAction::Failed, states.states[i].Error()));
+            continue;
+        }
+        if (auto refused = CheckAgainstSystem(key, options.root_package, states.namespaces)) {
+            report.objects.push_back(
+                FailedOutcome(key, options.root_package, ObjectAction::Refused, *refused));
             continue;
         }
         const auto& state = states.states[i].Value();

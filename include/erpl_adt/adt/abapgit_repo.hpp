@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -130,6 +131,10 @@ struct AbapGitScan {
 [[nodiscard]] Result<void, Error> CheckTargetPackage(
     const std::string& package,
     const std::vector<std::string>& customer_namespaces);
+
+// "/ACME/D_STATUS" -> "/ACME/"; nullopt for names outside a namespace or with
+// a malformed one ("/", "//X", "/ACME/").
+[[nodiscard]] std::optional<std::string> AbapNamespaceOf(const std::string& name);
 
 // Local (non-transportable) package: starts with '$'.
 [[nodiscard]] bool IsLocalPackage(std::string_view package);

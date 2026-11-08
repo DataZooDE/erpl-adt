@@ -293,16 +293,6 @@ bool IsRepoConfigFile(const std::string& repo_path) {
 
 // "/NS/NAME" -> "/NS/"; nullopt when malformed (no closing slash, empty
 // namespace or nothing after it).
-std::optional<std::string> NamespaceOf(const std::string& name) {
-    if (name.empty() || name.front() != '/') {
-        return std::nullopt;
-    }
-    const auto second = name.find('/', 1);
-    if (second == std::string::npos || second == 1 || second + 1 >= name.size()) {
-        return std::nullopt;
-    }
-    return name.substr(0, second + 1);
-}
 
 std::string NormalizeNamespace(const std::string& ns) {
     std::string out = Upper(ns);
@@ -342,7 +332,7 @@ std::string JoinNamespaces(const std::vector<std::string>& customer_namespaces) 
 Result<void, Error> CheckCustomerName(const std::string& name, const std::string& what,
                                       const std::vector<std::string>& customer_namespaces) {
     if (name.front() == '/') {
-        const auto ns = NamespaceOf(name);
+        const auto ns = AbapNamespaceOf(name);
         if (!ns) {
             return Result<void, Error>::Err(MakeError(
                 kGuardOperation,
@@ -654,6 +644,17 @@ Result<AbapGitObjectFiles, Error> ScanAbapGitObject(const fs::path& any_file_of_
 
 bool IsLocalPackage(std::string_view package) {
     return !package.empty() && package.front() == '$';
+}
+
+std::optional<std::string> AbapNamespaceOf(const std::string& name) {
+    if (name.empty() || name.front() != '/') {
+        return std::nullopt;
+    }
+    const auto second = name.find('/', 1);
+    if (second == std::string::npos || second == 1 || second + 1 >= name.size()) {
+        return std::nullopt;
+    }
+    return name.substr(0, second + 1);
 }
 
 Result<void, Error> CheckTargetPackage(const std::string& package,

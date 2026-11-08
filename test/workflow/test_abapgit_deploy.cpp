@@ -18,6 +18,7 @@ class FakeEngine final : public IEngineRunner {
 public:
     std::vector<std::vector<EngineOp>> runs;
     std::vector<std::vector<EngineOpResult>> scripted;
+    std::vector<std::string> namespaces;  // changeable in the "system" (SE03)
 
     Result<std::vector<EngineOpResult>, Error> Run(const std::vector<EngineOp>& ops) override {
         runs.push_back(ops);
@@ -27,8 +28,12 @@ public:
             return Result<std::vector<EngineOpResult>, Error>::Ok(next);
         }
         std::vector<EngineOpResult> ok(ops.size());
-        for (auto& r : ok) {
-            r.rc = 0;
+        for (size_t i = 0; i < ops.size(); ++i) {
+            ok[i].rc = 0;
+            if (ops[i].call == "system_info( ).") {
+                ok[i].changed_by = "DEVELOPER";
+                ok[i].values["NS"] = namespaces;
+            }
         }
         return Result<std::vector<EngineOpResult>, Error>::Ok(ok);
     }
@@ -376,15 +381,94 @@ TEST_CASE("abapGit status: drift is reported as refused without writing",
 }
 
 TEST_CASE("abapGit deploy: namespaced object needs a namespace changeable in the system",
-          "[workflow][abapgit_deploy]") {
+          "[workflow][abapgit_deploy][guard]") {
     Fixture f;
     auto obj = f.repo.Doma("zerpl_d_a", "Status");
     obj.key.name = "/ACME/D_STATUS";
     auto report = f.Workflow().Deploy({obj}, f.Options());
     CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(f.handler->applied.empty());
 
+    f.engine.namespaces = {"/ACME/"};
+    auto allowed = f.Workflow().Deploy({obj}, f.Options());
+    CHECK(allowed.objects[0].action == ObjectAction::Created);
+}
+
+TEST_CASE("abapGit deploy: Z object into a changeable /NS/ package is allowed",
+          "[workflow][abapgit_deploy][guard]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    obj.package = "/ACME/DEMO";
     auto options = f.Options();
-    options.customer_namespaces = {"/ACME/"};
+    options.root_package = "/ACME/DEMO";
+    options.transport = "A4HK900042";
+
+    auto refused = f.Workflow().Deploy({obj}, options);
+    REQUIRE(refused.objects.size() == 1);
+    CHECK(refused.objects[0].action == ObjectAction::Refused);
+    CHECK(refused.objects[0].message.find("/ACME/") != std::string::npos);
+    CHECK(f.handler->applied.empty());
+
+    f.engine.namespaces = {"/ACME/"};
     auto allowed = f.Workflow().Deploy({obj}, options);
     CHECK(allowed.objects[0].action == ObjectAction::Created);
+}
+
+TEST_CASE("abapGit delete: namespace not changeable in the system is refused",
+          "[workflow][abapgit_deploy][guard]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    obj.key.name = "/SAPX/D_STATUS";
+    f.system["/SAPX/D_STATUS"] = {{"x", "y"}};
+    auto report = f.Workflow().Delete({obj}, f.Options());
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(f.handler->deleted.empty());
+    CHECK(report.FirstError()->category == ErrorCategory::Authorization);
+}
+
+TEST_CASE("abapGit delete: object changed in the system by someone else is refused",
+          "[workflow][abapgit_deploy][guard][drift]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE11/>";
+    f.handler->changed_by = "COLLEAGUE";
+
+    auto report = f.Workflow().Delete({obj}, f.Options());
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[0].message.find("COLLEAGUE") != std::string::npos);
+    CHECK(f.handler->deleted.empty());
+    CHECK(report.FirstError()->category == ErrorCategory::LockConflict);
+
+    auto options = f.Options();
+    options.force = true;
+    auto forced = f.Workflow().Delete({obj}, options);
+    CHECK(forced.objects[0].action == ObjectAction::Deleted);
+    CHECK(f.handler->deleted == std::vector<std::string>{"ZERPL_D_A"});
+}
+
+TEST_CASE("abapGit delete: object equal to the files is deleted even if a colleague saved it",
+          "[workflow][abapgit_deploy][guard][drift]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    f.handler->changed_by = "COLLEAGUE";
+    auto report = f.Workflow().Delete({obj}, f.Options());
+    CHECK(report.objects[0].action == ObjectAction::Deleted);
+}
+
+TEST_CASE("abapGit export: objects outside the customer namespaces are refused",
+          "[workflow][abapgit_deploy][guard]") {
+    Fixture f;
+    f.system["/SAPX/D"] = {{"_sapx_d.doma.xml", "<x/>"}};
+    f.system["XFELD"] = {{"xfeld.doma.xml", "<x/>"}};
+    TempRepo out;
+    auto report =
+        f.Workflow().Export({{"DOMA", "/SAPX/D"}, {"DOMA", "XFELD"}}, out.root, f.Options());
+    REQUIRE(report.objects.size() == 2);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[1].action == ObjectAction::Refused);
+    CHECK(std::filesystem::is_empty(out.root));
 }
