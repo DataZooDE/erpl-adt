@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <mutex>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1081,4 +1082,80 @@ TEST_CASE("AdtSession: an unreachable server is not blamed on the read timeout",
     if (error.hint.has_value()) {
         CHECK(error.hint->find("--timeout") == std::string::npos);
     }
+}
+
+// ===========================================================================
+// Stateful sessions are closed on the server when leaving stateful mode.
+//
+// Forgetting the sap-contextid only on the client leaves the ABAP session
+// open until rdisp/plugin_auto_logout (30 min). Under load (CI, parallel runs
+// as one user) the per-user session limit then fills up and every new
+// stateful request fails with "400 Session not found" (observed on A4H).
+// ===========================================================================
+
+TEST_CASE("AdtSession: leaving stateful mode closes the server session",
+          "[adt][session][stateful]") {
+    httplib::Server svr;
+    std::mutex mu;
+    std::vector<std::string> close_cookies;
+    std::vector<std::string> close_session_types;
+    std::vector<std::string> later_cookies;
+    bool closed = false;
+
+    svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(mu);
+        if (req.has_param("sap-sessioncmd") && req.get_param_value("sap-sessioncmd") == "close") {
+            close_cookies.push_back(req.get_header_value("Cookie"));
+            close_session_types.push_back(req.get_header_value("X-sap-adt-sessiontype"));
+            closed = true;
+        } else if (closed) {
+            later_cookies.push_back(req.get_header_value("Cookie"));
+        } else if (req.get_header_value("X-sap-adt-sessiontype") == "stateful") {
+            res.set_header("Set-Cookie", "sap-contextid=CTX-1; path=/sap/bc/adt");
+        }
+        res.set_content("<ok/>", "application/xml");
+    });
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    session->SetStateful(true);
+    REQUIRE(session->Get("/sap/bc/adt/oo/classes/zcl_a").IsOk());
+    session->SetStateful(false);
+
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        REQUIRE(close_cookies.size() == 1);
+        // The close is sent inside the session it ends.
+        CHECK(close_cookies[0].find("sap-contextid=CTX-1") != std::string::npos);
+        CHECK(close_session_types[0] == "stateful");
+    }
+
+    // Afterwards the closed context is no longer sent.
+    REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+    std::lock_guard<std::mutex> lock(mu);
+    REQUIRE(later_cookies.size() == 1);
+    CHECK(later_cookies[0].find("sap-contextid") == std::string::npos);
+}
+
+TEST_CASE("AdtSession: no close request when no stateful session was opened",
+          "[adt][session][stateful]") {
+    httplib::Server svr;
+    std::atomic<int> closes{0};
+    svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
+        if (req.has_param("sap-sessioncmd")) {
+            ++closes;
+        }
+        res.set_content("<ok/>", "application/xml");
+    });
+    LocalServer server(svr);
+    auto session = MakeTestSession(server.Port());
+
+    // Stateless use, then switching "off" again: nothing to close.
+    REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+    session->SetStateful(false);
+    // Stateful mode without any server context yet: nothing to close either.
+    session->SetStateful(true);
+    session->SetStateful(false);
+
+    CHECK(closes.load() == 0);
 }
