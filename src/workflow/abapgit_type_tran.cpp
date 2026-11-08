@@ -209,6 +209,35 @@ public:
         return Result<ObjectState, Error>::Ok(state);
     }
 
+    Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                 const ObjectState& /*current*/,
+                                 const std::string& language) const override {
+        const std::string file = FileName(key, "xml");
+        auto it = desired.find(file);
+        if (it == desired.end()) {
+            return Result<void, Error>::Err(EnginePayload(desired, file).Error());
+        }
+        auto parsed = ParseAbapGitXml(it->second);
+        if (parsed.IsErr()) {
+            return Result<void, Error>::Err(parsed.Error());
+        }
+        const auto problems =
+            UnsupportedParts(key, SplitAsxValues(parsed.Value().values_xml), language);
+        if (!problems.empty()) {
+            Error err;
+            err.operation = "abapGit";
+            err.message = "Transaction " + key.name +
+                          " has parts erpl-adt cannot deploy through SE93's API "
+                          "(RPY_TRANSACTION_INSERT); nothing was written: ";
+            for (size_t i = 0; i < problems.size(); ++i) {
+                err.message += (i ? "; " : "") + problems[i];
+            }
+            err.category = ErrorCategory::CheckError;
+            return Result<void, Error>::Err(err);
+        }
+        return Result<void, Error>::Ok();
+    }
+
     Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,

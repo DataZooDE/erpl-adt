@@ -1629,6 +1629,7 @@ Result<AbapGitRunOptions, Error> ParseAbapGitOptions(const CommandArgs& args) {
     options.transport = GetFlag(args, "transport");
     options.dry_run = HasFlag(args, "dry-run");
     options.force = HasFlag(args, "force");
+    options.strict = HasFlag(args, "strict");
     return Result<AbapGitRunOptions, Error>::Ok(std::move(options));
 }
 
@@ -1663,10 +1664,18 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
             if (!o.message.empty()) {
                 e["message"] = o.message;
             }
+            if (!o.notes.empty()) {
+                e["notes"] = o.notes;
+            }
+            if (o.error.has_value()) {
+                e["category"] = o.error->CategoryName();
+                e["exit_code"] = o.error->ExitCode();
+            }
             j["objects"].push_back(e);
         }
         j["skipped"] = report.skipped;
         j["summary"] = summary;
+        j["exit_code"] = report.ExitCode();
         fmt.PrintJson(j.dump());
     } else {
         std::ostringstream out;
@@ -1682,6 +1691,9 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
             if (!o.message.empty()) {
                 out << "\n    " << o.message;
             }
+            for (const auto& note : o.notes) {
+                out << "\n    note: " << note;
+            }
             out << "\n";
         }
         for (const auto& s : report.skipped) {
@@ -1694,30 +1706,35 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
         out << (line.empty() ? "nothing to do" : line) << (options.dry_run ? " (dry run)" : "");
         std::cout << out.str() << std::endl;
     }
-    auto error = report.FirstError();
-    return error ? error->ExitCode() : 0;
+    // The most severe object decides (see AbapGitRunReport::MostSevereError).
+    return report.ExitCode();
 }
 
 template <typename Body>
 int WithAbapGitEngine(const CommandArgs& args, OutputFormatter& fmt, Body body) {
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
+    auto session = CreateSession(args);
+    if (session.IsErr()) {
+        fmt.PrintError(session.Error());
+        return session.Error().ExitCode();
     }
     // Separate session for classrun — see workflow/classrun_helper.hpp.
-    auto classrun_session = RequireSession(args, fmt);
-    if (!classrun_session) {
-        return 99;
+    auto classrun_session = CreateSession(args);
+    if (classrun_session.IsErr()) {
+        fmt.PrintError(classrun_session.Error());
+        return classrun_session.Error().ExitCode();
     }
     // Best effort: remove our own helpers that interrupted runs left behind
     // more than two hours ago (never someone else's, never a fresh one).
-    auto swept = CleanupStaleHelpers(*session, session->LogonUserName(), std::chrono::minutes(120));
+    auto& main_session = *session.Value();
+    auto swept =
+        CleanupStaleHelpers(main_session, main_session.LogonUserName(), std::chrono::minutes(120));
     for (const auto& name : swept.deleted) {
         LogInfo("abapgit", "Removed stale helper class " + name);
     }
-    ClassrunEngineRunner engine(*session, *classrun_session, AbapGitHelperOptions(args));
+    ClassrunEngineRunner engine(main_session, *classrun_session.Value(),
+                                AbapGitHelperOptions(args));
     GitFileHistory history;
-    AbapGitWorkflow workflow(*session, engine, DefaultTypeHandlers(), history);
+    AbapGitWorkflow workflow(main_session, engine, DefaultTypeHandlers(), history);
     return body(workflow);
 }
 
@@ -8207,6 +8224,7 @@ void RegisterAllCommands(CommandRouter& router) {
                 "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
             help.flags = common;
             help.flags.push_back({"dry-run", "", "Only report what would change (same as 'status')", false});
+            help.flags.push_back({"strict", "", "With --dry-run: a missing --transport is a refusal, not a note", false});
             help.flags.push_back({"force", "", "Overwrite objects changed in the system outside git", false});
             help.long_description =
                 "Creates or updates every object in dependency order (DOMA, DTEL, FUGR, PROG "
@@ -8229,7 +8247,14 @@ void RegisterAllCommands(CommandRouter& router) {
             help.flags = common;
             help.long_description =
                 "Shows per object whether a deploy would create, update or leave it "
-                "unchanged. Writes nothing. Use it in pull-request checks.";
+                "unchanged, and what it would refuse (objects changed in the system outside "
+                "git, parts the deploy cannot write). Changes no object, but it reads through "
+                "SAP's function modules from a temporary helper class in $TMP (created and "
+                "deleted again), so it needs the same development authorization (S_DEVELOP) "
+                "as a deploy. Use it in pull-request checks: without --transport, transportable "
+                "packages only get a note (--strict makes that a refusal).";
+            help.flags.push_back({"strict", "", "Treat a missing --transport as a refusal (exit 9), not a note", false});
+            help.flags.push_back({"force", "", "Report drifted objects as they would be overwritten with --force", false});
             help.examples = {"erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO"};
             router.Register("abapgit", "status", "Show what a deploy would change (no writes)",
                             HandleAbapGitStatus, std::move(help));

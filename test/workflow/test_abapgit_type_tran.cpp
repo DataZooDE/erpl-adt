@@ -213,7 +213,7 @@ TEST_CASE("TRAN handler: SAP's reason is surfaced when the insert fails",
     Fixture f;
     EngineOpResult failed;
     failed.rc = 3;
-    failed.messages.push_back({"E", "SEUK", "081", "Transaction ZERPL_VA03 is locked by FOO"});
+    failed.messages.push_back({"E", "EU", "290", "Transaktion ZERPL_VA03 ist gesperrt (locked by FOO)"});
     f.engine.next = {failed};
     auto ctx = f.Ctx();
     auto r = f.handler->Apply(f.key, f.Files(kVa03Values), ObjectState{}, ctx);
@@ -230,4 +230,17 @@ TEST_CASE("TRAN handler: delete runs tran_delete with the transport",
     REQUIRE(f.engine.runs.size() == 1);
     CHECK(f.engine.runs[0].at(0).call ==
           "tran_delete( name = 'ZERPL_VA03' trkorr = 'A4HK900042' ).");
+}
+
+TEST_CASE("TRAN handler: Validate reports unsupported parts without writing",
+          "[workflow][abapgit_tran][status]") {
+    Fixture f;
+    const auto files = f.Files(std::string(kVa03Values) +
+                               "<AUTHORIZATIONS><TSTCA><TCODE>ZERPL_VA03</TCODE><OBJCT>S_TCODE"
+                               "</OBJCT></TSTCA></AUTHORIZATIONS>");
+    auto checked = f.handler->Validate(f.key, files, ObjectState{}, "E");
+    REQUIRE(checked.IsErr());
+    CHECK(checked.Error().message.find("AUTHORIZATIONS") != std::string::npos);
+    CHECK(f.engine.runs.empty());
+    CHECK(f.handler->Validate(f.key, f.Files(kVa03Values), ObjectState{}, "E").IsOk());
 }

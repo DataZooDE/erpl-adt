@@ -18,6 +18,7 @@ Independent checks: the ADT repository search (`erpl-adt search --type TRAN`)
 and a read-only SELECT on TSTC/TSTCC/TSTCP in HANA.
 """
 
+import json
 import shutil
 import subprocess
 import warnings
@@ -129,6 +130,31 @@ def programs(cli):
         cli.run("object", "delete", uri)
 
 
+def _git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=erpl-adt test",
+                    "-c", "user.email=test@erpl.invalid", *args],
+                   check=True, capture_output=True)
+
+
+def _git_copy(path, target):
+    """Copy a transaction file into a fresh git work tree, committed.
+
+    SAP records no last changer for a transaction, so a deploy that changes
+    one is allowed only when the version in the system is in the file's git
+    history (as in a real repository); a plain temp copy has none."""
+    copy = target / path.name
+    shutil.copy(path, copy)
+    _git(target, "init", "-q")
+    _git(target, "add", ".")
+    _git(target, "commit", "-qm", "fixture")
+    return copy
+
+
+def _commit(repo):
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "change")
+
+
 @pytest.mark.abapgit_deploy
 class TestTransactions:
 
@@ -177,7 +203,7 @@ class TestTransactions:
         assert exported.read_bytes() == path.read_bytes()
 
     def test_changed_text_updates_only_the_text(self, cli, tmp_path):
-        changed = tmp_path / VA03.name
+        changed = _git_copy(VA03, tmp_path)
         changed.write_bytes(VA03.read_bytes().replace(
             b"<TTEXT>Display Sales Order</TTEXT>", b"<TTEXT>Display Sales Order (EPM)</TTEXT>"))
 
@@ -190,11 +216,30 @@ class TestTransactions:
         # the rest of the transaction survived the delete + insert
         assert _tstc("ZERPL_VA03")["PGMNA"] == "ZERPL_SO_DISPLAY"
 
-        back = cli.run_ok("abapgit", "deploy", str(VA03), "--package", PACKAGE)
+        _commit(tmp_path)
+        shutil.copy(VA03, changed)
+        back = cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
         assert _entry(back, "TRAN", "ZERPL_VA03")["action"] == "updated"
 
+    def test_change_not_in_git_is_refused(self, cli, tmp_path):
+        # A version in the system that no git history knows (as if edited in
+        # SE93, which records no last changer) is not overwritten: exit 6.
+        edited = tmp_path / VA03.name
+        edited.write_bytes(VA03.read_bytes().replace(
+            b"<TTEXT>Display Sales Order</TTEXT>", b"<TTEXT>Edited in SE93</TTEXT>"))
+        cli.run_ok("abapgit", "deploy", str(edited), "--package", PACKAGE, "--force")
+
+        result = cli.run("abapgit", "deploy", str(VA03), "--package", PACKAGE)
+
+        assert result.returncode == 6, result.stdout + result.stderr
+        entry = _entry(json.loads(result.stdout), "TRAN", "ZERPL_VA03")
+        assert entry["action"] == "refused"
+        assert "unknown user" in entry["message"]
+        assert _search(cli, "ZERPL_VA03")[0]["description"] == "Edited in SE93"
+        cli.run_ok("abapgit", "deploy", str(VA03), "--package", PACKAGE, "--force")
+
     def test_changed_gui_flags_update(self, cli, tmp_path):
-        changed = tmp_path / ME2L.name
+        changed = _git_copy(ME2L, tmp_path)
         changed.write_bytes(ME2L.read_bytes().replace(b"    <S_PLATIN>X</S_PLATIN>\n", b""))
 
         result = cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
@@ -203,7 +248,9 @@ class TestTransactions:
         assert entry["action"] == "updated"
         assert entry["parts"] == ["TSTCC"]
         assert _tstc("ZERPL_ME2L")["S_PLATIN"] in ("", "?")
-        cli.run_ok("abapgit", "deploy", str(ME2L), "--package", PACKAGE)
+        _commit(tmp_path)
+        shutil.copy(ME2L, changed)
+        cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
 
     def test_sap_transaction_is_refused_before_anything_is_written(self, cli, tmp_path):
         se38 = tmp_path / "se38.tran.xml"

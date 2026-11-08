@@ -21,6 +21,7 @@ The files are canonical: deploy -> export reproduces them byte for byte.
 import json
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,31 @@ def _copy(stem, target):
     for path in _files(stem):
         shutil.copy(path, target / path.name)
     return target / f"{stem}.prog.xml"
+
+
+def _git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=erpl-adt test",
+                    "-c", "user.email=test@erpl.invalid", *args],
+                   check=True, capture_output=True)
+
+
+def _git_copy(stem, target):
+    """Copy the object into a fresh git work tree with the fixture committed.
+
+    Dynpros record no last changer in SAP, so a deploy that changes a screen
+    is only allowed when the version in the system is in the files' git
+    history - as in a real repository, where the deployed version was
+    committed. A plain temp copy has no history and would be refused."""
+    xml = _copy(stem, target)
+    _git(target, "init", "-q")
+    _git(target, "add", ".")
+    _git(target, "commit", "-qm", "fixture")
+    return xml
+
+
+def _commit(repo, message="change"):
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", message)
 
 
 class _AdtReader:
@@ -142,7 +168,7 @@ class TestModulePool:
         assert _entry(result, "PROG", self.PROG)["action"] == "unchanged"
 
     def test_changed_visible_length_rewrites_only_that_screen(self, cli, adt, tmp_path):
-        xml = _copy(self.STEM, tmp_path)
+        xml = _git_copy(self.STEM, tmp_path)
         content = xml.read_text(encoding="utf-8")
         old = ("<NAME>SNWD_BPA-COMPANY_NAME</NAME>\n       <ROLLING>X</ROLLING>\n"
                "       <LINE>003</LINE>\n       <COLUMN>020</COLUMN>\n"
@@ -159,9 +185,30 @@ class TestModulePool:
         assert adt.inactive(self.PROG) == []
         status = cli.run_ok("abapgit", "status", str(xml), "--package", PACKAGE)
         assert _entry(status, "PROG", self.PROG)["action"] == "unchanged"
-        # Back to the fixture: again only that screen.
-        result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
+        # Back to the fixture (the change is committed first, so the version
+        # in the system is in git): again only that screen.
+        _commit(tmp_path)
+        shutil.copy(self.XML, xml)
+        result = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
         assert _entry(result, "PROG", self.PROG)["parts"] == ["screen 0200"]
+
+    def test_uncommitted_screen_change_by_unknown_changer_is_refused(self, cli, adt, tmp_path):
+        # The system holds a screen version that is in no git history (as if
+        # edited in SE51, which records no last changer): refused, exit 6.
+        xml = _copy(self.STEM, tmp_path)
+        content = xml.read_text(encoding="utf-8")
+        xml.write_text(content.replace("<VISLENGTH>040", "<VISLENGTH>035", 1), encoding="utf-8")
+        cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE, "--force")
+
+        result = cli.run("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
+
+        assert result.returncode == 6, result.stdout + result.stderr
+        entry = _entry(json.loads(result.stdout), "PROG", self.PROG)
+        assert entry["action"] == "refused"
+        assert "unknown user" in entry["message"]
+        restored = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE,
+                              "--force")
+        assert _entry(restored, "PROG", self.PROG)["action"] == "updated"
 
     def test_changed_title_rewrites_only_the_cua(self, cli, adt, tmp_path):
         xml = _copy(self.STEM, tmp_path)
@@ -196,7 +243,7 @@ class TestModulePool:
         # RPY_DYNPRO_INSERT generates the screen: a field that is not on the
         # screen is rejected when it is saved. (An unknown MODULE is not: SAP
         # activates such a screen and only the runtime / extended check sees it.)
-        xml = _copy(self.STEM, tmp_path)
+        xml = _git_copy(self.STEM, tmp_path)
         flow = tmp_path / f"{self.STEM}.prog.screen_0100.abap"
         flow.write_text(flow.read_text().replace(
             "  MODULE status_0100.\n", "  MODULE status_0100.\n  FIELD gv_unknown MODULE check_so_id.\n"))

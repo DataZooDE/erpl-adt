@@ -61,6 +61,16 @@ public:
         return Result<ObjectState, Error>::Ok(state);
     }
 
+    Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                 const ObjectState& /*current*/,
+                                 const std::string& /*language*/) const override {
+        auto payload = EnginePayload(desired, FileName(key, "xml"));
+        if (payload.IsErr()) {
+            return Result<void, Error>::Err(payload.Error());
+        }
+        return Result<void, Error>::Ok();
+    }
+
     Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& /*current*/,

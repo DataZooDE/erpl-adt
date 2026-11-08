@@ -353,3 +353,23 @@ TEST_CASE("PROG: last changers per part (source, texts, CUA known; dynpros unkno
     CHECK(by.at("zerpl_t_prog.prog.xml").empty());  // DYNPROS & others: unknown
     CHECK(by.at("zerpl_t_prog.prog.screen_0100.abap").empty());
 }
+
+TEST_CASE("PROG: Validate finds file problems without touching the system",
+          "[workflow][abapgit_prog][status]") {
+    ProgFiles files;
+    files.flows["0300"] = "PROCESS BEFORE OUTPUT.\n";
+    auto desired = files.Build();
+    auto checked = Handler()->Validate(kKey, desired, ObjectState{}, "E");
+    REQUIRE(checked.IsErr());
+    CHECK(checked.Error().message.find("screen_0300") != std::string::npos);
+
+    ProgFiles no_source;
+    auto without = no_source.Build();
+    without.erase("zerpl_t_prog.prog.abap");
+    auto missing = Handler()->Validate(kKey, without, ObjectState{}, "E");
+    REQUIRE(missing.IsErr());
+    CHECK(missing.Error().message.find("zerpl_t_prog.prog.abap") != std::string::npos);
+
+    ProgFiles fine;
+    CHECK(Handler()->Validate(kKey, fine.Build(), ObjectState{}, "E").IsOk());
+}

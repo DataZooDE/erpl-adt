@@ -24,9 +24,12 @@ std::shared_ptr<const IClassicTypeHandler> MakeProgHandler();
 // --- shared helpers --------------------------------------------------------
 
 // Error for a failed engine operation. SAP's own messages become the text;
-// the category follows the evidence: lock messages -> LockConflict (exit 6),
-// transport/CTS messages -> TransportError (exit 9), anything else the
-// system rejected -> ActivationError (exit 5).
+// the category follows the evidence, never the (translated) text:
+//   1. the engine's "@op KIND LOCK|CTS|AUTH|CHECK" line, set from the FM
+//      exception where the engine knows it (e.g. RS_CORR_INSERT),
+//   2. T100 ids: enqueue/editor locks (MC601, EU510, DS068, TK106, ...) ->
+//      LockConflict (exit 6); other CTS classes TK/TR/TO -> TransportError (9),
+//   3. anything else the system rejected -> ActivationError (5).
 Error EngineFailure(const std::string& what, const EngineOpResult& result);
 
 // Runs `ops` and fails on the first operation with rc != 0.

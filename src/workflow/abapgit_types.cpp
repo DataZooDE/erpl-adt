@@ -2,20 +2,31 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
 
 namespace erpl_adt {
 
 namespace {
 
-std::string Lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
+// T100 messages (class, number) that mean "someone else holds the object":
+// enqueue and editor locks. Read from T100 on A4H (SE91); the text is
+// translated, the id is not.
+bool IsLockMessage(const std::string& id, const std::string& number) {
+    static const std::set<std::string> kLock = {
+        "MC601", "MC520", "MC359", "MC361",                    // enqueue
+        "EU220", "EU290", "EU315", "EU367", "EU510", "EU521", "EU884",  // workbench
+        "DS063", "DS068", "DS401", "DS413", "DS414", "DS425", "DS495",  // editor
+        "DS518", "DS554", "DS596", "ED545",                    // text pool, includes
+        "DT653",                                               // DDIC activation
+        "TK022", "TK051", "TK053", "TK106", "TK133", "TK864",  // CTS: being edited
+        "TR059", "TR068", "TR134",
+    };
+    return kLock.count(id + number) > 0;
 }
 
-bool Contains(const std::string& haystack, const std::string& needle) {
-    return Lower(haystack).find(needle) != std::string::npos;
-}
+// Message classes of the Change and Transport System; "locked in request X"
+// (TK247, TK310, ...) is a CTS conflict, not an edit lock.
+bool IsCtsMessage(const std::string& id) { return id == "TK" || id == "TR" || id == "TO"; }
 
 }  // namespace
 
@@ -30,17 +41,32 @@ Error EngineFailure(const std::string& what, const EngineOpResult& result) {
     err.endpoint = "classrun";
     err.message = what + ": " + SummarizeFailure(result);
     err.category = ErrorCategory::ActivationError;
-    for (const auto& m : result.messages) {
-        const std::string all = m.text + " " + m.id;
-        if (Contains(all, "locked") || Contains(all, "currently editing") ||
-            Contains(all, "enqueue") || Contains(all, "gesperrt")) {
+    // 1. The engine's own verdict from the FM exception (@op KIND ...).
+    auto kind = result.values.find("KIND");
+    if (kind != result.values.end() && !kind->second.empty()) {
+        const auto& k = kind->second.back();
+        if (k == "LOCK") {
             err.category = ErrorCategory::LockConflict;
-            break;
-        }
-        if (m.id == "TK" || m.id == "TR" || Contains(m.text, "request") ||
-            Contains(m.text, "auftrag")) {
+        } else if (k == "CTS") {
             err.category = ErrorCategory::TransportError;
+        } else if (k == "AUTH") {
+            err.category = ErrorCategory::Authorization;
+        } else if (k == "CHECK") {
+            err.category = ErrorCategory::CheckError;
         }
+        return err;
+    }
+    // 2. SAP's message ids: a lock wins over CTS, CTS over everything else.
+    bool cts = false;
+    for (const auto& m : result.messages) {
+        if (IsLockMessage(m.id, m.number)) {
+            err.category = ErrorCategory::LockConflict;
+            return err;
+        }
+        cts = cts || IsCtsMessage(m.id);
+    }
+    if (cts) {
+        err.category = ErrorCategory::TransportError;
     }
     return err;
 }

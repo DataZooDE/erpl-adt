@@ -220,6 +220,9 @@
       IF existing IS NOT INITIAL.
         emit( kind = 'ERR' text = |{ name } was deleted for the update but could not be inserted again; redeploy it.| ).
       ENDIF.
+      IF rc = 3.
+        emit( kind = 'KIND' text = `AUTH` ).
+      ENDIF.
       emit_rc( rc ).
       RETURN.
     ENDIF.

@@ -18,6 +18,7 @@
 *   @<op> DATA <tag> <base64 chunk>      (chunks of one tag concatenate)
 *   @<op> MSG <type> <class> <number> <text>
 *   @<op> ERR <text>                     (activation / check log lines)
+*   @<op> KIND LOCK|CTS|AUTH|CHECK       (failure class from the FM exception)
 *   @<op> RC <n>                         (last line of every operation)
 *   @<op> EXC <text>                     (unexpected exception)
 *   @END
@@ -161,8 +162,11 @@ CLASS zcl_erpl_classic_engine IMPLEMENTATION.
         unknown_objectclass = 3
         OTHERS              = 4.
     IF sy-subrc <> 0.
+      DATA(rc) = sy-subrc.
       emit_symsg( ).
-      emit_rc( sy-subrc ).
+      " The verdict for the exit code comes from the exception, not the text.
+      emit( kind = 'KIND' text = COND string( WHEN rc = 2 THEN `AUTH` ELSE `CTS` ) ).
+      emit_rc( rc ).
       RETURN.
     ENDIF.
     ok = abap_true.

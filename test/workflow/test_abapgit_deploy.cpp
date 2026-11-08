@@ -66,6 +66,7 @@ public:
     mutable std::vector<std::string> applied;
     mutable std::vector<std::string> deleted;
     std::string fail_apply_for;
+    std::string invalid_for;  // Validate() refuses this object
     std::string changed_by = "DEVELOPER";
     std::map<std::string, std::string> part_changed_by;  // file[#SECTION] -> user
     std::vector<std::string> pending;  // reported as inactive leftovers
@@ -103,6 +104,16 @@ public:
         applied.push_back(key.name);
         (*system)[key.name] = desired;
         return Result<std::vector<std::string>, Error>::Ok({"DD01V"});
+    }
+    Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet&,
+                                 const ObjectState&, const std::string&) const override {
+        if (key.name == invalid_for) {
+            Error err;
+            err.message = "DOMA " + key.name + " has parts the deploy cannot write: VARIS";
+            err.category = ErrorCategory::CheckError;
+            return Result<void, Error>::Err(err);
+        }
+        return Result<void, Error>::Ok();
     }
     Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext&) const override {
         deleted.push_back(key.name);
@@ -669,4 +680,71 @@ TEST_CASE("abapGit export: dry run reports removals but touches nothing",
         reported = reported || part == "removed zerpl_d_a.doma.screen_0200.abap";
     }
     CHECK(reported);
+}
+
+// ---------------------------------------------------------------------------
+// status in pull-request checks: annotations and handler validation.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("abapGit status: a missing --transport is an annotation, not a refusal",
+          "[workflow][abapgit_deploy][status]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    obj.package = "ZERPL_DEMO";
+    auto options = f.Options();
+    options.root_package = "ZERPL_DEMO";
+    options.dry_run = true;
+
+    auto report = f.Workflow().Deploy({obj}, options);
+
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Created);
+    REQUIRE(report.objects[0].notes.size() == 1);
+    CHECK(report.objects[0].notes[0].find("--transport") != std::string::npos);
+    CHECK_FALSE(report.Failed());
+
+    options.strict = true;
+    auto strict = f.Workflow().Deploy({obj}, options);
+    CHECK(strict.objects[0].action == ObjectAction::Refused);
+}
+
+TEST_CASE("abapGit status: handler validation failures show up without writing",
+          "[workflow][abapgit_deploy][status]") {
+    Fixture f;
+    f.handler->invalid_for = "ZERPL_D_A";
+    auto options = f.Options();
+    options.dry_run = true;
+    auto status = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, options);
+    REQUIRE(status.objects.size() == 1);
+    CHECK(status.objects[0].action == ObjectAction::Failed);
+    CHECK(status.objects[0].message.find("VARIS") != std::string::npos);
+    CHECK(status.Failed());
+
+    // deploy refuses the same object the same way, before Apply.
+    auto deploy = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options());
+    CHECK(deploy.objects[0].action == ObjectAction::Failed);
+    CHECK(f.handler->applied.empty());
+}
+
+TEST_CASE("abapGit report: the most severe category decides the exit code",
+          "[workflow][abapgit_deploy][exit]") {
+    auto with = [](ErrorCategory c) {
+        ObjectOutcome o;
+        o.action = ObjectAction::Failed;
+        Error e;
+        e.category = c;
+        o.error = e;
+        return o;
+    };
+    AbapGitRunReport report;
+    CHECK(report.ExitCode() == 0);
+    report.objects = {with(ErrorCategory::ActivationError), with(ErrorCategory::LockConflict)};
+    CHECK(report.ExitCode() == 6);  // lock beats activation, whatever the order
+    report.objects.push_back(with(ErrorCategory::TransportError));
+    CHECK(report.ExitCode() == 9);
+    report.objects.push_back(with(ErrorCategory::Authorization));
+    CHECK(report.ExitCode() == 1);
+    AbapGitRunReport missing;
+    missing.objects = {with(ErrorCategory::NotFound), with(ErrorCategory::CheckError)};
+    CHECK(missing.ExitCode() == 8);
 }

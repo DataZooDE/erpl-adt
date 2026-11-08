@@ -265,8 +265,65 @@ public:
         return Result<ObjectState, Error>::Ok(state);
     }
 
+    Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                 const ObjectState& current,
+                                 const std::string& /*language*/) const override {
+        const std::string xml_name = FileName(key, "xml");
+        const std::string abap_name = FileName(key, "abap");
+        auto xml_it = desired.find(xml_name);
+        if (xml_it == desired.end()) {
+            return Result<void, Error>::Err(
+                ProgError("Missing file " + xml_name, ErrorCategory::Internal));
+        }
+        auto want = SplitProgXml(xml_it->second, xml_name);
+        if (want.IsErr()) {
+            return Result<void, Error>::Err(want.Error());
+        }
+        if (desired.find(abap_name) == desired.end()) {
+            return Result<void, Error>::Err(ProgError(
+                "Missing file " + abap_name + " (program source)", ErrorCategory::Internal));
+        }
+        // Every flow logic file needs its screen and vice versa.
+        const std::string flow_prefix = FileName(key, "screen_");
+        for (const auto& [name, bytes] : desired) {
+            if (name.rfind(flow_prefix, 0) == 0) {
+                const std::string screen = name.substr(flow_prefix.size(), 4);
+                if (want.Value().screens.count(screen) == 0) {
+                    return Result<void, Error>::Err(ProgError(
+                        name + " has no screen " + screen + " in DYNPROS of " + xml_name,
+                        ErrorCategory::Internal));
+                }
+            }
+        }
+        for (const auto& [screen, item] : want.Value().screens) {
+            if (desired.find(FlowFileName(key, screen)) == desired.end()) {
+                return Result<void, Error>::Err(ProgError(
+                    "Missing file " + FlowFileName(key, screen) + " (flow logic of screen " +
+                        screen + ")",
+                    ErrorCategory::Internal));
+            }
+        }
+        auto cur_xml = current.files.find(xml_name);
+        if (cur_xml != current.files.end() && want.Value().cua.empty()) {
+            auto have = SplitProgXml(cur_xml->second, xml_name + " (system)");
+            if (have.IsOk() && !have.Value().cua.empty()) {
+                return Result<void, Error>::Err(ProgError(
+                    "PROG " + key.name +
+                        ": the file has no CUA but the system has a GUI status / title set; "
+                        "removing it is not supported (abapGit does not remove it either) — "
+                        "delete it in SE41",
+                    ErrorCategory::Internal));
+            }
+        }
+        return Result<void, Error>::Ok();
+    }
+
     PartsResult Apply(const AbapGitObjectKey& key, const ObjectFileSet& desired,
                       const ObjectState& current, TypeContext& ctx) const override {
+        auto valid = Validate(key, desired, current, ctx.language);
+        if (valid.IsErr()) {
+            return PartsResult::Err(valid.Error());
+        }
         const std::string xml_name = FileName(key, "xml");
         const std::string abap_name = FileName(key, "abap");
         auto xml_it = desired.find(xml_name);

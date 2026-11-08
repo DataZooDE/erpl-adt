@@ -78,6 +78,15 @@ public:
 
     [[nodiscard]] virtual Result<void, Error> Delete(const AbapGitObjectKey& key,
                                                      TypeContext& ctx) const = 0;
+
+    // Non-mutating checks of the files against what this handler can write
+    // (missing files, parts it cannot deploy, changes it does not support
+    // relative to `current`). Run by both status and deploy before Apply, so
+    // a status shows the same refusals a deploy would hit.
+    [[nodiscard]] virtual Result<void, Error> Validate(const AbapGitObjectKey& key,
+                                                       const ObjectFileSet& desired,
+                                                       const ObjectState& current,
+                                                       const std::string& language) const = 0;
 };
 
 // The handlers for all supported types, keyed by abapGit type.
@@ -121,6 +130,7 @@ struct ObjectOutcome {
     ObjectAction action = ObjectAction::Unchanged;
     std::vector<std::string> parts;  // what was (or would be) written
     std::string message;             // failure / refusal reason
+    std::vector<std::string> notes;  // non-fatal annotations (e.g. status without --transport)
     std::optional<Error> error;
 };
 
@@ -130,6 +140,9 @@ struct AbapGitRunOptions {
     std::string language = "E";
     bool dry_run = false;
     bool force = false;                            // overwrite drifted objects
+    // dry_run: a missing --transport for a transportable package is only an
+    // annotation (a PR check has no request); strict makes it a refusal.
+    bool strict = false;
     std::string user;                              // deploying user; default: SAP logon user
     // Namespaced objects and packages (/ACME/...) are allowed only when the
     // namespace is changeable in the system (SE03, TRNSPACE-EDITFLAG) — the
@@ -141,6 +154,17 @@ struct AbapGitRunReport {
     std::vector<std::string> skipped;  // unsupported / ignored files
     [[nodiscard]] bool Failed() const;
     [[nodiscard]] std::optional<Error> FirstError() const;
+    // The error of the most severe failed/refused object, by category:
+    //   connection / authentication / authorization (1) > internal (99) >
+    //   timeout (10) > transport (9) > lock conflict / drift (6) >
+    //   activation (5) > check (8) > test (7) > pull (4) > clone (3) >
+    //   package / not found (2).
+    // Environment and guard-rail problems first (nothing else can be
+    // trusted), then problems that need a human (CTS, someone else's lock or
+    // change), then problems in the code being deployed.
+    [[nodiscard]] std::optional<Error> MostSevereError() const;
+    // MostSevereError()'s exit code; 0 when nothing failed.
+    [[nodiscard]] int ExitCode() const;
 };
 
 // Where an export writes: the repository root and its layout (.abapgit.xml).

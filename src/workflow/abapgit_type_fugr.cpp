@@ -176,6 +176,42 @@ public:
         return R::Ok(state);
     }
 
+    Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                 const ObjectState& current,
+                                 const std::string& /*language*/) const override {
+        using R = Result<void, Error>;
+        const std::string main_file = FileName(key, "xml");
+        auto want = ParseMain(desired, main_file);
+        if (want.IsErr()) {
+            return R::Err(want.Error());
+        }
+        const auto& def = want.Value();
+        for (const auto& fm : def.functions) {
+            if (!fm.remote_call.empty() || !fm.update_task.empty()) {
+                return R::Err(FugrError(
+                    "Function module " + fm.name +
+                        ": RFC-enabled and update function modules are not supported by the "
+                        "deploy yet (REMOTE_CALL/UPDATE_TASK set). Nothing was changed.",
+                    ErrorCategory::CheckError));
+            }
+            if (desired.count(PartFile(key, fm.name, ".abap")) == 0) {
+                return R::Err(FugrError("Missing file " + PartFile(key, fm.name, ".abap"),
+                                        ErrorCategory::Internal));
+            }
+        }
+        if (current.exists) {
+            auto have = ParseMain(current.files, main_file);
+            if (have.IsOk() && have.Value().areat != def.areat) {
+                return R::Err(FugrError(
+                    "Function group " + key.name + ": changing the short text ('" +
+                        have.Value().areat + "' -> '" + def.areat +
+                        "') is not supported by the deploy yet. Nothing was changed.",
+                    ErrorCategory::CheckError));
+            }
+        }
+        return R::Ok();
+    }
+
     Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,
@@ -198,25 +234,9 @@ public:
         }
 
         // Refuse what this handler cannot write before touching anything.
-        for (const auto& fm : def.functions) {
-            if (!fm.remote_call.empty() || !fm.update_task.empty()) {
-                return R::Err(FugrError(
-                    "Function module " + fm.name +
-                        ": RFC-enabled and update function modules are not supported by the "
-                        "deploy yet (REMOTE_CALL/UPDATE_TASK set). Nothing was changed.",
-                    ErrorCategory::ActivationError));
-            }
-            if (desired.count(PartFile(key, fm.name, ".abap")) == 0) {
-                return R::Err(FugrError("Missing file " + PartFile(key, fm.name, ".abap"),
-                                        ErrorCategory::Internal));
-            }
-        }
-        if (current.exists && have.areat != def.areat) {
-            return R::Err(FugrError(
-                "Function group " + key.name + ": changing the short text ('" + have.areat +
-                    "' -> '" + def.areat + "') is not supported by the deploy yet. "
-                    "Nothing was changed.",
-                ErrorCategory::ActivationError));
+        auto valid = Validate(key, desired, current, ctx.language);
+        if (valid.IsErr()) {
+            return R::Err(valid.Error());
         }
 
         std::vector<std::string> parts;

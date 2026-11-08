@@ -384,3 +384,56 @@ TEST_CASE("Function group URIs escape namespaces", "[workflow][abapgit_fugr]") {
     CHECK(FunctionGroupIncludeUri("/ACME/FG", "/ACME/LFGTOP") ==
           "/sap/bc/adt/functions/groups/%2facme%2ffg/includes/%2facme%2flfgtop");
 }
+
+// ---------------------------------------------------------------------------
+// Engine failures are classified by T100 id/number or the engine's KIND
+// line, never by (translated) message text.
+// ---------------------------------------------------------------------------
+
+namespace {
+EngineOpResult FailedWith(const std::string& id, const std::string& number,
+                          const std::string& text) {
+    EngineOpResult r;
+    r.rc = 4;
+    EngineMessage m;
+    m.type = "E";
+    m.id = id;
+    m.number = number;
+    m.text = text;
+    r.messages.push_back(m);
+    return r;
+}
+}  // namespace
+
+TEST_CASE("EngineFailure: enqueue lock by T100 id, in any logon language",
+          "[workflow][abapgit_errors]") {
+    auto err = EngineFailure("Writing", FailedWith("MC", "601", "Objekt ist von BOB gesperrt"));
+    CHECK(err.category == ErrorCategory::LockConflict);
+    CHECK(EngineFailure("Writing", FailedWith("EU", "510", "x")).category ==
+          ErrorCategory::LockConflict);
+}
+
+TEST_CASE("EngineFailure: CTS messages are transport errors", "[workflow][abapgit_errors]") {
+    CHECK(EngineFailure("Writing", FailedWith("TK", "247", "Object locked for request A4HK9"))
+              .category == ErrorCategory::TransportError);
+    CHECK(EngineFailure("Writing", FailedWith("TR", "011", "x")).category ==
+          ErrorCategory::TransportError);
+}
+
+TEST_CASE("EngineFailure: the word 'request' in an unrelated message is not CTS",
+          "[workflow][abapgit_errors]") {
+    auto err = EngineFailure(
+        "Activating", FailedWith("37", "200", "The requested field GV_X is not defined"));
+    CHECK(err.category == ErrorCategory::ActivationError);
+}
+
+TEST_CASE("EngineFailure: an explicit KIND line from the engine wins",
+          "[workflow][abapgit_errors]") {
+    auto r = FailedWith("XY", "001", "whatever");
+    r.values["KIND"] = {"AUTH"};
+    CHECK(EngineFailure("Writing", r).category == ErrorCategory::Authorization);
+    r.values["KIND"] = {"CTS"};
+    CHECK(EngineFailure("Writing", r).category == ErrorCategory::TransportError);
+    r.values["KIND"] = {"LOCK"};
+    CHECK(EngineFailure("Writing", r).category == ErrorCategory::LockConflict);
+}

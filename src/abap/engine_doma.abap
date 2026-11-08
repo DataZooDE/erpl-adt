@@ -170,8 +170,14 @@
       RETURN.
     ENDIF.
     IF sy-subrc <> 0.
+      DATA(rc) = sy-subrc.
       emit_symsg( ).
+      IF rc = 4.
+        emit( kind = 'KIND' text = `AUTH` ).
+      ENDIF.
+      emit_rc( rc ).
+      RETURN.
     ENDIF.
-    emit_rc( sy-subrc ).
+    emit_rc( 0 ).
   ENDMETHOD.
 

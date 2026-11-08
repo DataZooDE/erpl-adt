@@ -251,6 +251,48 @@ std::optional<Error> AbapGitRunReport::FirstError() const {
     return std::nullopt;
 }
 
+namespace {
+
+// Lower = more severe; see AbapGitRunReport::MostSevereError.
+int SeverityRank(ErrorCategory category) {
+    switch (category) {
+        case ErrorCategory::Connection:
+        case ErrorCategory::Authentication:
+        case ErrorCategory::Authorization:
+        case ErrorCategory::CsrfToken: return 0;
+        case ErrorCategory::Internal: return 1;
+        case ErrorCategory::Timeout: return 2;
+        case ErrorCategory::TransportError: return 3;
+        case ErrorCategory::LockConflict: return 4;
+        case ErrorCategory::ActivationError: return 5;
+        case ErrorCategory::CheckError: return 6;
+        case ErrorCategory::TestFailure: return 7;
+        case ErrorCategory::PullError: return 8;
+        case ErrorCategory::CloneError: return 9;
+        case ErrorCategory::PackageError:
+        case ErrorCategory::NotFound: return 10;
+    }
+    return 1;
+}
+
+}  // namespace
+
+std::optional<Error> AbapGitRunReport::MostSevereError() const {
+    std::optional<Error> worst;
+    for (const auto& o : objects) {
+        if (o.error.has_value() &&
+            (!worst || SeverityRank(o.error->category) < SeverityRank(worst->category))) {
+            worst = o.error;
+        }
+    }
+    return worst;
+}
+
+int AbapGitRunReport::ExitCode() const {
+    auto worst = MostSevereError();
+    return worst ? worst->ExitCode() : 0;
+}
+
 Result<ObjectFileSet, Error> LoadObjectFiles(const AbapGitObjectFiles& object) {
     ObjectFileSet files;
     const std::string stem = ObjectFileStem(object.key);
@@ -478,7 +520,11 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
                                      " (object type not supported yet)");
             continue;
         }
-        if (auto refused = CheckGuardRails(object.key, object.package, true, options)) {
+        // In a dry run (status, e.g. a pull-request check) a missing
+        // --transport is only an annotation, unless --strict.
+        const bool transport_fatal = !options.dry_run || options.strict;
+        if (auto refused =
+                CheckGuardRails(object.key, object.package, transport_fatal, options)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
             continue;
@@ -520,6 +566,15 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Unchanged));
             continue;
         }
+        // What the handler cannot write is reported the same way by status
+        // and deploy, before anything is written.
+        auto valid = Handler(object.key.type)->Validate(object.key, desired[i], current,
+                                                        options.language);
+        if (valid.IsErr()) {
+            report.objects.push_back(
+                FailedOutcome(object.key, object.package, ObjectAction::Failed, valid.Error()));
+            continue;
+        }
         if (current.exists && !options.force) {
             const auto& user = options.user.empty() ? states.user : options.user;
             if (auto drift = DetectDrift(object, desired[i], current, user)) {
@@ -530,7 +585,13 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         }
         const auto action = current.exists ? ObjectAction::Updated : ObjectAction::Created;
         if (options.dry_run) {
-            report.objects.push_back(Outcome(object.key, object.package, action));
+            auto outcome = Outcome(object.key, object.package, action);
+            if (!IsLocalPackage(object.package) && options.transport.empty()) {
+                outcome.notes.push_back("package " + object.package +
+                                        " is transportable: the deploy needs --transport "
+                                        "<request>");
+            }
+            report.objects.push_back(std::move(outcome));
             continue;
         }
         LogInfo(kComponent, (current.exists ? "Updating " : "Creating ") + object.key.type +

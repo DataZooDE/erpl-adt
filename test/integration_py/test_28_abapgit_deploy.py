@@ -154,6 +154,23 @@ class TestGuardRails:
         status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_d_so_status")
         assert status == 404  # nothing was written
 
+    def test_status_without_request_annotates_instead_of_refusing(self, cli):
+        # A pull-request check has no transport request: status reports what
+        # a deploy would do and notes the missing --transport; --strict refuses.
+        cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+
+        data = cli.run_ok("abapgit", "status", str(self.FILE), "--package",
+                          "ZCLASSIC_DEVELOPMENT")
+
+        entry = _entry(data, "DOMA", "ZERPL_D_SO_STATUS")
+        assert entry["action"] == "created"
+        assert any("--transport" in n for n in entry["notes"])
+        strict = cli.run("abapgit", "status", str(self.FILE), "--package",
+                         "ZCLASSIC_DEVELOPMENT", "--strict")
+        assert strict.returncode == 9, strict.stdout + strict.stderr
+        assert _entry(json.loads(strict.stdout), "DOMA", "ZERPL_D_SO_STATUS")["action"] == \
+            "refused"
+
     def test_sap_object_is_refused(self, cli, tmp_path):
         sap_file = tmp_path / "xfeld.doma.xml"
         sap_file.write_bytes(self.FILE.read_bytes().replace(
@@ -219,9 +236,12 @@ class TestColleagueChanges:
         result = cli.run("abapgit", "deploy", str(self.FILE), "--package", PACKAGE)
 
         assert result.returncode == 6, result.stderr
-        entry = _entry(json.loads(result.stdout), "DOMA", self.DOMA)
+        data = json.loads(result.stdout)
+        entry = _entry(data, "DOMA", self.DOMA)
         assert entry["action"] == "refused"
         assert cli2.user in entry["message"]
+        assert entry["category"] == "lock_conflict" and entry["exit_code"] == 6
+        assert data["exit_code"] == 6
         assert ("X", "Storniert") in _fixed_values(adt, self.DOMA)  # untouched
 
         forced = cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE,
