@@ -87,6 +87,17 @@ struct AbapGitScan {
     const std::filesystem::path& any_file_of_object,
     const std::string& root_package);
 
+// Single-file mode inside a repository: scans `repo_root` (the folder of the
+// governing .abapgit.xml) and returns the object `any_file_of_object` belongs
+// to, so folder logic, starting folder and ignore list apply exactly as for a
+// whole-repository run. Err (NotFound) when the file is not one of the
+// repository's objects (ignored, outside the starting folder, no object file).
+[[nodiscard]] Result<AbapGitObjectFiles, Error> ScanAbapGitObjectInRepo(
+    const std::filesystem::path& any_file_of_object,
+    const std::filesystem::path& repo_root,
+    const AbapGitLayout& layout,
+    const std::string& root_package);
+
 // Deploy order: DEVC 0, DOMA 10, DTEL 20, TABL 30, TTYP 35, FUGR 40,
 // CLAS/INTF 45, PROG 50, TRAN 60; unknown -> -1.
 [[nodiscard]] int DeployRank(std::string_view type);

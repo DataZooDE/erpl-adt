@@ -374,6 +374,34 @@ bool operator!=(const AbapGitObjectKey& lhs, const AbapGitObjectKey& rhs) {
     return !(lhs == rhs);
 }
 
+Result<AbapGitObjectFiles, Error> ScanAbapGitObjectInRepo(
+    const std::filesystem::path& any_file_of_object,
+    const std::filesystem::path& repo_root,
+    const AbapGitLayout& layout,
+    const std::string& root_package) {
+    using R = Result<AbapGitObjectFiles, Error>;
+    auto scan = ScanAbapGitFolder(repo_root, layout, root_package);
+    if (scan.IsErr()) {
+        return R::Err(scan.Error());
+    }
+    std::error_code ec;
+    const auto wanted = std::filesystem::weakly_canonical(any_file_of_object, ec);
+    for (const auto& object : scan.Value().objects) {
+        for (const auto& [part, path] : object.files) {
+            std::error_code ec2;
+            if (std::filesystem::weakly_canonical(path, ec2) == wanted) {
+                return R::Ok(object);
+            }
+        }
+    }
+    return R::Err(MakeError(
+        kScanOperation,
+        any_file_of_object.string() + " is not one of the repository's objects (ignored by " +
+            ".abapgit.xml, outside the starting folder " + layout.starting_folder +
+            ", or not an object file)",
+        ErrorCategory::NotFound));
+}
+
 int DeployRank(std::string_view type) {
     const std::string t = Upper(type);
     if (t == "DEVC") return 0;

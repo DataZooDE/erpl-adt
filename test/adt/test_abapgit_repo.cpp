@@ -691,3 +691,34 @@ TEST_CASE("IsLocalPackage", "[abapgit_repo]") {
     CHECK_FALSE(IsLocalPackage("ZDEMO"));
     CHECK_FALSE(IsLocalPackage(""));
 }
+
+TEST_CASE("ScanAbapGitObjectInRepo: a file in a sub-folder gets its folder's package",
+          "[abapgit_repo]") {
+    TempTree tree;
+    tree.Write("src/package.devc.xml");
+    tree.Write("src/zroot_prog.prog.abap");
+    tree.Write("src/sub/zsub_prog.prog.xml");
+    const auto file = tree.Write("src/sub/zsub_prog.prog.abap");
+
+    auto object = ScanAbapGitObjectInRepo(file, tree.Root(), PrefixLayout(), "zroot");
+
+    REQUIRE(object.IsOk());
+    CHECK(object.Value().key == AbapGitObjectKey{"PROG", "ZSUB_PROG"});
+    CHECK(object.Value().package == "ZROOT_SUB");
+    CHECK(Parts(object.Value()) == std::vector<std::string>{"abap", "xml"});
+}
+
+TEST_CASE("ScanAbapGitObjectInRepo: ignored or out-of-tree files are refused",
+          "[abapgit_repo]") {
+    TempTree tree;
+    tree.Write("src/zroot_prog.prog.abap");
+    const auto outside = tree.Write("docs/zdoc.prog.abap");
+    auto layout = PrefixLayout();
+    layout.ignore = {"/src/zignored*"};
+    const auto ignored = tree.Write("src/zignored.prog.abap");
+
+    auto a = ScanAbapGitObjectInRepo(outside, tree.Root(), layout, "ZROOT");
+    REQUIRE(a.IsErr());
+    CHECK(a.Error().message.find("not one of the repository's objects") != std::string::npos);
+    CHECK(ScanAbapGitObjectInRepo(ignored, tree.Root(), layout, "ZROOT").IsErr());
+}

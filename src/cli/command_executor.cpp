@@ -1573,6 +1573,17 @@ Result<AbapGitTarget, Error> ResolveAbapGitTarget(const std::string& path,
                                                                  : target.config.master_language;
     }
 
+    if (std::filesystem::is_regular_file(path, ec) && dot) {
+        // Inside a repository: the same scan as for the whole repository,
+        // filtered to this object, so its folder decides its package.
+        auto object = ScanAbapGitObjectInRepo(path, dot->parent_path(), ToLayout(target.config),
+                                              package);
+        if (object.IsErr()) {
+            return R::Err(object.Error());
+        }
+        target.objects.push_back(object.Value());
+        return R::Ok(std::move(target));
+    }
     if (std::filesystem::is_regular_file(path, ec)) {
         auto object = ScanAbapGitObject(path, package);
         if (object.IsErr()) {
