@@ -19,6 +19,8 @@ public:
     std::vector<std::vector<EngineOp>> runs;
     std::vector<std::vector<EngineOpResult>> scripted;
     std::vector<std::string> namespaces;  // changeable in the "system" (SE03)
+    // Object name -> TADIR package and its parents ("ZROOT_SUB ZROOT").
+    std::map<std::string, std::string> package_chains;
 
     Result<std::vector<EngineOpResult>, Error> Run(const std::vector<EngineOp>& ops) override {
         runs.push_back(ops);
@@ -33,6 +35,13 @@ public:
             if (ops[i].call == "system_info( ).") {
                 ok[i].changed_by = "DEVELOPER";
                 ok[i].values["NS"] = namespaces;
+            }
+            if (ops[i].call.rfind("tadir_package(", 0) == 0) {
+                for (const auto& [name, chain] : package_chains) {
+                    if (ops[i].call.find("'" + name + "'") != std::string::npos) {
+                        ok[i].values["PACKAGE"] = {chain};
+                    }
+                }
             }
         }
         return Result<std::vector<EngineOpResult>, Error>::Ok(ok);
@@ -153,6 +162,26 @@ struct Fixture {
         return o;
     }
 };
+
+// An object named with --object: no folder yet, the export derives it.
+AbapGitObjectFiles Wanted(const std::string& type, const std::string& name) {
+    AbapGitObjectFiles o;
+    o.key = {type, name};
+    return o;
+}
+
+// Repository at `root` with abapGit's default layout (PREFIX, /src/). The
+// root package is AbapGitRunOptions::root_package (`package`, for the reader).
+AbapGitExportTarget Target(const std::filesystem::path& root, const std::string& /*package*/) {
+    AbapGitExportTarget t;
+    t.repo_root = root;
+    return t;
+}
+
+void Touch(const std::filesystem::path& file, const std::string& bytes) {
+    std::filesystem::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary) << bytes;
+}
 
 }  // namespace
 
@@ -280,10 +309,12 @@ TEST_CASE("abapGit export: writes the files the system state holds",
           "[workflow][abapgit_deploy]") {
     Fixture f;
     f.system["ZERPL_D_A"] = {{"zerpl_d_a.doma.xml", "<exported/>"}};
+    f.engine.package_chains["ZERPL_D_A"] = "$TMP";
     TempRepo out;
-    auto report = f.Workflow().Export({{"DOMA", "ZERPL_D_A"}}, out.root, f.Options());
+    auto report = f.Workflow().Export({Wanted("DOMA", "ZERPL_D_A")}, Target(out.root, "$TMP"),
+                                      f.Options());
     CHECK(report.objects[0].action == ObjectAction::Exported);
-    std::ifstream in(out.root / "zerpl_d_a.doma.xml", std::ios::binary);
+    std::ifstream in(out.root / "src" / "zerpl_d_a.doma.xml", std::ios::binary);
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     CHECK(content == "<exported/>");
 }
@@ -467,8 +498,8 @@ TEST_CASE("abapGit export: objects outside the customer namespaces are refused",
     f.system["/SAPX/D"] = {{"_sapx_d.doma.xml", "<x/>"}};
     f.system["XFELD"] = {{"xfeld.doma.xml", "<x/>"}};
     TempRepo out;
-    auto report =
-        f.Workflow().Export({{"DOMA", "/SAPX/D"}, {"DOMA", "XFELD"}}, out.root, f.Options());
+    auto report = f.Workflow().Export({Wanted("DOMA", "/SAPX/D"), Wanted("DOMA", "XFELD")},
+                                      Target(out.root, "$TMP"), f.Options());
     REQUIRE(report.objects.size() == 2);
     CHECK(report.objects[0].action == ObjectAction::Refused);
     CHECK(report.objects[1].action == ObjectAction::Refused);
@@ -540,4 +571,102 @@ TEST_CASE("abapGit deploy: the changer of the differing XML section decides",
     f.handler->part_changed_by.erase("zerpl_d_a.doma.xml#DD01V");
     auto refused = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Again")}, f.Options());
     CHECK(refused.objects[0].action == ObjectAction::Refused);
+}
+
+// ---------------------------------------------------------------------------
+// Export into the repository layout (sub-packages, obsolete files).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("abapGit export: refresh writes into each object's folder; rescan has no duplicates",
+          "[workflow][abapgit_deploy][export]") {
+    Fixture f;
+    TempRepo repo;
+    // ZROOT with sub-package ZROOT_SUB (PREFIX logic): src/sub/.
+    Touch(repo.root / "src" / "zerpl_d_a.doma.xml", "<old/>");
+    Touch(repo.root / "src" / "sub" / "zerpl_d_b.doma.xml", "<old/>");
+    // A part the system no longer has (like a screen deleted in SE51).
+    Touch(repo.root / "src" / "sub" / "zerpl_d_b.doma.screen_0200.abap", "PROCESS.\n");
+    f.system["ZERPL_D_A"] = {{"zerpl_d_a.doma.xml", "<a/>"}};
+    f.system["ZERPL_D_B"] = {{"zerpl_d_b.doma.xml", "<b/>"}};
+    f.engine.package_chains = {{"ZERPL_D_A", "ZROOT"}, {"ZERPL_D_B", "ZROOT_SUB ZROOT"}};
+    AbapGitLayout layout;
+    auto scan = ScanAbapGitFolder(repo.root, layout, "ZROOT");
+    REQUIRE(scan.IsOk());
+    auto options = f.Options();
+    options.root_package = "ZROOT";
+
+    auto report = f.Workflow().Export(scan.Value().objects, Target(repo.root, "ZROOT"), options);
+
+    REQUIRE(report.objects.size() == 2);
+    CHECK_FALSE(report.Failed());
+    CHECK(report.objects[1].package == "ZROOT_SUB");
+    CHECK_FALSE(std::filesystem::exists(repo.root / "src" / "zerpl_d_b.doma.xml"));
+    CHECK_FALSE(std::filesystem::exists(repo.root / "src" / "sub" /
+                                        "zerpl_d_b.doma.screen_0200.abap"));
+    bool reported = false;
+    for (const auto& part : report.objects[1].parts) {
+        reported = reported || part == "removed zerpl_d_b.doma.screen_0200.abap";
+    }
+    CHECK(reported);
+    auto rescan = ScanAbapGitFolder(repo.root, layout, "ZROOT");
+    REQUIRE(rescan.IsOk());
+    CHECK(rescan.Value().objects.size() == 2);
+}
+
+TEST_CASE("abapGit export: --object lands in the folder of its TADIR package",
+          "[workflow][abapgit_deploy][export]") {
+    Fixture f;
+    TempRepo repo;
+    f.system["ZERPL_D_B"] = {{"zerpl_d_b.doma.xml", "<b/>"}};
+    f.engine.package_chains = {{"ZERPL_D_B", "ZROOT_SUB ZROOT"}};
+    auto options = f.Options();
+    options.root_package = "ZROOT";
+
+    auto report =
+        f.Workflow().Export({Wanted("DOMA", "ZERPL_D_B")}, Target(repo.root, "ZROOT"), options);
+
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Exported);
+    CHECK(report.objects[0].package == "ZROOT_SUB");
+    CHECK(std::filesystem::exists(repo.root / "src" / "sub" / "zerpl_d_b.doma.xml"));
+}
+
+TEST_CASE("abapGit export: an object outside the repository's package is refused",
+          "[workflow][abapgit_deploy][export]") {
+    Fixture f;
+    TempRepo repo;
+    f.system["ZERPL_D_B"] = {{"zerpl_d_b.doma.xml", "<b/>"}};
+    f.engine.package_chains = {{"ZERPL_D_B", "ZOTHER"}};
+    auto options = f.Options();
+    options.root_package = "ZROOT";
+
+    auto report =
+        f.Workflow().Export({Wanted("DOMA", "ZERPL_D_B")}, Target(repo.root, "ZROOT"), options);
+
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[0].message.find("ZOTHER") != std::string::npos);
+    CHECK(std::filesystem::is_empty(repo.root));
+}
+
+TEST_CASE("abapGit export: dry run reports removals but touches nothing",
+          "[workflow][abapgit_deploy][export]") {
+    Fixture f;
+    TempRepo repo;
+    Touch(repo.root / "src" / "zerpl_d_a.doma.xml", "<old/>");
+    Touch(repo.root / "src" / "zerpl_d_a.doma.screen_0200.abap", "x");
+    f.system["ZERPL_D_A"] = {{"zerpl_d_a.doma.xml", "<a/>"}};
+    f.engine.package_chains = {{"ZERPL_D_A", "$TMP"}};
+    auto scan = ScanAbapGitFolder(repo.root, AbapGitLayout{}, "$TMP");
+    REQUIRE(scan.IsOk());
+    auto options = f.Options();
+    options.dry_run = true;
+    auto report = f.Workflow().Export(scan.Value().objects, Target(repo.root, "$TMP"), options);
+    REQUIRE(report.objects.size() == 1);
+    CHECK(std::filesystem::exists(repo.root / "src" / "zerpl_d_a.doma.screen_0200.abap"));
+    bool reported = false;
+    for (const auto& part : report.objects[0].parts) {
+        reported = reported || part == "removed zerpl_d_a.doma.screen_0200.abap";
+    }
+    CHECK(reported);
 }

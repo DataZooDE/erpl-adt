@@ -143,6 +143,13 @@ struct AbapGitRunReport {
     [[nodiscard]] std::optional<Error> FirstError() const;
 };
 
+// Where an export writes: the repository root and its layout (.abapgit.xml).
+// The root package is AbapGitRunOptions::root_package.
+struct AbapGitExportTarget {
+    std::filesystem::path repo_root;
+    AbapGitLayout layout;
+};
+
 class AbapGitWorkflow {
 public:
     AbapGitWorkflow(IAdtSession& session, IEngineRunner& engine,
@@ -154,10 +161,16 @@ public:
                                           const AbapGitRunOptions& options);
     [[nodiscard]] AbapGitRunReport Delete(const std::vector<AbapGitObjectFiles>& objects,
                                           const AbapGitRunOptions& options);
-    // Reads `keys` from the system; writes files below `target_folder`
-    // (unless dry_run, which only reports Exported/Missing).
-    [[nodiscard]] AbapGitRunReport Export(const std::vector<AbapGitObjectKey>& keys,
-                                          const std::filesystem::path& target_folder,
+    // Reads the objects from the system and writes their files. An object
+    // with a folder (from ScanAbapGitFolder: a refresh) is written there; one
+    // without (named by --object) goes to the folder of its TADIR package,
+    // derived from the layout - refused when that package is not the root
+    // package or below it. After an object's files are written, its other
+    // files in that folder (same stem; parts the system no longer has, e.g. a
+    // screen deleted in SE51) are removed and reported as "removed <file>".
+    // dry_run writes and removes nothing but reports the same.
+    [[nodiscard]] AbapGitRunReport Export(const std::vector<AbapGitObjectFiles>& objects,
+                                          const AbapGitExportTarget& target,
                                           const AbapGitRunOptions& options);
 
 private:
@@ -165,9 +178,11 @@ private:
         std::vector<Result<ObjectState, Error>> states;
         std::string user;                     // SAP logon user
         std::vector<std::string> namespaces;  // changeable in the system
+        // Per key (with_packages only): TADIR package, then its parents.
+        std::vector<std::vector<std::string>> package_chains;
     };
     ReadResult ReadStates(const std::vector<AbapGitObjectKey>& keys,
-                          const AbapGitRunOptions& options);
+                          const AbapGitRunOptions& options, bool with_packages = false);
     const IClassicTypeHandler* Handler(const std::string& type) const;
     // The one guard-rail phase every command runs once the system facts are
     // known: object and package must be customer names (Y*/Z* or a

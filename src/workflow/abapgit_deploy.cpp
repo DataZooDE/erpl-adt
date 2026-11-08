@@ -6,6 +6,7 @@
 #include "abapgit_types.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -123,6 +124,46 @@ bool SameUser(std::string a, std::string b) {
 std::string ExportHint(const AbapGitObjectFiles& object) {
     return "<repo> --package " + object.package + " --object " + object.key.type + ":" +
            object.key.name;
+}
+
+// TADIR package of the object and its parent packages (TDEVC-PARENTCL).
+EngineOp TadirPackageOp(const AbapGitObjectKey& key) {
+    return {"tadir_package( object = " + AbapQuote(key.type) + " name = " + AbapQuote(key.name) +
+                " ).",
+            ""};
+}
+
+// Folder (relative to the starting folder, "" or "a/b/") of the first package
+// in `chain` (TADIR package, parent, grandparent, ...) when `root` is in the
+// chain; Err otherwise.
+Result<std::string, Error> FolderInRepo(const std::vector<std::string>& chain,
+                                        const std::string& root,
+                                        AbapGitLayout::FolderLogic logic) {
+    auto at = std::find(chain.begin(), chain.end(), root);
+    if (at == chain.end()) {
+        return Result<std::string, Error>::Err(MakeError(
+            "it is in package " + (chain.empty() ? std::string("(none)") : chain.front()) +
+                ", which is not " + root + " or one of its sub-packages; export it into the "
+                "repository of that package",
+            ErrorCategory::PackageError));
+    }
+    std::string folder;
+    for (auto child = at; child != chain.begin(); --child) {
+        auto segment = FolderForPackage(*(child - 1), *child, logic);
+        if (segment.IsErr()) {
+            return segment;
+        }
+        folder += segment.Value();
+    }
+    return Result<std::string, Error>::Ok(folder);
+}
+
+std::string StartingFolder(const AbapGitLayout& layout) {
+    std::string folder = layout.starting_folder;
+    while (!folder.empty() && folder.front() == '/') {
+        folder.erase(folder.begin());
+    }
+    return folder;
 }
 
 bool SafeForShell(const std::string& s) {
@@ -250,16 +291,22 @@ const IClassicTypeHandler* AbapGitWorkflow::Handler(const std::string& type) con
 }
 
 AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGitObjectKey>& keys,
-                                                        const AbapGitRunOptions& options) {
+                                                        const AbapGitRunOptions& options,
+                                                        bool with_packages) {
     ReadResult result;
     // Op 1 is always the system info (logon user, changeable namespaces),
     // so guard rails cost no extra round trip.
     std::vector<EngineOp> ops{SystemInfoOp()};
     std::vector<std::pair<size_t, size_t>> slices;  // offset, count per key
+    std::vector<size_t> package_ops;
     for (const auto& key : keys) {
         auto key_ops = Handler(key.type)->ReadOps(key, options.language);
         slices.emplace_back(ops.size(), key_ops.size());
         ops.insert(ops.end(), key_ops.begin(), key_ops.end());
+        if (with_packages) {
+            package_ops.push_back(ops.size());
+            ops.push_back(TadirPackageOp(key));
+        }
     }
 
     if (keys.empty()) {
@@ -286,6 +333,19 @@ AbapGitWorkflow::ReadResult AbapGitWorkflow::ReadStates(const std::vector<AbapGi
         TypeContext ctx{session_, engine_, options.root_package, options.transport,
                         options.language};
         result.states.push_back(Handler(keys[i].type)->BuildState(keys[i], slice, ctx));
+        if (with_packages) {
+            std::vector<std::string> chain;
+            const auto& r = all.at(package_ops[i]);
+            auto it = r.values.find("PACKAGE");
+            if (it != r.values.end() && !it->second.empty()) {
+                std::istringstream words(it->second.front());
+                std::string word;
+                while (words >> word) {
+                    chain.push_back(word);
+                }
+            }
+            result.package_chains.push_back(std::move(chain));
+        }
     }
     return result;
 }
@@ -562,58 +622,120 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
     return report;
 }
 
-AbapGitRunReport AbapGitWorkflow::Export(const std::vector<AbapGitObjectKey>& keys,
-                                         const std::filesystem::path& target_folder,
+AbapGitRunReport AbapGitWorkflow::Export(const std::vector<AbapGitObjectFiles>& objects,
+                                         const AbapGitExportTarget& target,
                                          const AbapGitRunOptions& options) {
     AbapGitRunReport report;
-    std::vector<AbapGitObjectKey> eligible;
-    for (const auto& key : keys) {
-        if (Handler(key.type) == nullptr) {
-            report.skipped.push_back(key.type + " " + key.name + " (object type not supported yet)");
+    std::vector<const AbapGitObjectFiles*> eligible;
+    for (const auto& object : objects) {
+        if (object.key.type == "DEVC") {
             continue;
         }
-        if (auto refused = CheckGuardRails(key, options.root_package, false, options)) {
+        if (Handler(object.key.type) == nullptr) {
+            report.skipped.push_back(object.key.type + " " + object.key.name +
+                                     " (object type not supported yet)");
+            continue;
+        }
+        const std::string package = object.package.empty() ? options.root_package : object.package;
+        if (auto refused = CheckGuardRails(object.key, package, false, options)) {
             report.objects.push_back(
-                FailedOutcome(key, options.root_package, ObjectAction::Refused, *refused));
+                FailedOutcome(object.key, package, ObjectAction::Refused, *refused));
             continue;
         }
-        eligible.push_back(key);
+        eligible.push_back(&object);
     }
-    auto states = ReadStates(eligible, options);
+    std::vector<AbapGitObjectKey> keys;
+    for (const auto* object : eligible) {
+        keys.push_back(object->key);
+    }
+    auto states = ReadStates(keys, options, true);
     for (size_t i = 0; i < eligible.size(); ++i) {
-        const auto& key = eligible[i];
+        const auto& object = *eligible[i];
+        const auto& key = object.key;
+        const auto& chain = states.package_chains.empty() ? std::vector<std::string>{}
+                                                           : states.package_chains[i];
+        std::string package = object.package;
+        if (package.empty()) {
+            package = chain.empty() ? options.root_package : chain.front();
+        }
         if (states.states[i].IsErr()) {
-            report.objects.push_back(FailedOutcome(key, options.root_package,
-                                                   ObjectAction::Failed, states.states[i].Error()));
+            report.objects.push_back(
+                FailedOutcome(key, package, ObjectAction::Failed, states.states[i].Error()));
             continue;
         }
-        if (auto refused = CheckAgainstSystem(key, options.root_package, states.namespaces)) {
-            report.objects.push_back(
-                FailedOutcome(key, options.root_package, ObjectAction::Refused, *refused));
+        if (auto refused = CheckAgainstSystem(key, package, states.namespaces)) {
+            report.objects.push_back(FailedOutcome(key, package, ObjectAction::Refused, *refused));
             continue;
         }
         const auto& state = states.states[i].Value();
         if (!state.exists) {
-            auto o = Outcome(key, options.root_package, ObjectAction::Missing);
+            auto o = Outcome(key, package, ObjectAction::Missing);
             o.message = key.type + " " + key.name + " does not exist in the system";
             o.error = MakeError(o.message, ErrorCategory::NotFound);
             report.objects.push_back(std::move(o));
             continue;
         }
-        auto outcome = Outcome(key, options.root_package, ObjectAction::Exported);
+
+        // Where the files go: the scanned folder, or the folder of the
+        // object's TADIR package below the repository root.
+        std::filesystem::path folder = object.folder;
+        if (folder.empty()) {
+            auto relative =
+                FolderInRepo(chain, options.root_package, target.layout.folder_logic);
+            if (relative.IsErr()) {
+                auto err = relative.Error();
+                err.message = key.type + " " + key.name + " cannot be exported here: " +
+                              err.message;
+                report.objects.push_back(FailedOutcome(key, package, ObjectAction::Refused, err));
+                continue;
+            }
+            folder = target.repo_root / StartingFolder(target.layout) / relative.Value();
+        }
+
+        auto outcome = Outcome(key, package, ObjectAction::Exported);
         for (const auto& [name, bytes] : state.files) {
             outcome.parts.push_back(name);
             if (options.dry_run) {
                 continue;
             }
             std::error_code ec;
-            std::filesystem::create_directories(target_folder, ec);
-            std::ofstream out(target_folder / name, std::ios::binary | std::ios::trunc);
+            std::filesystem::create_directories(folder, ec);
+            std::ofstream out(folder / name, std::ios::binary | std::ios::trunc);
             out << bytes;
             if (!out) {
                 outcome.action = ObjectAction::Failed;
-                outcome.message = "Cannot write " + (target_folder / name).string();
+                outcome.message = "Cannot write " + (folder / name).string();
                 outcome.error = MakeError(outcome.message, ErrorCategory::Internal);
+                break;
+            }
+        }
+        // Parts the system no longer has: the object's other files in the
+        // folder (same stem), removed only after every new file is written.
+        if (outcome.action == ObjectAction::Exported) {
+            const std::string prefix = ObjectFileStem(key) + ".";
+            std::error_code ec;
+            std::vector<std::filesystem::path> obsolete;
+            for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end;
+                 it.increment(ec)) {
+                const std::string name = it->path().filename().string();
+                std::string lower = name;
+                std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                if (it->is_regular_file() && lower.rfind(prefix, 0) == 0 &&
+                    state.files.count(name) == 0) {
+                    obsolete.push_back(it->path());
+                }
+            }
+            std::sort(obsolete.begin(), obsolete.end());
+            for (const auto& path : obsolete) {
+                if (!options.dry_run && !std::filesystem::remove(path, ec)) {
+                    outcome.action = ObjectAction::Failed;
+                    outcome.message = "Cannot remove " + path.string();
+                    outcome.error = MakeError(outcome.message, ErrorCategory::Internal);
+                    break;
+                }
+                outcome.parts.push_back("removed " + path.filename().string());
             }
         }
         report.objects.push_back(std::move(outcome));

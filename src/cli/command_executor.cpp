@@ -1869,8 +1869,20 @@ int HandleAbapGitExport(const CommandArgs& args) {
     }
     opts.language = config.master_language.empty() ? "E" : config.master_language;
 
+    // What the repository already holds: each object's folder and files, so a
+    // refresh writes back in place and removes files of deleted parts.
+    std::vector<AbapGitObjectFiles> scanned;
+    if (has_dot) {
+        auto scan = ScanAbapGitFolder(dir, ToLayout(config), opts.root_package);
+        if (scan.IsErr()) {
+            fmt.PrintError(scan.Error());
+            return scan.Error().ExitCode();
+        }
+        scanned = scan.Value().objects;
+    }
+
     // Which objects: --object list, else the supported objects already in <dir>.
-    std::vector<AbapGitObjectKey> keys;
+    std::vector<AbapGitObjectFiles> objects;
     for (const auto& spec : SplitObjectSpecs(GetFlag(args, "object"))) {
         auto colon = spec.find(':');
         if (colon == std::string::npos) {
@@ -1883,35 +1895,36 @@ int HandleAbapGitExport(const CommandArgs& args) {
                        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         std::transform(key.name.begin(), key.name.end(), key.name.begin(),
                        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        keys.push_back(key);
-    }
-    if (keys.empty() && has_dot) {
-        auto scan = ScanAbapGitFolder(dir, ToLayout(config), opts.root_package);
-        if (scan.IsErr()) {
-            fmt.PrintError(scan.Error());
-            return scan.Error().ExitCode();
+        auto known = std::find_if(scanned.begin(), scanned.end(),
+                                  [&](const AbapGitObjectFiles& o) { return o.key == key; });
+        if (known != scanned.end()) {
+            objects.push_back(*known);
+        } else {
+            AbapGitObjectFiles wanted;  // folder derived from its TADIR package
+            wanted.key = key;
+            objects.push_back(wanted);
         }
-        for (const auto& o : scan.Value().objects) {
+    }
+    if (!HasFlag(args, "object")) {
+        for (const auto& o : scanned) {
             if (o.key.type != "DEVC") {
-                keys.push_back(o.key);
+                objects.push_back(o);
             }
         }
     }
-    if (keys.empty()) {
+    if (objects.empty()) {
         fmt.PrintError(MakeValidationError(
             "Nothing to export: pass --object TYPE:NAME[,...] or point <dir> at an abapGit "
             "repository whose objects should be refreshed from the system"));
         return 99;
     }
 
-    std::string folder = config.starting_folder;
-    while (!folder.empty() && folder.front() == '/') {
-        folder.erase(folder.begin());
-    }
-    const auto target_folder = dir / folder;
+    AbapGitExportTarget export_target;
+    export_target.repo_root = dir;
+    export_target.layout = ToLayout(config);
 
     return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
-        auto report = workflow.Export(keys, target_folder, opts);
+        auto report = workflow.Export(objects, export_target, opts);
         if (!has_dot && !opts.dry_run && !report.Failed()) {
             std::filesystem::create_directories(dir, ec);
             std::ofstream(dir / ".abapgit.xml", std::ios::binary) << RenderDotAbapGit(config);
