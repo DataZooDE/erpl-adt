@@ -124,6 +124,26 @@ else()
                     "'erpl-adt catalog webui' will build but serve an instructional message instead of the app.")
 endif()
 
+# --- Embedded ABAP sources ---
+# The classic-object engine (src/abap/*.abap) is the body of the temporary
+# console helper class erpl-adt writes to SAP for dynpros, GUI status,
+# transactions, text pools and domains. It is kept as a real ABAP file (so it
+# can be read, diffed and linted as ABAP) and embedded at build time; MSVC's
+# 16 KB string-literal limit rules out a raw string in C++.
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+include(${CMAKE_SOURCE_DIR}/third_party/cmrc/CMakeRC.cmake)
+file(GLOB ERPL_ABAP_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/abap/*.abap")
+cmrc_add_resource_library(erpl_abap_resources
+    ALIAS erpl_abap::rc
+    NAMESPACE erpl_abap
+    WHENCE "${CMAKE_SOURCE_DIR}/src/abap"
+    ${ERPL_ABAP_FILES}
+)
+if(MSVC)
+    set_property(TARGET erpl_abap_resources PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # --- Static library (everything except main.cpp) ---
 file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main\\.cpp$")
@@ -146,6 +166,7 @@ if(LIB_SOURCES)
         $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>
     )
     target_link_libraries(erpl_adt_lib PUBLIC datazoo_banner)
+    target_link_libraries(erpl_adt_lib PRIVATE erpl_abap::rc)
     if(ERPL_ADT_HAVE_TELEMETRY)
         target_link_libraries(erpl_adt_lib PRIVATE posthog_telemetry)
         target_compile_definitions(erpl_adt_lib PRIVATE ERPL_ADT_TELEMETRY_ENABLED=1)
