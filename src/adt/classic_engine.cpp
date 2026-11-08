@@ -119,24 +119,6 @@ std::string AbapQuote(const std::string& value) {
     return out;
 }
 
-EngineOp DomaGetOp(const std::string& name, const std::string& language) {
-    return {"doma_get( name = " + AbapQuote(name) + " language = " + AbapQuote(language) + " ).",
-            ""};
-}
-
-EngineOp DomaPutOp(const std::string& name, const std::string& language,
-                   const std::string& devclass, const std::string& trkorr,
-                   const std::string& asx_xml) {
-    return {"doma_put( name = " + AbapQuote(name) + " language = " + AbapQuote(language) +
-                " devclass = " + AbapQuote(devclass) + " trkorr = " + AbapQuote(trkorr) + " ).",
-            asx_xml};
-}
-
-EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
-    return {"doma_delete( name = " + AbapQuote(name) + " trkorr = " + AbapQuote(trkorr) + " ).",
-            ""};
-}
-
 EngineOp SystemInfoOp() {
     return {"system_info( ).", ""};
 }

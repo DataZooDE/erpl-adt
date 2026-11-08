@@ -193,8 +193,24 @@ bool Mentions(const ObjectFileSet& files, const std::string& name) {
     return false;
 }
 
+// Path characters that may go into the popen command line (inside double
+// quotes): an allowlist, so no shell metacharacter (quotes, $, `, ;, |, &,
+// <, >, parentheses, globs, newlines) can ever reach the shell.
 bool SafeForShell(const std::string& s) {
-    return s.find_first_of("\"'`$\\\n\r") == std::string::npos;
+    for (char c : s) {
+        if (std::isalnum(static_cast<unsigned char>(c)) != 0) {
+            continue;
+        }
+#ifdef _WIN32
+        static const std::string kAllowed = "._-/\\#+@ ,=~:";  // no % (cmd expands it)
+#else
+        static const std::string kAllowed = "._-/#+@ ,=~:%";
+#endif
+        if (kAllowed.find(c) == std::string::npos) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Runs `command` and returns its stdout (empty on any failure).
@@ -226,7 +242,7 @@ std::string Capture(const std::string& command) {
 std::vector<std::string> GitFileHistory::PreviousVersions(const std::filesystem::path& file) const {
     const std::string dir = file.parent_path().string();
     const std::string name = file.filename().string();
-    if (dir.empty() || !SafeForShell(dir) || !SafeForShell(name)) {
+    if (dir.empty() || !SafeForShell(dir) || !SafeForShell(name) || max_versions_ <= 0) {
         return {};
     }
 #ifdef _WIN32
@@ -234,17 +250,54 @@ std::vector<std::string> GitFileHistory::PreviousVersions(const std::filesystem:
 #else
     const std::string quiet = " 2>/dev/null";
 #endif
-    const std::string git = "git -C \"" + dir + "\" ";
-    std::istringstream hashes(Capture(git + "log --format=%H -n " +
-                                      std::to_string(max_versions_) + " -- \"" + name + "\"" +
-                                      quiet));
+    // One git process per file: every commit's patch with the whole file as
+    // context (-U<huge>), so the new side of each patch is that version's
+    // full content. \x01 marks the start of each commit.
+    const std::string out =
+        Capture("git -C \"" + dir + "\" log -n " + std::to_string(max_versions_) +
+                " --no-color --no-ext-diff --no-renames --format=%x01 -p -U100000000 -- \"" +
+                name + "\"" + quiet);
     std::vector<std::string> versions;
-    std::string hash;
-    while (std::getline(hashes, hash)) {
-        if (hash.size() != 40 || hash.find_first_not_of("0123456789abcdef") != std::string::npos) {
-            continue;
+    size_t pos = 0;
+    while ((pos = out.find('\x01', pos)) != std::string::npos) {
+        const size_t next = out.find('\x01', pos + 1);
+        const std::string chunk =
+            out.substr(pos + 1, (next == std::string::npos ? out.size() : next) - pos - 1);
+        pos = next == std::string::npos ? out.size() : next;
+        std::string content;
+        bool in_hunk = false;
+        bool has_new_side = false;
+        bool last_was_new = false;
+        size_t start = 0;
+        while (start < chunk.size()) {
+            size_t end = chunk.find('\n', start);
+            if (end == std::string::npos) {
+                end = chunk.size();
+            }
+            const std::string line = chunk.substr(start, end - start);
+            start = end + 1;
+            if (!in_hunk) {
+                in_hunk = line.rfind("@@", 0) == 0;
+                continue;
+            }
+            if (line.empty()) {
+                continue;
+            }
+            if (line[0] == ' ' || line[0] == '+') {
+                content += line.substr(1) + "\n";
+                has_new_side = true;
+                last_was_new = true;
+            } else if (line[0] == '-') {
+                last_was_new = false;
+            } else if (line[0] == '\\') {  // "\ No newline at end of file"
+                if (last_was_new && !content.empty()) {
+                    content.pop_back();
+                }
+            }
         }
-        versions.push_back(Capture(git + "show " + hash + ":./" + name + quiet));
+        if (has_new_side) {  // a commit that deleted the file has none
+            versions.push_back(std::move(content));
+        }
     }
     return versions;
 }

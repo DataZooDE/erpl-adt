@@ -802,3 +802,14 @@ TEST_CASE("abapgit export: --transport is not an export flag",
     CHECK(r.exit_code == 99);
     CHECK(r.stderr_text.find("did you mean --object?") != std::string::npos);
 }
+
+TEST_CASE("abapgit deploy: an invalid --transport is refused before anything runs",
+          "[cli][executor][abapgit]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "abapgit", "deploy", "./no-such-repo", "--package",
+                          "ZDEMO", "--transport", "A4HK9' OR '1"};
+    auto r = DispatchCaptureBoth(router, 8, argv);
+    CHECK(r.exit_code == 99);
+    CHECK(r.stderr_text.find("--transport") != std::string::npos);
+}

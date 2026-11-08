@@ -31,13 +31,8 @@ struct EngineOp {
     std::string payload;  // raw bytes handed to the operation (empty: none)
 };
 
-// Builders for the operations the engine implements. Arguments are quoted as
-// ABAP literals; names must already have passed the customer-object check.
-EngineOp DomaGetOp(const std::string& name, const std::string& language);
-EngineOp DomaPutOp(const std::string& name, const std::string& language,
-                   const std::string& devclass, const std::string& trkorr,
-                   const std::string& asx_xml);
-EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr);
+// Type-specific operation builders live with their handler
+// (src/workflow/abapgit_type_<type>.cpp). Only the type-independent ones here.
 // Logon user (META changed_by field) and changeable namespaces (values["NS"]).
 EngineOp SystemInfoOp();
 

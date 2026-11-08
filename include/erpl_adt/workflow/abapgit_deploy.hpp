@@ -111,11 +111,14 @@ public:
     }
 };
 
-// Reads `git log` / `git show` for the file (up to `max_versions` commits).
-// Returns nothing when git is not installed or the file is not tracked.
+// Reads the file's last `max_versions` committed versions with ONE
+// `git log -p` process (full-file context, so each patch carries the whole
+// version). Paths with characters outside a strict allowlist are never
+// passed to the shell (no history then). Returns nothing when git is not
+// installed or the file is not tracked.
 class GitFileHistory final : public IFileHistory {
 public:
-    explicit GitFileHistory(int max_versions = 50) : max_versions_(max_versions) {}
+    explicit GitFileHistory(int max_versions = 20) : max_versions_(max_versions) {}
     std::vector<std::string> PreviousVersions(const std::filesystem::path& file) const override;
 
 private:

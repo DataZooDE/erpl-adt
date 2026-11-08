@@ -1539,9 +1539,7 @@ Result<AbapGitRepoConfig, Error> LoadDotAbapGit(const std::filesystem::path& fil
 AbapGitLayout ToLayout(const AbapGitRepoConfig& config) {
     AbapGitLayout layout;
     layout.starting_folder = config.starting_folder;
-    layout.folder_logic = config.folder_logic == AbapGitRepoConfig::FolderLogic::Full
-                              ? AbapGitLayout::FolderLogic::Full
-                              : AbapGitLayout::FolderLogic::Prefix;
+    layout.folder_logic = config.folder_logic;
     layout.ignore = config.ignore;
     return layout;
 }
@@ -1627,6 +1625,16 @@ Result<AbapGitRunOptions, Error> ParseAbapGitOptions(const CommandArgs& args) {
             MakeValidationError("Invalid --package: " + valid.Error()));
     }
     options.transport = GetFlag(args, "transport");
+    std::transform(options.transport.begin(), options.transport.end(), options.transport.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (!options.transport.empty()) {
+        // Validated once here: it goes into ABAP literals and ?corrNr= queries.
+        auto valid_transport = TransportId::Create(options.transport);
+        if (valid_transport.IsErr()) {
+            return Result<AbapGitRunOptions, Error>::Err(
+                MakeValidationError("Invalid --transport: " + valid_transport.Error()));
+        }
+    }
     options.dry_run = HasFlag(args, "dry-run");
     options.force = HasFlag(args, "force");
     options.strict = HasFlag(args, "strict");

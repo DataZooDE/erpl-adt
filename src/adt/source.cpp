@@ -1,3 +1,4 @@
+#include <erpl_adt/core/url.hpp>
 #include <erpl_adt/adt/source.hpp>
 #include <erpl_adt/adt/object_exists.hpp>
 #include "adt_utils.hpp"
@@ -131,7 +132,7 @@ Result<void, Error> CreateClassInclude(
     const std::optional<std::string>& transport_number) {
     auto url = class_uri + "/includes?lockHandle=" + lock_handle.Value();
     if (transport_number) {
-        url += "&corrNr=" + *transport_number;
+        url += "&corrNr=" + UrlEncode(*transport_number);
     }
 
     const std::string body =
@@ -195,7 +196,7 @@ Result<void, Error> WriteSource(
     const std::optional<std::string>& transport_number) {
     auto url = source_uri + "?lockHandle=" + lock_handle.Value();
     if (transport_number) {
-        url += "&corrNr=" + *transport_number;
+        url += "&corrNr=" + UrlEncode(*transport_number);
     }
 
     auto response = session.Put(url, source, "text/plain; charset=utf-8");
@@ -269,7 +270,7 @@ Result<void, Error> WriteSourceOptimistic(
     const std::optional<std::string>& transport_number) {
     std::string url = source_uri;
     if (transport_number) {
-        url += "?corrNr=" + *transport_number;
+        url += "?corrNr=" + UrlEncode(*transport_number);
     }
 
     auto response = session.Put(url, source, "text/plain; charset=utf-8");

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/abapgit_repo.hpp>
 #include <erpl_adt/core/result.hpp>
 
 #include <string>
@@ -62,7 +63,7 @@ struct AbapGitXml {
 struct AbapGitRepoConfig {
     std::string master_language = "E";
     std::string starting_folder = "/src/";
-    enum class FolderLogic { Prefix, Full };
+    using FolderLogic = AbapGitFolderLogic;  // the one enum, see abapgit_repo.hpp
     FolderLogic folder_logic = FolderLogic::Prefix;
     std::vector<std::string> ignore;
     std::string raw_values_xml;  // full compact <DATA>... so unknown fields survive a round trip

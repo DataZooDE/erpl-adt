@@ -8,6 +8,27 @@ namespace erpl_adt {
 
 namespace {
 
+// Engine operations of src/abap/engine_doma.abap. Arguments are quoted as
+// ABAP literals; names have passed the customer-object check.
+EngineOp DomaGetOp(const std::string& name, const std::string& language) {
+    return {"doma_get( name = " + AbapQuote(name) + " language = " + AbapQuote(language) + " ).",
+            ""};
+}
+
+EngineOp DomaPutOp(const std::string& name, const std::string& language,
+                   const std::string& devclass, const std::string& trkorr,
+                   const std::string& asx_xml) {
+    return {"doma_put( name = " + AbapQuote(name) + " language = " + AbapQuote(language) +
+                " devclass = " + AbapQuote(devclass) + " trkorr = " + AbapQuote(trkorr) + " ).",
+            asx_xml};
+}
+
+EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
+    return {"doma_delete( name = " + AbapQuote(name) + " trkorr = " + AbapQuote(trkorr) + " ).",
+            ""};
+}
+
+
 class DomaHandler final : public IClassicTypeHandler {
 public:
     std::string Type() const override { return "DOMA"; }

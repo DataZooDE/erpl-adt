@@ -4,6 +4,7 @@
 
 #include "../../test/mocks/mock_adt_session.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -785,4 +786,50 @@ TEST_CASE("abapGit deploy: progress is reported per object before it is written"
     REQUIRE(lines.size() == 2);
     CHECK(lines[0] == "[1/2] creating DOMA ZERPL_D_A");
     CHECK(lines[1] == "[2/2] creating DOMA ZERPL_D_B");
+}
+
+// ---------------------------------------------------------------------------
+// GitFileHistory against a real (temporary) git repository.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GitFileHistory: committed versions newest first, exact bytes",
+          "[workflow][abapgit_deploy][git]") {
+    if (std::system("git --version > /dev/null 2>&1") != 0) {
+        SKIP("git is not installed");
+    }
+    TempRepo repo;
+    const auto dir = repo.root.string();
+    auto git = [&](const std::string& args) {
+        const std::string cmd = "git -C \"" + dir + "\" -c user.name=t -c user.email=t@t " +
+                                args + " > /dev/null 2>&1";
+        REQUIRE(std::system(cmd.c_str()) == 0);
+    };
+    git("init -q");
+    const auto file = repo.root / "zerpl_d_a.doma.xml";
+    const std::vector<std::string> versions = {"<a>\n <b/>\n</a>\n", "<a>\n <c/>\n</a>",
+                                               "line with\ttab\r\n<x/>\n"};
+    for (const auto& v : versions) {
+        std::ofstream(file, std::ios::binary | std::ios::trunc) << v;
+        git("add -A");
+        git("commit -qm v");
+    }
+    GitFileHistory history(10);
+    auto got = history.PreviousVersions(file);
+    REQUIRE(got.size() == 3);
+    CHECK(got[0] == versions[2]);
+    CHECK(got[1] == versions[1]);  // no final newline survives
+    CHECK(got[2] == versions[0]);
+
+    GitFileHistory capped(2);
+    CHECK(capped.PreviousVersions(file).size() == 2);
+}
+
+TEST_CASE("GitFileHistory: paths with shell metacharacters are not passed to a shell",
+          "[workflow][abapgit_deploy][git]") {
+    TempRepo repo;
+    GitFileHistory history;
+    for (const char* name : {"a'b.doma.xml", "a`id`.doma.xml", "a$(x).doma.xml", "a;b.doma.xml",
+                             "a|b.doma.xml", "a&b.doma.xml"}) {
+        CHECK(history.PreviousVersions(repo.root / name).empty());
+    }
 }

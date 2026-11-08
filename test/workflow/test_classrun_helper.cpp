@@ -12,6 +12,17 @@ using namespace erpl_adt::testing;
 
 namespace {
 
+// Ops in the shape of the DOMA part (src/abap/engine_doma.abap); the handler
+// builds the real ones in src/workflow/abapgit_type_doma.cpp.
+EngineOp DomaGetOp(const std::string& name, const std::string& language) {
+    return {"doma_get( name = " + AbapQuote(name) + " language = " + AbapQuote(language) + " ).",
+            ""};
+}
+EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
+    return {"doma_delete( name = " + AbapQuote(name) + " trkorr = " + AbapQuote(trkorr) + " ).",
+            ""};
+}
+
 const char* kLockResponseXml =
     R"(<?xml version="1.0" encoding="UTF-8"?>
 <asx:abap xmlns:asx="http://www.sap.com/abapxml">

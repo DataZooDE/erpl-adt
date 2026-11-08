@@ -1,3 +1,4 @@
+#include <erpl_adt/core/url.hpp>
 #include <erpl_adt/adt/function_group.hpp>
 
 #include <tinyxml2.h>
@@ -57,7 +58,7 @@ Result<void, Error> PostCreate(IAdtSession& session, const std::string& operatio
                                const std::string& content_type,
                                const std::optional<std::string>& transport) {
     if (transport && !transport->empty()) {
-        url += "?corrNr=" + *transport;
+        url += "?corrNr=" + UrlEncode(*transport);
     }
     auto response = session.Post(url, body, content_type);
     if (response.IsErr()) {

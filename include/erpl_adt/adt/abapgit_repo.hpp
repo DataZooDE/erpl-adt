@@ -28,11 +28,14 @@ namespace erpl_adt {
 
 // The part of `.abapgit.xml` the scanner needs. Reading the XML is someone
 // else's job; the caller passes the already-parsed values in.
+// .abapgit.xml FOLDER_LOGIC.
+// PREFIX: sub-folder `foo` of package ZROOT is package ZROOT_FOO.
+// FULL:   sub-folder name is the package name ('#' for '/').
+// (abapGit's MIXED logic is not supported.)
+enum class AbapGitFolderLogic { Prefix, Full };
+
 struct AbapGitLayout {
-    // PREFIX: sub-folder `foo` of package ZROOT is package ZROOT_FOO.
-    // FULL:   sub-folder name is the package name ('#' for '/').
-    // (abapGit's MIXED logic is not supported.)
-    enum class FolderLogic { Prefix, Full };
+    using FolderLogic = AbapGitFolderLogic;
 
     std::string starting_folder = "/src/";
     FolderLogic folder_logic = FolderLogic::Prefix;

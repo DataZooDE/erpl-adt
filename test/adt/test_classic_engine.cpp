@@ -9,6 +9,24 @@ using namespace erpl_adt;
 
 namespace {
 
+// Ops in the shape of the DOMA part (src/abap/engine_doma.abap); the handler
+// builds the real ones in src/workflow/abapgit_type_doma.cpp.
+EngineOp DomaGetOp(const std::string& name, const std::string& language) {
+    return {"doma_get( name = " + AbapQuote(name) + " language = " + AbapQuote(language) + " ).",
+            ""};
+}
+EngineOp DomaPutOp(const std::string& name, const std::string& language,
+                   const std::string& devclass, const std::string& trkorr,
+                   const std::string& asx_xml) {
+    return {"doma_put( name = " + AbapQuote(name) + " language = " + AbapQuote(language) +
+                " devclass = " + AbapQuote(devclass) + " trkorr = " + AbapQuote(trkorr) + " ).",
+            asx_xml};
+}
+EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
+    return {"doma_delete( name = " + AbapQuote(name) + " trkorr = " + AbapQuote(trkorr) + " ).",
+            ""};
+}
+
 std::string Between(const std::string& s, const std::string& from, const std::string& to) {
     auto a = s.find(from);
     if (a == std::string::npos) {
