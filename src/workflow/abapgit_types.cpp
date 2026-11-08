@@ -60,6 +60,35 @@ Result<std::vector<EngineOpResult>, Error> RunChecked(IEngineRunner& engine,
     return run;
 }
 
+std::map<std::string, std::string> ChangedParts(const EngineOpResult& result) {
+    std::map<std::string, std::string> out;
+    auto it = result.values.find("CHANGED");
+    if (it == result.values.end()) {
+        return out;
+    }
+    for (const auto& line : it->second) {
+        const auto space = line.rfind(' ');
+        if (space == std::string::npos) {
+            continue;
+        }
+        const std::string user = line.substr(space + 1);
+        out[line.substr(0, space)] = user == "?" ? "" : user;
+    }
+    return out;
+}
+
+std::string CommonChanger(const std::vector<std::string>& users) {
+    if (users.empty()) {
+        return "";
+    }
+    for (const auto& u : users) {
+        if (u.empty() || u != users.front()) {
+            return "";
+        }
+    }
+    return users.front();
+}
+
 std::string FileName(const AbapGitObjectKey& key, const std::string& part) {
     return ObjectFileStem(key) + "." + part;
 }

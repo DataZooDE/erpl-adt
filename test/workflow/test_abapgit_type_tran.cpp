@@ -89,7 +89,10 @@ TEST_CASE("TRAN handler: engine data becomes the abapGit file", "[workflow][abap
     auto state = f.handler->BuildState(f.key, {r}, ctx);
     REQUIRE(state.IsOk());
     CHECK(state.Value().exists);
-    CHECK(state.Value().changed_by == "DEVELOPER");
+    // SAP records no last changer for a transaction (TSTC* have no user
+    // fields, no version in VRSD); the TADIR author is the creator, not the
+    // last editor. Unknown -> drift protection needs git history.
+    CHECK(state.Value().changed_by.empty());
     CHECK(state.Value().files == f.Files(kVa03Values));
 }
 

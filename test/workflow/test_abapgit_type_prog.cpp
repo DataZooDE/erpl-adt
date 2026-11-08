@@ -329,3 +329,27 @@ TEST_CASE("PROG: pending inactive parts come from the engine's PENDING data",
     REQUIRE(state.IsOk());
     CHECK(state.Value().pending == std::vector<std::string>{"CUAD", "DYNP0100", "REPS"});
 }
+
+TEST_CASE("PROG: last changers per part (source, texts, CUA known; dynpros unknown)",
+          "[workflow][abapgit_prog][drift]") {
+    Ctx c;
+    EngineOpResult r;
+    r.rc = 0;
+    r.exists = true;
+    r.changed_by = "DEVELOPER";
+    r.data["XML"] = "<?xml version=\"1.0\" encoding=\"utf-16\"?><asx:abap "
+                    "xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\"><asx:values>"
+                    "<PROGDIR><NAME>ZERPL_T_PROG</NAME></PROGDIR></asx:values></asx:abap>";
+    r.data["SOURCE"] = "REPORT zerpl_t_prog.\n";
+    r.data["SCREEN_0100"] = "PROCESS BEFORE OUTPUT.\n";
+    r.values["CHANGED"] = {"SOURCE DEVELOPER", "TEXTS COLLEAGUE", "CUA ?"};
+    auto state = Handler()->BuildState(kKey, {r}, c.ctx);
+    REQUIRE(state.IsOk());
+    const auto& by = state.Value().part_changed_by;
+    CHECK(by.at("zerpl_t_prog.prog.abap") == "DEVELOPER");
+    CHECK(by.at("zerpl_t_prog.prog.xml#PROGDIR") == "DEVELOPER");
+    CHECK(by.at("zerpl_t_prog.prog.xml#TPOOL") == "COLLEAGUE");
+    CHECK(by.at("zerpl_t_prog.prog.xml#CUA").empty());
+    CHECK(by.at("zerpl_t_prog.prog.xml").empty());  // DYNPROS & others: unknown
+    CHECK(by.at("zerpl_t_prog.prog.screen_0100.abap").empty());
+}

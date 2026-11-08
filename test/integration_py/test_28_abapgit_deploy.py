@@ -13,10 +13,14 @@ SNWD_BPA) that exists on the A4H trial — the trial has no SD tables
 """
 
 import json
+import os
 import re
+import shutil
 from pathlib import Path
 
 import pytest
+
+from cli_runner import CliRunner
 
 FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
 SRC = FIXTURES / "src"
@@ -173,6 +177,95 @@ class TestGuardRails:
     def test_no_helper_classes_are_left_behind(self, cli, helpers_before):
         leftovers = _helper_classes(cli) - helpers_before
         assert leftovers == set(), f"this run left helper classes behind: {leftovers}"
+
+
+@pytest.fixture(scope="module")
+def cli2(sap_config, cli):
+    """A second SAP user (a colleague). SAP_USER_2 (default BWDEVELOPER) /
+    SAP_PASSWORD_2 (default SAP_PASSWORD). Logon is probed once; the tests
+    that need a colleague skip when it fails."""
+    user = os.getenv("SAP_USER_2", "BWDEVELOPER")
+    runner = CliRunner(
+        binary_path=cli.binary, host=sap_config["host"], port=sap_config["port"],
+        user=user, password=os.getenv("SAP_PASSWORD_2", sap_config["password"]),
+        client=sap_config["client"],
+    )
+    probe = runner.run("search", "ZERPL_D*", "--max", "1")
+    if probe.returncode != 0:
+        pytest.skip(f"second SAP user {user} is not available: {probe.stderr[:300]}")
+    return runner
+
+
+@pytest.mark.abapgit_deploy
+class TestColleagueChanges:
+    """Two users: a deploy never silently overwrites (or deletes) what a
+    colleague changed in the system, and respects a colleague's edit lock."""
+
+    DOMA = "ZERPL_D_SO_STATUS"
+    FILE = SRC / "zerpl_d_so_status.doma.xml"
+
+    def _colleague_edits_domain(self, cli, cli2, tmp_path):
+        cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
+        edited = tmp_path / self.FILE.name
+        edited.write_bytes(self.FILE.read_bytes().replace(
+            b"<DDTEXT>Cancelled</DDTEXT>", b"<DDTEXT>Storniert</DDTEXT>"))
+        # The colleague overwrites on purpose (as if editing in SE11).
+        cli2.run_ok("abapgit", "deploy", str(edited), "--package", PACKAGE, "--force")
+
+    def test_deploy_refuses_a_colleagues_change_and_force_overwrites(
+            self, cli, cli2, adt, tmp_path):
+        self._colleague_edits_domain(cli, cli2, tmp_path)
+
+        result = cli.run("abapgit", "deploy", str(self.FILE), "--package", PACKAGE)
+
+        assert result.returncode == 6, result.stderr
+        entry = _entry(json.loads(result.stdout), "DOMA", self.DOMA)
+        assert entry["action"] == "refused"
+        assert cli2.user in entry["message"]
+        assert ("X", "Storniert") in _fixed_values(adt, self.DOMA)  # untouched
+
+        forced = cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE,
+                            "--force")
+        assert _entry(forced, "DOMA", self.DOMA)["action"] == "updated"
+        assert ("X", "Cancelled") in _fixed_values(adt, self.DOMA)
+
+    def test_delete_refuses_a_colleagues_change(self, cli, cli2, adt, tmp_path):
+        self._colleague_edits_domain(cli, cli2, tmp_path)
+
+        result = cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE)
+
+        assert result.returncode == 6, result.stderr
+        entry = _entry(json.loads(result.stdout), "DOMA", self.DOMA)
+        assert entry["action"] == "refused"
+        assert cli2.user in entry["message"]
+        status, _ = adt.get(f"/sap/bc/adt/ddic/domains/{self.DOMA.lower()}")
+        assert status == 200  # still there
+        cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
+
+    def test_deploy_fails_on_a_colleagues_edit_lock(self, cli, cli2, adt, tmp_path):
+        xml = SRC / "zerpl_po_report.prog.xml"
+        abap = SRC / "zerpl_po_report.prog.abap"
+        cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE, "--force",
+                   timeout=900)
+        work = tmp_path / "work"
+        work.mkdir()
+        shutil.copy(xml, work / xml.name)
+        (work / abap.name).write_bytes(abap.read_bytes() + b"* changed while locked\n")
+        uri = "/sap/bc/adt/programs/programs/zerpl_po_report"
+        session = tmp_path / "colleague_session.json"
+        lock = cli2.run_ok("object", "lock", uri, session_file=session)
+        try:
+            result = cli.run("abapgit", "deploy", str(work / xml.name), "--package", PACKAGE,
+                             timeout=900)
+            assert result.returncode == 6, result.stdout + result.stderr
+            entry = _entry(json.loads(result.stdout), "PROG", "ZERPL_PO_REPORT")
+            assert entry["action"] == "failed"
+            status, source = adt.get(uri + "/source/main")
+            assert status == 200
+            assert "changed while locked" not in source  # content unchanged
+        finally:
+            cli2.run("object", "unlock", uri, "--handle", lock["handle"],
+                     session_file=session)
 
 
 @pytest.mark.abapgit_deploy

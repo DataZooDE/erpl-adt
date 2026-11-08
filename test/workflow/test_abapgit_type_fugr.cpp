@@ -273,6 +273,39 @@ TEST_CASE("FUGR handler: engine data becomes abapGit files", "[workflow][abapgit
     CHECK(incl.find("<NAME>LZERPL_FGTOP</NAME>") != std::string::npos);
 }
 
+TEST_CASE("FUGR handler: last changer per include, not the main program's",
+          "[workflow][abapgit_fugr][drift]") {
+    auto handlers = DefaultTypeHandlers();
+    const auto& handler = *handlers.at("FUGR");
+    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    EngineOpResult r;
+    r.rc = 0;
+    r.exists = true;
+    r.changed_by = "DEVELOPER";  // SAPLZERPL_FG: untouched by an SE37 edit
+    r.data["XML"] =
+        "<?xml version=\"1.0\" encoding=\"utf-16\"?><asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" "
+        "version=\"1.0\"><asx:values><AREAT>demo</AREAT></asx:values></asx:abap>";
+    r.data["FM:Z_ERPL_READ_ORDER"] = "FUNCTION z_erpl_read_order.\nENDFUNCTION.\n";
+    r.data["FM:Z_ERPL_READ_PARTNER"] = "FUNCTION z_erpl_read_partner.\nENDFUNCTION.\n";
+    r.data["SRC:LZERPL_FGTOP"] = "FUNCTION-POOL ZERPL_FG.\n";
+    r.values["CHANGED"] = {"MAIN DEVELOPER", "FM:Z_ERPL_READ_ORDER COLLEAGUE",
+                           "FM:Z_ERPL_READ_PARTNER DEVELOPER", "SRC:LZERPL_FGTOP ?"};
+    MockAdtSession session;
+    FakeEngine engine;
+    TypeContext ctx{session, engine, "$TMP", "", "E"};
+    auto state = handler.BuildState(key, {r}, ctx);
+    REQUIRE(state.IsOk());
+    const auto& by = state.Value().part_changed_by;
+    CHECK(by.at("zerpl_fg.fugr.z_erpl_read_order.abap") == "COLLEAGUE");
+    CHECK(by.at("zerpl_fg.fugr.z_erpl_read_partner.abap") == "DEVELOPER");
+    CHECK(by.at("zerpl_fg.fugr.lzerpl_fgtop.abap").empty());
+    CHECK(by.at("zerpl_fg.fugr.lzerpl_fgtop.xml").empty());
+    // Interfaces live in the main XML: changed by different users -> unknown.
+    CHECK(by.at("zerpl_fg.fugr.xml#FUNCTIONS").empty());
+    CHECK(by.at("zerpl_fg.fugr.xml#INCLUDES") == "DEVELOPER");
+    CHECK(by.at("zerpl_fg.fugr.xml").empty());  // AREAT: no changer recorded
+}
+
 TEST_CASE("FUGR handler: RFC modules are refused before anything is written",
           "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();

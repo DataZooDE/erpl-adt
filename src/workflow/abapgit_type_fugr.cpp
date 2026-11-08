@@ -154,6 +154,25 @@ public:
                 state.files[PartFile(key, tag.substr(4), ".xml")] = RenderAbapGitXml(xml);
             }
         }
+        // Last changers per include (REPOSRC-UNAM): an SE37 edit changes the
+        // function module's include L<fg>U<nn>, not SAPL<fg>.
+        const auto changed = ChangedParts(r);
+        std::vector<std::string> fm_changers;
+        for (const auto& [part, user] : changed) {
+            if (part.rfind("FM:", 0) == 0) {
+                state.part_changed_by[PartFile(key, part.substr(3), ".abap")] = user;
+                fm_changers.push_back(user);
+            } else if (part.rfind("SRC:", 0) == 0) {
+                state.part_changed_by[PartFile(key, part.substr(4), ".abap")] = user;
+                state.part_changed_by[PartFile(key, part.substr(4), ".xml")] = user;
+            }
+        }
+        const std::string main_file = FileName(key, "xml");
+        auto main = changed.find("MAIN");
+        state.part_changed_by[main_file] = "";  // AREAT (TLIBT) has no changer
+        state.part_changed_by[main_file + "#FUNCTIONS"] = CommonChanger(fm_changers);
+        state.part_changed_by[main_file + "#INCLUDES"] =
+            main == changed.end() ? std::string() : main->second;
         return R::Ok(state);
     }
 

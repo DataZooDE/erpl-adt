@@ -141,6 +141,7 @@
       EXCEPTIONS
         OTHERS     = 1.
     emit( kind = 'META' text = |{ sapdir-unam } { sapdir-udat } { sapdir-stime }| ).
+    emit_changed( part = `MAIN` user = sapdir-unam ).
 
     SELECT SINGLE areat FROM tlibt INTO @areat
       WHERE spras = @language AND area = @name.
@@ -231,6 +232,7 @@
         fugr_emit_text( tag  = |FM:{ <functab>-funcname }|
                         text = concat_lines_of( table = source sep = cl_abap_char_utilities=>newline ) ).
       ENDIF.
+      emit_changed( part = |FM:{ <functab>-funcname }| user = source_changer( <functab>-include ) ).
     ENDLOOP.
 
     " Includes: ZCL_ABAPGIT_OBJECT_FUGR->includes.
@@ -352,6 +354,7 @@
       fugr_strip_generation( CHANGING source = incl_source ).
       fugr_emit_text( tag  = |SRC:{ <include> }|
                       text = concat_lines_of( table = incl_source sep = cl_abap_char_utilities=>newline ) ).
+      emit_changed( part = |SRC:{ <include> }| user = source_changer( <include> ) ).
     ENDLOOP.
 
     CALL TRANSFORMATION id

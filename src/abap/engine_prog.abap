@@ -11,6 +11,9 @@
 *   delete:   RS_DELETE_PROGRAM
 * Source code of an existing program is written over ADT (lock + PUT), not here.
 "@@DEFINITIONS
+    METHODS prog_emit_changed
+      IMPORTING name     TYPE syrepid
+                language TYPE sylangu.
     "! abapGit's ZIF_ABAPGIT_SAP_REPORT=>TY_PROGDIR (component order = XML order).
     TYPES:
       BEGIN OF ty_prog_dir,
@@ -152,6 +155,29 @@
       IMPORTING text         TYPE string
       RETURNING VALUE(lines) TYPE string_table.
 "@@IMPLEMENTATIONS
+  METHOD prog_emit_changed.
+    " Last changers per part, where SAP keeps one: source and attributes
+    " (REPOSRC), text pool (REPOTEXT), GUI status (EUDB, relid CU). Dynpros
+    " keep none (D020S), so the workflow treats them as unknown.
+    DATA texts TYPE syuname.
+    DATA cua TYPE syuname.
+    DATA cua_author TYPE syuname.
+    emit_changed( part = `SOURCE` user = source_changer( name ) ).
+    SELECT SINGLE unam FROM repotext
+      WHERE progname = @name AND r3state = 'A' AND language = @language
+      INTO @texts.
+    emit_changed( part = `TEXTS` user = texts ).
+    " VAUTOR is set by the first change; until then AUTOR (the creator) is
+    " the last changer.
+    SELECT SINGLE vautor, autor FROM eudb
+      WHERE relid = 'CU' AND name = @name
+      INTO (@cua, @cua_author).
+    IF cua IS INITIAL.
+      cua = cua_author.
+    ENDIF.
+    emit_changed( part = `CUA` user = cua ).
+  ENDMETHOD.
+
   METHOD prog_get.
     DATA progdir TYPE progdir.
     DATA dir TYPE ty_prog_dir.
@@ -198,6 +224,7 @@
     emit( kind = 'EXISTS' text = `1` ).
     emit( kind = 'META' text = |{ progdir-unam } { progdir-udat } 000000| ).
     prog_emit_pending( name ).
+    prog_emit_changed( name = name language = language ).
 
     " abapGit READ_PROGDIR: the same fields cleared.
     MOVE-CORRESPONDING progdir TO dir.

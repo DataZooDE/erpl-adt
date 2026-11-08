@@ -31,8 +31,15 @@ using ObjectFileSet = std::map<std::string, std::string>;
 
 struct ObjectState {
     bool exists = false;
-    std::string changed_by;  // last changed by (for drift protection)
+    // Last changer of the object as a whole; empty = SAP records none (e.g.
+    // transactions). Drift protection treats an unknown changer as unsafe.
+    std::string changed_by;
     std::string changed_on;  // YYYYMMDD
+    // Finer-grained last changers, where SAP keeps them: by file name
+    // ("zfg.fugr.lzfgu01.abap") or by XML section of a file
+    // ("zfoo.prog.xml#CUA"). An empty value means "unknown". Lookup order
+    // for a differing section: file#SECTION, file, changed_by.
+    std::map<std::string, std::string> part_changed_by;
     ObjectFileSet files;     // the object exactly as abapGit would export it
     // Parts with an inactive version in the system (e.g. left by a deploy
     // whose activation failed). Not part of the files — export shows the

@@ -14,6 +14,7 @@
 * Output protocol (one line per fact, parsed by src/adt/classic_engine.cpp):
 *   @<op> EXISTS 0|1
 *   @<op> META <changed-by> <changed-on> <changed-at>
+*   @<op> CHANGED <part> <user>          (last changer of one part; ? = unknown)
 *   @<op> DATA <tag> <base64 chunk>      (chunks of one tag concatenate)
 *   @<op> MSG <type> <class> <number> <text>
 *   @<op> ERR <text>                     (activation / check log lines)
@@ -40,6 +41,12 @@ CLASS zcl_erpl_classic_engine DEFINITION PUBLIC FINAL CREATE PUBLIC.
     METHODS emit_data
       IMPORTING tag TYPE string
                 xml TYPE xstring.
+    METHODS emit_changed
+      IMPORTING part TYPE string
+                user TYPE clike.
+    METHODS source_changer
+      IMPORTING VALUE(program) TYPE progname
+      RETURNING VALUE(user) TYPE syuname.
     METHODS take_payload
       RETURNING VALUE(xml) TYPE xstring.
     METHODS corr_insert
@@ -107,6 +114,23 @@ CLASS zcl_erpl_classic_engine IMPLEMENTATION.
       emit( kind = |DATA { tag }| text = substring( val = b64 off = offset len = len ) ).
       offset = offset + len.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD emit_changed.
+    IF user IS INITIAL.
+      emit( kind = 'CHANGED' text = |{ part } ?| ).
+    ELSE.
+      emit( kind = 'CHANGED' text = |{ part } { user }| ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD source_changer.
+    " Last changer of an active program or include, as SE38/SE37 record it.
+    SELECT SINGLE unam FROM reposrc
+      WHERE progname = @program AND r3state = 'A'
+      INTO @user.
   ENDMETHOD.
 
 

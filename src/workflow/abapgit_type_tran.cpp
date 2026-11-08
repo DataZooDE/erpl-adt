@@ -197,8 +197,9 @@ public:
         if (!state.exists) {
             return Result<ObjectState, Error>::Ok(state);
         }
-        state.changed_by = r.changed_by;
-        state.changed_on = r.changed_on;
+        // No last changer: TSTC/TSTCT/TSTCC/TSTCP carry no user, SE93 keeps no
+        // version in VRSD, and the TADIR author is the creator. Left empty
+        // ("unknown"), so drift protection asks for git history or --force.
         auto rendered = RenderFromEngine(r.data.count("XML") ? r.data.at("XML") : "",
                                          "LCL_OBJECT_TRAN");
         if (rendered.IsErr()) {

@@ -58,6 +58,7 @@ public:
     mutable std::vector<std::string> deleted;
     std::string fail_apply_for;
     std::string changed_by = "DEVELOPER";
+    std::map<std::string, std::string> part_changed_by;  // file[#SECTION] -> user
     std::vector<std::string> pending;  // reported as inactive leftovers
 
     std::string Type() const override { return type_; }
@@ -75,6 +76,7 @@ public:
             state.exists = true;
             state.files = it->second;
             state.changed_by = changed_by;
+            state.part_changed_by = part_changed_by;
             state.pending = pending;
         }
         return Result<ObjectState, Error>::Ok(state);
@@ -471,4 +473,71 @@ TEST_CASE("abapGit export: objects outside the customer namespaces are refused",
     CHECK(report.objects[0].action == ObjectAction::Refused);
     CHECK(report.objects[1].action == ObjectAction::Refused);
     CHECK(std::filesystem::is_empty(out.root));
+}
+
+// ---------------------------------------------------------------------------
+// Drift protection when SAP's last-changer is unknown or per part.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("abapGit deploy: unknown last changer is unsafe without git history",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    // A transaction: SAP records no last changer. Someone edited it in SE93.
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE93/>";
+    f.handler->changed_by = "";
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[0].message.find("unknown") != std::string::npos);
+    CHECK(f.handler->applied.empty());
+}
+
+TEST_CASE("abapGit deploy: unknown last changer is fine when the system version is in git",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    const auto deployed = f.system["ZERPL_D_A"].begin()->second;
+    f.handler->changed_by = "";
+    f.history.versions["zerpl_d_a.doma.xml"] = {deployed};
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+}
+
+TEST_CASE("abapGit deploy: creator is the deployer but a colleague edited a part -> refused",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    // Object-level metadata names the deployer (e.g. the main program), but
+    // the part that differs (an FM include) was last saved by a colleague.
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE37/>";
+    f.handler->changed_by = "DEVELOPER";
+    f.handler->part_changed_by["zerpl_d_a.doma.xml"] = "COLLEAGUE";
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(report.objects[0].message.find("COLLEAGUE") != std::string::npos);
+    CHECK(f.handler->applied.empty());
+}
+
+TEST_CASE("abapGit deploy: the changer of the differing XML section decides",
+          "[workflow][abapgit_deploy][drift]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    // The system version differs from the files only in DD01V; DD01V was last
+    // changed by the deployer, another section (unchanged) by a colleague.
+    f.handler->changed_by = "";
+    f.handler->part_changed_by["zerpl_d_a.doma.xml#DD01V"] = "DEVELOPER";
+    f.handler->part_changed_by["zerpl_d_a.doma.xml#DD07V_TAB"] = "COLLEAGUE";
+    auto ok = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+    CHECK(ok.objects[0].action == ObjectAction::Updated);
+
+    // Now the differing section has no known changer (like a dynpro): refused.
+    f.handler->part_changed_by.erase("zerpl_d_a.doma.xml#DD01V");
+    auto refused = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Again")}, f.Options());
+    CHECK(refused.objects[0].action == ObjectAction::Refused);
 }

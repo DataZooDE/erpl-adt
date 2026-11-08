@@ -32,8 +32,6 @@
     DATA ls_tstcp TYPE tstcp.
     DATA lt_tstca TYPE STANDARD TABLE OF tstca WITH DEFAULT KEY.
     DATA lt_i18n  TYPE STANDARD TABLE OF tstct WITH DEFAULT KEY.
-    DATA author   TYPE tadir-author.
-    DATA created  TYPE tadir-created_on.
     DATA srcbind  TYPE abap_trans_srcbind_tab.
     DATA xml      TYPE xstring.
 
@@ -80,13 +78,10 @@
       ORDER BY sprsl
       INTO CORRESPONDING FIELDS OF TABLE @lt_i18n.
 
-    " Changed-by is not stored with a transaction; abapGit uses the TADIR author.
-    SELECT SINGLE author, created_on FROM tadir
-      WHERE pgmid = 'R3TR' AND object = 'TRAN' AND obj_name = @name
-      INTO (@author, @created).
-
+    " No META: SAP records no last changer for a transaction (TSTC* have no
+    " user field, SE93 writes no version) and the TADIR author is only the
+    " creator. The workflow treats the changer as unknown.
     emit( kind = 'EXISTS' text = `1` ).
-    emit( kind = 'META' text = |{ author } { created } 000000| ).
 
     " Parts in abapGit's order; initial ones are left out as in abapGit's files.
     IF ls_tstc IS NOT INITIAL.

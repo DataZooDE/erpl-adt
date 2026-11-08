@@ -244,8 +244,24 @@ public:
         for (const auto& [tag, bytes] : r.data) {
             if (tag.rfind("SCREEN_", 0) == 0) {
                 state.files[FlowFileName(key, tag.substr(7))] = bytes;
+                // Dynpros record no last changer (D020S has none): unknown.
+                state.part_changed_by[FlowFileName(key, tag.substr(7))] = "";
             }
         }
+        // Last changers per part: source and attributes REPOSRC-UNAM, text
+        // pool REPOTEXT-UNAM, GUI status EUDB-VAUTOR. Everything else in the
+        // XML (DYNPROS) is unknown.
+        const auto changed = ChangedParts(r);
+        auto changer = [&](const std::string& part) {
+            auto it = changed.find(part);
+            return it == changed.end() ? std::string() : it->second;
+        };
+        const std::string xml_name = FileName(key, "xml");
+        state.part_changed_by[FileName(key, "abap")] = changer("SOURCE");
+        state.part_changed_by[xml_name] = "";
+        state.part_changed_by[xml_name + "#PROGDIR"] = changer("SOURCE");
+        state.part_changed_by[xml_name + "#TPOOL"] = changer("TEXTS");
+        state.part_changed_by[xml_name + "#CUA"] = changer("CUA");
         return Result<ObjectState, Error>::Ok(state);
     }
 

@@ -6,6 +6,7 @@
 #include <erpl_adt/adt/abapgit_xml.hpp>
 #include <erpl_adt/workflow/abapgit_deploy.hpp>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,14 @@ Error EngineFailure(const std::string& what, const EngineOpResult& result);
 Result<std::vector<EngineOpResult>, Error> RunChecked(IEngineRunner& engine,
                                                       const std::vector<EngineOp>& ops,
                                                       const std::string& what);
+
+// The engine's per-part last changers ("@op CHANGED <part> <user>", "?" for
+// unknown): part -> user, "" when SAP records none.
+std::map<std::string, std::string> ChangedParts(const EngineOpResult& result);
+
+// The one user every entry names, or "" when they differ / are unknown /
+// there are none.
+std::string CommonChanger(const std::vector<std::string>& users);
 
 // "<stem>.<part>", e.g. FileName({"DOMA","ZA"}, "xml") == "za.doma.xml".
 std::string FileName(const AbapGitObjectKey& key, const std::string& part);

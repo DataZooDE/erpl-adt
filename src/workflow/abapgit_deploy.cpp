@@ -110,6 +110,21 @@ std::optional<Error> CheckGuardRails(const AbapGitObjectKey& key, const std::str
     return std::nullopt;
 }
 
+bool SameUser(std::string a, std::string b) {
+    auto up = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return s;
+    };
+    return up(std::move(a)) == up(std::move(b));
+}
+
+// Arguments for the export command that pulls exactly this object into git.
+std::string ExportHint(const AbapGitObjectFiles& object) {
+    return "<repo> --package " + object.package + " --object " + object.key.type + ":" +
+           object.key.name;
+}
+
 bool SafeForShell(const std::string& s) {
     return s.find_first_of("\"'`$\\\n\r") == std::string::npos;
 }
@@ -293,23 +308,74 @@ std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& obje
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,
                                                   const std::string& user) const {
-    auto same_user = [](std::string a, std::string b) {
-        auto up = [](std::string s) {
-            std::transform(s.begin(), s.end(), s.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            return s;
-        };
-        return up(std::move(a)) == up(std::move(b));
+    // A differing file is safe to overwrite when
+    //   - the deployer is provably the last changer of every differing part, or
+    //   - the system holds a version from the file's git history (an earlier
+    //     deploy, e.g. by the CI user).
+    // Anything else - another user, or a part whose last changer SAP does not
+    // record (transactions, dynpros) - is someone else's work until shown
+    // otherwise, and is refused.
+    const auto who = [&](const std::string& file, const std::string& section) {
+        if (!section.empty()) {
+            auto it = current.part_changed_by.find(file + "#" + section);
+            if (it != current.part_changed_by.end()) {
+                return it->second;
+            }
+        }
+        auto it = current.part_changed_by.find(file);
+        return it != current.part_changed_by.end() ? it->second : current.changed_by;
     };
-    if (current.changed_by.empty() || same_user(current.changed_by, user)) {
-        return std::nullopt;  // last change is ours (or unknown): a normal update
-    }
-    // Changed by someone else: fine if every differing file is a version from
-    // the file's git history (an earlier deploy, e.g. by the CI user).
     for (const auto& [name, bytes] : current.files) {
         auto wanted = desired.find(name);
         if (wanted != desired.end() && wanted->second == bytes) {
             continue;
+        }
+        // Who last changed the differing part(s) of this file?
+        std::vector<std::string> changers;
+        bool by_section = false;
+        if (wanted != desired.end() && EndsWith(name, ".xml")) {
+            auto have = ParseAbapGitXml(bytes);
+            auto want = ParseAbapGitXml(wanted->second);
+            if (have.IsOk() && want.IsOk()) {
+                std::map<std::string, std::string> have_sections;
+                std::map<std::string, std::string> want_sections;
+                for (auto& [section, xml] : SplitAsxValues(have.Value().values_xml)) {
+                    have_sections[section] = xml;
+                }
+                for (auto& [section, xml] : SplitAsxValues(want.Value().values_xml)) {
+                    want_sections[section] = xml;
+                }
+                std::map<std::string, bool> names;
+                for (const auto& [section, xml] : have_sections) {
+                    names[section] = true;
+                }
+                for (const auto& [section, xml] : want_sections) {
+                    names[section] = true;
+                }
+                for (const auto& [section, unused] : names) {
+                    auto h = have_sections.find(section);
+                    auto w = want_sections.find(section);
+                    const bool same = h != have_sections.end() && w != want_sections.end() &&
+                                      h->second == w->second;
+                    if (!same) {
+                        changers.push_back(who(name, section));
+                    }
+                }
+                by_section = !changers.empty();
+            }
+        }
+        if (!by_section) {
+            changers.push_back(who(name, ""));
+        }
+        std::string other;
+        for (const auto& changer : changers) {
+            if (changer.empty() || !SameUser(changer, user)) {
+                other = changer.empty() ? std::string("an unknown user") : changer;
+                break;
+            }
+        }
+        if (other.empty()) {
+            continue;  // every differing part was last changed by the deployer
         }
         bool known = false;
         for (const auto& version : history_.PreviousVersions(object.folder / name)) {
@@ -320,13 +386,15 @@ std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& obje
             }
         }
         if (!known) {
+            const bool unknown = other == "an unknown user";
             return MakeError(
-                object.key.type + " " + object.key.name + " was last changed in the system by " +
-                    current.changed_by +
-                    (current.changed_on.empty() ? "" : " on " + current.changed_on) +
-                    ", and that version is not in the git history of its files. Pull it into "
-                    "git first with 'erpl-adt abapgit export <repo> --package " + object.package +
-                    "', or overwrite it with --force.",
+                object.key.type + " " + object.key.name + ": " + name +
+                    " was last changed in the system by " + other +
+                    (unknown ? " (SAP records no last changer for this part)" : "") +
+                    (!unknown && !current.changed_on.empty() ? " on " + current.changed_on : "") +
+                    ", and that version is not in the git history of the file. Pull it into "
+                    "git first with 'erpl-adt abapgit export " + ExportHint(object) +
+                    "' and commit it, or overwrite it with --force.",
                 ErrorCategory::LockConflict);
         }
     }
