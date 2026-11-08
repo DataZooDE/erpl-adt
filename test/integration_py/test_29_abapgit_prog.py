@@ -18,6 +18,7 @@ Every result is verified independently of the engine under test: ADT REST
 The files are canonical: deploy -> export reproduces them byte for byte.
 """
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -110,7 +111,7 @@ class TestModulePool:
     XML = SRC / "zerpl_so_display.prog.xml"
 
     def test_deploy_creates_program_with_all_parts(self, cli, adt):
-        cli.run("abapgit", "delete", str(self.XML), "--package", PACKAGE)
+        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE)
 
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
 
@@ -199,8 +200,9 @@ class TestModulePool:
 
         output = result.stdout + result.stderr
         assert result.returncode == 5, output
-        assert 'Input/output field "GV_UNKNOWN" not defined' in output
-        assert "Screen 0100" in output
+        message = _entry(json.loads(result.stdout), "PROG", self.PROG)["message"]
+        assert 'Input/output field "GV_UNKNOWN" not defined' in message
+        assert "Screen 0100" in message
         assert adt.inactive(self.PROG) == []  # nothing was saved
 
     def test_broken_source_fails_activation_with_sap_error(self, cli, adt, tmp_path):
@@ -247,7 +249,7 @@ class TestReport:
     XML = SRC / "zerpl_po_report.prog.xml"
 
     def test_deploy_creates_report_with_text_pool(self, cli, adt):
-        cli.run("abapgit", "delete", str(self.XML), "--package", PACKAGE)
+        cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE)
 
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
 
