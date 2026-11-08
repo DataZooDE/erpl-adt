@@ -750,3 +750,55 @@ TEST_CASE("source write: --section invalid value returns 99 before session",
                           "--file", "/dev/null", "--section", "badvalue"};
     CHECK(router.Dispatch(8, argv) == 99);
 }
+
+// ===========================================================================
+// abapgit: strict flag validation (a typo in a safety flag must not run)
+// ===========================================================================
+
+TEST_CASE("abapgit delete: misspelled --dryrun is refused with a hint",
+          "[cli][executor][abapgit]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "--host", "invalid.local", "abapgit", "delete",
+                          "./no-such-repo", "--package", "$TMP", "--dryrun"};
+    auto r = DispatchCaptureBoth(router, 9, argv);
+    CHECK(r.exit_code == 99);
+    CHECK(r.stderr_text.find("--dryrun") != std::string::npos);
+    CHECK(r.stderr_text.find("did you mean --dry-run?") != std::string::npos);
+}
+
+TEST_CASE("abapgit deploy: misspelled --dry_run is refused with a hint",
+          "[cli][executor][abapgit]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "abapgit", "deploy", "./no-such-repo",
+                          "--package", "$TMP", "--dry_run"};
+    auto r = DispatchCaptureBoth(router, 7, argv);
+    CHECK(r.exit_code == 99);
+    CHECK(r.stderr_text.find("did you mean --dry-run?") != std::string::npos);
+}
+
+TEST_CASE("abapgit deploy: global connection flags are accepted",
+          "[cli][executor][abapgit]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    // Valid flags only: fails later on the missing path (exit 2), not on flags.
+    const char* argv[] = {"erpl-adt", "--host", "h", "--port", "1", "--user", "U",
+                          "--client", "001", "--password-env", "X", "--timeout", "5",
+                          "abapgit", "deploy", "./no-such-repo", "--package", "$TMP",
+                          "--dry-run", "--force", "--json"};
+    auto r = DispatchCaptureBoth(router, 21, argv);
+    CHECK(r.exit_code == 2);
+    CHECK(r.stderr_text.find("Unknown flag") == std::string::npos);
+}
+
+TEST_CASE("abapgit export: --transport is not an export flag",
+          "[cli][executor][abapgit]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "abapgit", "export", "./x", "--package", "$TMP",
+                          "--objekt", "PROG:Z"};
+    auto r = DispatchCaptureBoth(router, 8, argv);
+    CHECK(r.exit_code == 99);
+    CHECK(r.stderr_text.find("did you mean --object?") != std::string::npos);
+}

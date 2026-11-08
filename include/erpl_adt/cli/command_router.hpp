@@ -5,6 +5,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -101,6 +102,15 @@ public:
     // Example: "erpl-adt search ZCL_*" → dispatches to search:query with positional[0]="ZCL_*"
     void SetDefaultAction(const std::string& group, const std::string& action);
 
+    // Reject flags a command does not know (exit 99, with a "did you mean"
+    // hint) for every command of `group`. Known flags: the command's
+    // CommandHelp::flags plus the global connection/output flags. For groups
+    // with destructive commands, where a typo like --dryrun must not run.
+    void SetStrictFlags(const std::string& group);
+
+    // Global flags every command accepts (host, port, user, json, ...).
+    static const std::vector<std::string>& GlobalFlagNames();
+
     // Parse argv and dispatch to the matching handler.
     // Returns the exit code from the handler, or 1 on routing error.
     // Intercepts --help/-h at group and command levels.
@@ -146,6 +156,7 @@ private:
     std::map<std::string, std::string> group_descriptions_;
     std::map<std::string, std::vector<std::string>> group_examples_;
     std::map<std::string, std::string> default_actions_;
+    std::set<std::string> strict_flag_groups_;
 };
 
 } // namespace erpl_adt

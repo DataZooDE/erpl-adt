@@ -8153,6 +8153,8 @@ void RegisterAllCommands(CommandRouter& router) {
         "abapgit",
         "Deploy and export classic objects (dynpros, GUI status, transactions, domains, "
         "text pools, function modules) from abapGit files");
+    // A typo in a safety flag (--dryrun) must fail, not run destructively.
+    router.SetStrictFlags("abapgit");
     router.SetGroupExamples("abapgit", {
         "$ erpl-adt abapgit status ./my-repo --package ZDEMO --transport A4HK900042",
         "$ erpl-adt abapgit deploy ./my-repo --package ZDEMO --transport A4HK900042",
@@ -8212,7 +8214,13 @@ void RegisterAllCommands(CommandRouter& router) {
             CommandHelp help;
             help.usage = "erpl-adt abapgit export <dir> --package <PKG> [--object TYPE:NAME,...]";
             help.args_description = "<dir>    Repository folder to write (created if missing)";
-            help.flags = common;
+            // Export writes files only: no --transport.
+            for (const auto& f : common) {
+                if (f.name != "transport") {
+                    help.flags.push_back(f);
+                }
+            }
+            help.flags.push_back({"dry-run", "", "Only report what would be written", false});
             help.flags.push_back({"object", "<TYPE:NAME,...>", "Objects to export; default: refresh the objects already in <dir>", false});
             help.flags.push_back({"master-language", "<lang>", "Master language for a new repository (default E)", false});
             help.long_description =
