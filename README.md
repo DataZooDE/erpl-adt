@@ -212,6 +212,18 @@ Configure it in your MCP client (e.g., Claude Desktop, Claude Code):
 }
 ```
 
+The `abapgit_status` (read-only), `abapgit_deploy`, `abapgit_export` and
+`abapgit_delete` (destructive) tools are the [`abapgit` commands](#classic-gui-objects-from-git-abapgit-files)
+with the same arguments (`path`, `package`, `transport`, `dry_run`, `force`,
+`strict`, `objects`) and the same JSON report. They only read and write files
+below one folder, `--abapgit-root <dir>` (YAML `mcp.abapgit_root`, default:
+the server's working directory); `..`, absolute paths and symlinks leading
+outside it are refused:
+
+```bash
+erpl-adt mcp --host sap.example.com --abapgit-root ~/src/erpl-demo-repos
+```
+
 ## Catalog
 
 A unified, cross-domain (ABAP + DDIC + CDS + BW) metadata catalog, persisted in a single DuckDB file so search/lineage/where-used run in milliseconds instead of round-tripping SAP. Covers full-text + semantic (Gemini embeddings) hybrid search, end-to-end lineage stitching, a business-glossary overlay (definitions/owner/line-of-business/confidentiality) layered on top of the technical metadata, and incremental sync.

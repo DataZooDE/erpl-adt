@@ -47,6 +47,14 @@ struct ActivateObjectParams {
     const ActivateObjectParams& params,
     std::chrono::seconds timeout = std::chrono::seconds{600});
 
+// ActivationParamsFromObjectUri — the activation reference for a well-known
+// ADT object URI (type, upper-case name, parent), without an HTTP round trip.
+// Parts of a function group get their own type: ".../groups/zfg/fmodules/zfm"
+// is FUGR/FF ZFM and ".../groups/zfg/includes/lzfgtop" FUGR/I LZFGTOP, both
+// with the group as parent_uri. "%2f" in names is decoded ("/DMO/FM"). A URI
+// that matches no known pattern yields params with only `uri` set.
+[[nodiscard]] ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri);
+
 // ActivateObjects — activate several objects in one request (one
 // adtcore:objectReference each), so that objects which depend on each other
 // (a function group include and the function modules using it) are checked

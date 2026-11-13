@@ -35,7 +35,8 @@ erpl-adt abapgit delete ./erpl-demo --package '$TMP'
 resolved through the repository scan, so its folder decides its package
 (`src/sub/zfoo.prog.xml` → `ZERPL_DEMO_SUB`) and the ignore list applies;
 outside a repository, `--package` is used. All commands accept `--json`.
-Flags are checked strictly: an unknown flag such as `--dryrun` fails with exit
+Flags are checked strictly (as for every destructive command, see
+[cli-usage.md](cli-usage.md#unknown-flags)): an unknown flag such as `--dryrun` fails with exit
 code 99 and a "did you mean --dry-run?" hint, before anything runs.
 
 ## What a deploy does
@@ -193,6 +194,45 @@ a run in progress.
   packages outside the repository's root package. Files of parts the system no
   longer has (e.g. a screen deleted in SE51) are removed and reported as
   `removed <file>`, so git shows the deletion.
+
+## MCP tools
+
+`erpl-adt mcp` serves the four commands as tools for AI agents:
+
+| Tool | Command | Classification |
+|---|---|---|
+| `abapgit_status` | `abapgit status` | read-only |
+| `abapgit_deploy` | `abapgit deploy` | destructive |
+| `abapgit_export` | `abapgit export` | destructive (overwrites and removes local files) |
+| `abapgit_delete` | `abapgit delete` | destructive |
+
+Arguments mirror the flags: `path` and `package` (required), `transport`,
+`dry_run`, `force`, `strict`, `objects` (export, `["PROG:ZDEMO", ...]`) and
+`master_language` (export into a new repository). An unknown argument (a
+mistyped `dryrun`) is refused, like an unknown flag. The result —
+`structuredContent` and the text block — is exactly the `--json` report of the
+CLI; `isError` is set when its `exit_code` is not 0.
+
+The tools only read and write files below one folder, the **abapGit root**:
+`--abapgit-root <dir>`, else `mcp.abapgit_root` in the `-c` YAML file
+(relative to that file), else the server's working directory.
+
+```yaml
+mcp:
+  abapgit_root: ./repos
+```
+
+```json
+{"name": "abapgit_status", "arguments": {"path": "erpl_demo/src/zerpl_d_so_status.doma.xml", "package": "$TMP"}}
+```
+
+`path` is resolved against the root (`weakly_canonical`, so `..` and existing
+symlinks are resolved first). A path that ends up outside the root — `..`,
+an absolute path elsewhere, a symlink pointing out — is refused before
+anything runs (category `authorization`, exit code 1), as is a repository
+containing a symlink that leads outside the root (a deploy would read through
+it, an export would write through it). The search for `.abapgit.xml` stops at
+the root.
 
 ## Exit codes
 
