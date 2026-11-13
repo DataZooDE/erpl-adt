@@ -163,6 +163,57 @@ private:
     int max_versions_;
 };
 
+// What erpl-adt itself last deployed: the exact bytes of every file of an
+// object, per SAP system. SAP keeps no last changer for screens (D020S) or
+// transactions (TSTC*), so without this a second deploy of an uncommitted
+// change would look like someone else's work. A system version equal to the
+// recorded last deploy is the deployer's own; anything else (a colleague's
+// change) is still drift.
+class IDeployRecord {
+public:
+    virtual ~IDeployRecord() = default;
+    // The bytes of `file` erpl-adt last deployed for `key`; nullopt if none.
+    [[nodiscard]] virtual std::optional<std::string> LastDeployed(
+        const AbapGitObjectKey& key, const std::string& file) const = 0;
+    // Replaces the record of `key` with `files` (after a successful deploy).
+    virtual void Remember(const AbapGitObjectKey& key, const ObjectFileSet& files) = 0;
+    virtual void Forget(const AbapGitObjectKey& key) = 0;  // after a delete
+};
+
+class NoDeployRecord final : public IDeployRecord {
+public:
+    std::optional<std::string> LastDeployed(const AbapGitObjectKey&,
+                                            const std::string&) const override {
+        return std::nullopt;
+    }
+    void Remember(const AbapGitObjectKey&, const ObjectFileSet&) override {}
+    void Forget(const AbapGitObjectKey&) override {}
+};
+
+// The record as plain files: <directory>/<system>/<TYPE>/<NAME>/<file>.
+// Never committed: DefaultDirectory puts it inside the repository's git
+// directory. Write failures are logged, never fatal (the record only ever
+// relaxes drift protection).
+class FileDeployRecord final : public IDeployRecord {
+public:
+    // `system` identifies the SAP system, e.g. "localhost:50000/001".
+    FileDeployRecord(std::filesystem::path directory, const std::string& system);
+    std::optional<std::string> LastDeployed(const AbapGitObjectKey& key,
+                                            const std::string& file) const override;
+    void Remember(const AbapGitObjectKey& key, const ObjectFileSet& files) override;
+    void Forget(const AbapGitObjectKey& key) override;
+
+    // <git dir>/erpl-adt/deployed when `folder` is inside a git work tree
+    // (a ".git" directory, or a ".git" file naming the git directory of a
+    // worktree / submodule); otherwise $XDG_CACHE_HOME/erpl-adt/deployed
+    // (~/.cache/..., %LOCALAPPDATA%\erpl-adt\deployed on Windows).
+    static std::filesystem::path DefaultDirectory(const std::filesystem::path& folder);
+
+private:
+    std::filesystem::path ObjectDir(const AbapGitObjectKey& key) const;
+    std::filesystem::path root_;
+};
+
 enum class ObjectAction {
     Created, Updated, Unchanged, Deleted, Missing, Exported, Failed, Refused,
     Skipped,  // not attempted: an object it depends on failed
@@ -229,6 +280,10 @@ class AbapGitWorkflow {
 public:
     AbapGitWorkflow(IAdtSession& session, IEngineRunner& engine,
                     std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
+                    const IFileHistory& history, IDeployRecord& record);
+    // Without a deploy record (NoDeployRecord).
+    AbapGitWorkflow(IAdtSession& session, IEngineRunner& engine,
+                    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
                     const IFileHistory& history);
 
     // `objects` must already be in dependency order (ScanAbapGitFolder does that).
@@ -274,6 +329,8 @@ private:
     IEngineRunner& engine_;
     std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers_;
     const IFileHistory& history_;
+    NoDeployRecord no_record_;
+    IDeployRecord& record_;
 };
 
 // Reads an object's files from disk and normalizes them to the exact bytes

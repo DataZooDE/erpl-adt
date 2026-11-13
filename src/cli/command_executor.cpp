@@ -1752,7 +1752,25 @@ int WithAbapGitEngine(const CommandArgs& args, OutputFormatter& fmt, Body body) 
     ClassrunEngineRunner engine(main_session, *classrun_session.Value(),
                                 AbapGitHelperOptions(args));
     GitFileHistory history;
-    AbapGitWorkflow workflow(main_session, engine, DefaultTypeHandlers(), history);
+    // What this clone last deployed to this system (see IDeployRecord).
+    auto creds = LoadCredentials();
+    const std::string system =
+        ResolveConnectionSetting(args, "host", "HOST", creds ? creds->host : "", "localhost") +
+        ":" +
+        ResolveConnectionSetting(args, "port", "PORT",
+                                 creds ? std::to_string(creds->port) : "", "50000") +
+        "/" + ResolveConnectionSetting(args, "client", "CLIENT", creds ? creds->client : "", "001");
+    std::filesystem::path folder =
+        args.positional.empty() ? std::filesystem::current_path()
+                                : std::filesystem::path(args.positional[0]);
+    if (!std::filesystem::is_directory(folder)) {
+        folder = folder.parent_path();
+    }
+    if (folder.empty()) {
+        folder = ".";
+    }
+    FileDeployRecord record(FileDeployRecord::DefaultDirectory(folder), system);
+    AbapGitWorkflow workflow(main_session, engine, DefaultTypeHandlers(), history, record);
     return body(workflow);
 }
 

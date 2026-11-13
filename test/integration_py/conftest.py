@@ -108,6 +108,20 @@ def cli(sap_config):
     return runner
 
 
+@pytest.fixture(scope="session")
+def colleague_cli(cli, sap_config):
+    """A second developer on the same system (SAP_COLLEAGUE_USER, default
+    BWDEVELOPER, same password) - for drift a deploy must not overwrite."""
+    return CliRunner(
+        binary_path=cli.binary,
+        host=sap_config["host"],
+        port=sap_config["port"],
+        user=os.getenv("SAP_COLLEAGUE_USER", "BWDEVELOPER"),
+        password=os.getenv("SAP_COLLEAGUE_PASSWORD", sap_config["password"]),
+        client=sap_config["client"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # SAP_BASIS 7.40 emulation (GitHub issue #35)
 # ---------------------------------------------------------------------------

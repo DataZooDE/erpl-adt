@@ -266,23 +266,60 @@ ENDCLASS.
         result = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
         assert _entry(result, "PROG", self.PROG)["parts"] == ["screen 0200"]
 
-    def test_uncommitted_screen_change_by_unknown_changer_is_refused(self, cli, adt, tmp_path):
-        # The system holds a screen version that is in no git history (as if
-        # edited in SE51, which records no last changer): refused, exit 6.
-        xml = _copy(self.STEM, tmp_path)
+    def test_own_uncommitted_screen_changes_redeploy_without_force(
+            self, cli, colleague_cli, tmp_path):
+        # Dynpros record no last changer (D020S). erpl-adt remembers what it
+        # deployed itself (inside .git, per system), so a developer can deploy
+        # a screen change, change it again and redeploy - without committing
+        # in between and without --force. A colleague's change in between is
+        # still someone else's work and refused.
+        mine = tmp_path / "mine"
+        mine.mkdir()
+        xml = _git_copy(self.STEM, mine)
         content = xml.read_text(encoding="utf-8")
-        xml.write_text(content.replace("<VISLENGTH>040", "<VISLENGTH>035", 1), encoding="utf-8")
-        cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE, "--force")
+        assert content.count("<VISLENGTH>040") == 1
 
-        result = cli.run("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
+        def vislength(path, value):
+            path.write_text(content.replace("<VISLENGTH>040", f"<VISLENGTH>{value}"),
+                            encoding="utf-8")
 
-        assert result.returncode == 6, result.stdout + result.stderr
-        entry = _entry(json.loads(result.stdout), "PROG", self.PROG)
+        vislength(xml, "035")
+        first = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
+        assert _entry(first, "PROG", self.PROG)["parts"] == ["screen 0200"]
+        assert (mine / ".git" / "erpl-adt" / "deployed").is_dir()
+
+        vislength(xml, "033")
+        second = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
+        entry = _entry(second, "PROG", self.PROG)
+        assert (entry["action"], entry["parts"]) == ("updated", ["screen 0200"])
+
+        # A colleague deploys another version from their own clone.
+        theirs = tmp_path / "theirs"
+        theirs.mkdir()
+        their_xml = _git_copy(self.STEM, theirs)
+        vislength(their_xml, "030")
+        colleague_cli.run_ok("abapgit", "deploy", str(their_xml), "--package", PACKAGE,
+                             "--force")
+
+        vislength(xml, "034")
+        refused = cli.run("abapgit", "deploy", str(xml), "--package", PACKAGE)
+
+        assert refused.returncode == 6, refused.stdout + refused.stderr
+        entry = _entry(json.loads(refused.stdout), "PROG", self.PROG)
         assert entry["action"] == "refused"
         assert "unknown user" in entry["message"]
+        assert self._vislength(cli, tmp_path / "check") == 30  # the colleague's version stays
         restored = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE,
                               "--force")
         assert _entry(restored, "PROG", self.PROG)["action"] == "updated"
+
+    def _vislength(self, cli, folder):
+        """Visible length of the buyer field on screen 0200, as the system has it."""
+        cli.run_ok("abapgit", "export", str(folder), "--object", f"PROG:{self.PROG}",
+                   "--package", PACKAGE)
+        xml = (folder / "src" / f"{self.STEM}.prog.xml").read_text(encoding="utf-8")
+        block = xml[xml.index("<NAME>GS_BUYER-COMPANY_NAME</NAME>"):]
+        return int(re.search(r"<VISLENGTH>(\d+)</VISLENGTH>", block).group(1))
 
     def test_changed_title_rewrites_only_the_cua(self, cli, adt, tmp_path):
         xml = _copy(self.STEM, tmp_path)

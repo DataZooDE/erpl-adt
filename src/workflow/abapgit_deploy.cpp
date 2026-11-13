@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -258,6 +259,7 @@ struct Work {
     std::string owner;         // "PROG ZFOO": the engine ops' owner
     std::vector<size_t> deps;  // earlier works this object mentions
     DeployPlan plan;
+    ObjectFileSet files;       // what it is written from
     bool broken = false;       // failed or skipped
 };
 
@@ -540,6 +542,111 @@ std::vector<std::string> GitFileHistory::PreviousVersions(const std::filesystem:
     return versions;
 }
 
+namespace {
+
+// One path segment from a system id / object name / file name: anything but
+// [A-Za-z0-9._-#] becomes '_', and "." / ".." cannot occur.
+std::string Segment(const std::string& text) {
+    std::string out;
+    for (char c : text) {
+        const bool keep = std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '.' ||
+                          c == '_' || c == '-' || c == '#';
+        out += keep ? c : (c == '/' ? '#' : '_');
+    }
+    if (out.empty() || out.find_first_not_of('.') == std::string::npos) {
+        out = "_" + out;
+    }
+    return out;
+}
+
+}  // namespace
+
+FileDeployRecord::FileDeployRecord(std::filesystem::path directory, const std::string& system)
+    : root_(std::move(directory) / Segment(system)) {}
+
+std::filesystem::path FileDeployRecord::ObjectDir(const AbapGitObjectKey& key) const {
+    return root_ / Segment(key.type) / Segment(key.name);
+}
+
+std::optional<std::string> FileDeployRecord::LastDeployed(const AbapGitObjectKey& key,
+                                                          const std::string& file) const {
+    const auto path = ObjectDir(key) / Segment(file);
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        return std::nullopt;
+    }
+    auto bytes = ReadFile(path);
+    if (bytes.IsErr()) {
+        return std::nullopt;
+    }
+    return bytes.Value();
+}
+
+void FileDeployRecord::Remember(const AbapGitObjectKey& key, const ObjectFileSet& files) {
+    Forget(key);
+    const auto dir = ObjectDir(key);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    for (const auto& [name, bytes] : files) {
+        std::ofstream out(dir / Segment(name), std::ios::binary | std::ios::trunc);
+        out << bytes;
+        if (!out) {
+            LogWarn(kComponent, "Cannot record the deployed version in " + dir.string());
+            return;
+        }
+    }
+}
+
+void FileDeployRecord::Forget(const AbapGitObjectKey& key) {
+    std::error_code ec;
+    std::filesystem::remove_all(ObjectDir(key), ec);
+}
+
+std::filesystem::path FileDeployRecord::DefaultDirectory(const std::filesystem::path& folder) {
+    std::error_code ec;
+    auto dir = std::filesystem::absolute(folder, ec);
+    for (; !dir.empty(); dir = dir.parent_path()) {
+        const auto git = dir / ".git";
+        if (std::filesystem::is_directory(git, ec)) {
+            return git / "erpl-adt" / "deployed";
+        }
+        if (std::filesystem::is_regular_file(git, ec)) {
+            auto text = ReadFile(git);
+            const std::string prefix = "gitdir:";
+            if (text.IsOk() && text.Value().rfind(prefix, 0) == 0) {
+                std::string target = text.Value().substr(prefix.size());
+                target.erase(0, target.find_first_not_of(" \t"));
+                target.erase(target.find_last_not_of(" \t\r\n") + 1);
+                std::filesystem::path git_dir(target);
+                if (git_dir.is_relative()) {
+                    git_dir = dir / git_dir;
+                }
+                return git_dir / "erpl-adt" / "deployed";
+            }
+        }
+        if (dir == dir.parent_path()) {
+            break;
+        }
+    }
+    // Not a git work tree: the user's cache directory.
+    std::filesystem::path cache;
+#ifdef _WIN32
+    if (const char* local = std::getenv("LOCALAPPDATA")) {
+        cache = local;
+    }
+#else
+    if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg != nullptr && *xdg != '\0') {
+        cache = xdg;
+    } else if (const char* home = std::getenv("HOME")) {
+        cache = std::filesystem::path(home) / ".cache";
+    }
+#endif
+    if (cache.empty()) {
+        cache = std::filesystem::temp_directory_path(ec);
+    }
+    return cache / "erpl-adt" / "deployed";
+}
+
 std::string ToString(ObjectAction action) {
     switch (action) {
         case ObjectAction::Created: return "created";
@@ -643,8 +750,22 @@ std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> DefaultTypeHan
 AbapGitWorkflow::AbapGitWorkflow(
     IAdtSession& session, IEngineRunner& engine,
     std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
+    const IFileHistory& history, IDeployRecord& record)
+    : session_(session),
+      engine_(engine),
+      handlers_(std::move(handlers)),
+      history_(history),
+      record_(record) {}
+
+AbapGitWorkflow::AbapGitWorkflow(
+    IAdtSession& session, IEngineRunner& engine,
+    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers,
     const IFileHistory& history)
-    : session_(session), engine_(engine), handlers_(std::move(handlers)), history_(history) {}
+    : session_(session),
+      engine_(engine),
+      handlers_(std::move(handlers)),
+      history_(history),
+      record_(no_record_) {}
 
 const IClassicTypeHandler* AbapGitWorkflow::Handler(const std::string& type) const {
     auto it = handlers_.find(type);
@@ -799,8 +920,10 @@ std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& obje
         if (other.empty()) {
             continue;  // every differing part was last changed by the deployer
         }
-        bool known = false;
-        for (const auto& version : history_.PreviousVersions(object.folder / name)) {
+        // What erpl-adt itself last deployed to this system is ours too.
+        bool known = record_.LastDeployed(object.key, name) == bytes;
+        for (const auto& version :
+             known ? std::vector<std::string>{} : history_.PreviousVersions(object.folder / name)) {
             auto normalized = NormalizeFile(name, version);
             if (normalized.IsOk() && normalized.Value() == bytes) {
                 known = true;
@@ -966,9 +1089,15 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             }
         }
         work.plan = std::move(plan).Value();
+        work.files = desired[i];
         works.push_back(std::move(work));
     }
     RunPlans(session_, engine_, works, report, options);
+    for (const auto& w : works) {
+        if (!w.broken) {
+            record_.Remember(w.key, w.files);
+        }
+    }
     return report;
 }
 
@@ -1044,6 +1173,7 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
                                                    ObjectAction::Failed, deleted.Error()));
             continue;
         }
+        record_.Forget(object.key);
         report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Deleted));
     }
     return report;

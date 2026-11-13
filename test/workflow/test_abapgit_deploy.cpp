@@ -132,6 +132,23 @@ public:
     }
 };
 
+class FakeRecord final : public IDeployRecord {
+public:
+    std::map<std::string, ObjectFileSet> objects;  // "TYPE NAME" -> files
+    std::optional<std::string> LastDeployed(const AbapGitObjectKey& key,
+                                            const std::string& file) const override {
+        auto it = objects.find(key.type + " " + key.name);
+        if (it == objects.end() || it->second.count(file) == 0) {
+            return std::nullopt;
+        }
+        return it->second.at(file);
+    }
+    void Remember(const AbapGitObjectKey& key, const ObjectFileSet& files) override {
+        objects[key.type + " " + key.name] = files;
+    }
+    void Forget(const AbapGitObjectKey& key) override { objects.erase(key.type + " " + key.name); }
+};
+
 class FakeHistory final : public IFileHistory {
 public:
     std::map<std::string, std::vector<std::string>> versions;  // file name -> old bytes
@@ -289,6 +306,7 @@ struct Fixture {
     std::shared_ptr<FakeHandler> handler = std::make_shared<FakeHandler>("DOMA");
     std::map<std::string, std::shared_ptr<FakeHandler>> handlers{{"DOMA", handler}};
     FakeHistory history;
+    FakeRecord record;
     TempRepo repo;
     Fixture() {
         handler->system = &system;
@@ -315,7 +333,7 @@ struct Fixture {
         for (const auto& [type, h] : handlers) {
             all[type] = h;
         }
-        return AbapGitWorkflow(session, engine, all, history);
+        return AbapGitWorkflow(session, engine, all, history, record);
     }
     AbapGitRunOptions Options() {
         AbapGitRunOptions o;
@@ -718,6 +736,117 @@ TEST_CASE("abapGit deploy: unknown last changer is unsafe without git history",
     CHECK(f.handler->applied.empty());
 }
 
+TEST_CASE("abapGit deploy: what erpl-adt last deployed counts as the deployer's own",
+          "[workflow][abapgit_deploy][drift][record]") {
+    Fixture f;
+    // First deploy of an uncommitted change (no git history at all).
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    REQUIRE(f.record.objects.count("DOMA ZERPL_D_A") == 1);
+    f.handler->changed_by = "";  // like a screen: SAP records no last changer
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+    CHECK(f.handler->applied == std::vector<std::string>{"ZERPL_D_A"});
+    // ... and the record follows the new version.
+    CHECK(f.record.objects.at("DOMA ZERPL_D_A").begin()->second.find("Order status") !=
+          std::string::npos);
+}
+
+TEST_CASE("abapGit deploy: a colleague's change after our deploy is still drift",
+          "[workflow][abapgit_deploy][drift][record]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE51 by a colleague/>";
+    f.handler->changed_by = "";
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(f.handler->applied.empty());
+}
+
+TEST_CASE("abapGit deploy: only objects that were written are recorded",
+          "[workflow][abapgit_deploy][drift][record]") {
+    BatchFixture f;
+    f.prog->fail_apply_for = "ZP_A";
+    auto options = f.Options();
+
+    auto report = f.Workflow().Deploy(f.Demo(), options);
+
+    CHECK(f.record.objects.count("DOMA ZD_A") == 1);
+    CHECK(f.record.objects.count("PROG ZP_B") == 1);
+    CHECK(f.record.objects.count("PROG ZP_A") == 0);  // failed
+    CHECK(f.record.objects.count("TRAN ZT_A") == 0);  // skipped
+    // A dry run records nothing.
+    BatchFixture dry;
+    options.dry_run = true;
+    REQUIRE_FALSE(dry.Workflow().Deploy(dry.Demo(), options).Failed());
+    CHECK(dry.record.objects.empty());
+}
+
+TEST_CASE("abapGit delete: the record of a deleted object is dropped",
+          "[workflow][abapgit_deploy][drift][record]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    REQUIRE(f.record.objects.count("DOMA ZERPL_D_A") == 1);
+    REQUIRE_FALSE(f.Workflow().Delete({obj}, f.Options()).Failed());
+    CHECK(f.record.objects.empty());
+}
+
+TEST_CASE("FileDeployRecord: per system, object and file; exact bytes",
+          "[workflow][abapgit_deploy][record]") {
+    TempRepo dir;
+    FileDeployRecord a4h(dir.root / "deployed", "localhost:50000/001");
+    FileDeployRecord other(dir.root / "deployed", "localhost:50000/002");
+    const AbapGitObjectKey prog{"PROG", "/ACME/ZFOO"};
+    const std::string bytes = "PROCESS BEFORE OUTPUT.\r\n\xEF\xBB\xBF\x00end";
+    CHECK_FALSE(a4h.LastDeployed(prog, "#acme#zfoo.prog.xml").has_value());
+
+    a4h.Remember(prog, {{"#acme#zfoo.prog.screen_0100.abap", bytes}, {"#acme#zfoo.prog.xml", "x"}});
+
+    CHECK(a4h.LastDeployed(prog, "#acme#zfoo.prog.screen_0100.abap") == bytes);
+    CHECK_FALSE(other.LastDeployed(prog, "#acme#zfoo.prog.xml").has_value());
+    // A new deploy replaces the whole record (a part that is gone is forgotten).
+    a4h.Remember(prog, {{"#acme#zfoo.prog.xml", "y"}});
+    CHECK(a4h.LastDeployed(prog, "#acme#zfoo.prog.xml") == std::string("y"));
+    CHECK_FALSE(a4h.LastDeployed(prog, "#acme#zfoo.prog.screen_0100.abap").has_value());
+    a4h.Forget(prog);
+    CHECK_FALSE(a4h.LastDeployed(prog, "#acme#zfoo.prog.xml").has_value());
+    // Names never escape the record directory.
+    a4h.Remember({"PROG", "../../ZEVIL"}, {{"../x", "z"}});
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir.root)) {
+        CHECK(entry.path().string().rfind((dir.root / "deployed").string(), 0) == 0);
+    }
+}
+
+TEST_CASE("FileDeployRecord: kept inside the git directory, never in the work tree",
+          "[workflow][abapgit_deploy][record]") {
+    TempRepo repo;
+    std::filesystem::create_directories(repo.root / ".git");
+    std::filesystem::create_directories(repo.root / "src" / "sub");
+    CHECK(FileDeployRecord::DefaultDirectory(repo.root / "src" / "sub") ==
+          repo.root / ".git" / "erpl-adt" / "deployed");
+
+    // A worktree / submodule: .git is a file naming the git directory.
+    TempRepo worktree;
+    std::ofstream(worktree.root / ".git") << "gitdir: " << (repo.root / ".git" / "worktrees" / "w").string()
+                                          << "\n";
+    CHECK(FileDeployRecord::DefaultDirectory(worktree.root) ==
+          repo.root / ".git" / "worktrees" / "w" / "erpl-adt" / "deployed");
+
+#ifndef _WIN32
+    TempRepo plain;
+    ::setenv("XDG_CACHE_HOME", (plain.root / "cache").string().c_str(), 1);
+    CHECK(FileDeployRecord::DefaultDirectory(std::filesystem::path("/")) ==
+          plain.root / "cache" / "erpl-adt" / "deployed");
+    ::unsetenv("XDG_CACHE_HOME");
+#endif
+}
+
 TEST_CASE("abapGit deploy: unknown last changer is fine when the system version is in git",
           "[workflow][abapgit_deploy][drift]") {
     Fixture f;
@@ -759,8 +888,10 @@ TEST_CASE("abapGit deploy: the changer of the differing XML section decides",
     auto ok = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, f.Options());
     CHECK(ok.objects[0].action == ObjectAction::Updated);
 
-    // Now the differing section has no known changer (like a dynpro): refused.
+    // Now the differing section has no known changer (like a dynpro) and the
+    // system version is not what erpl-adt deployed here last: refused.
     f.handler->part_changed_by.erase("zerpl_d_a.doma.xml#DD01V");
+    f.record.objects.clear();
     auto refused = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Again")}, f.Options());
     CHECK(refused.objects[0].action == ObjectAction::Refused);
 }

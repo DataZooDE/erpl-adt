@@ -80,10 +80,9 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
    | Dynpros, TRAN, FUGR short text | **none** — SAP keeps no last changer (`D020S`, `TSTC*` have no user field; SE93 writes no version) |
 
    A part without a recorded changer counts as "unknown user": it is updated
-   only when the system version is in the file's git history. So commit what
-   you deployed before you change a screen or transaction again (a CI deploy
-   from git always satisfies this); a deploy from uncommitted files needs
-   `--force` the second time.
+   only when the system version is in the file's git history, or is exactly
+   what erpl-adt itself last deployed from this clone to this system (see
+   *Own deploys* below). A colleague's change in between is still drift.
 6. **Activate** through the standard workbench activation; activation errors
    are reported per object.
 
@@ -103,6 +102,19 @@ are written. Failures stay with their object: every operation carries its
 owner, an object whose dependency failed earlier in the same run is reported
 `skipped: dependency X failed`, and whatever the activation leaves inactive
 fails the object it belongs to (with SAP's messages that name it).
+
+### Own deploys
+
+SAP keeps no last changer for screens and transactions, so drift protection
+alone would refuse a second deploy of an uncommitted screen change. erpl-adt
+therefore remembers the exact bytes it deployed, per SAP system (host, port,
+client), object and file, in `.git/erpl-adt/deployed/` of the repository (a
+`.git` file of a worktree or submodule is followed; it is never part of a
+commit). Outside a git work tree the record lives in
+`$XDG_CACHE_HOME/erpl-adt/deployed` (`~/.cache/...`; `%LOCALAPPDATA%` on
+Windows). A system version equal to the recorded last deploy counts as your
+own; anything else is still refused. The record is per clone: a colleague
+deploying from their own clone does not make their version "yours".
 
 Dependency order: `DOMA → DTEL → FUGR (function modules) → PROG (source,
 text pool, dynpros, GUI status) → TRAN`.
