@@ -13,12 +13,13 @@ PROGRAM zerpl_so_display.
 
 TABLES: snwd_so, snwd_so_i, snwd_pd.
 
-" SNWD_BPA is not flat (WEB_ADDRESS is a string), so no TABLES work area:
-" the screen field SNWD_BPA-COMPANY_NAME is fed from this structure.
-DATA: BEGIN OF snwd_bpa,
+" The buyer. SNWD_BPA is not flat (WEB_ADDRESS is a string), so it cannot be a
+" TABLES work area - and a dictionary screen field (SNWD_BPA-COMPANY_NAME) is
+" only filled from a TABLES work area. Screen 0200 shows this program field.
+DATA: BEGIN OF gs_buyer,
         bp_id        TYPE snwd_bpa-bp_id,
         company_name TYPE snwd_bpa-company_name,
-      END OF snwd_bpa.
+      END OF gs_buyer.
 
 CONTROLS: ts_detail TYPE TABSTRIP,
           tc_items  TYPE TABLEVIEW USING SCREEN 0210.
@@ -173,7 +174,7 @@ MODULE show_notes OUTPUT.
     ENDIF.
     go_notes->set_readonly_mode( EXPORTING readonly_mode = 1 EXCEPTIONS OTHERS = 1 ).
   ENDIF.
-  gv_notes = |{ TEXT-003 }: { snwd_bpa-company_name }| &&
+  gv_notes = |{ TEXT-003 }: { gs_buyer-company_name }| &&
               cl_abap_char_utilities=>newline &&
               |{ TEXT-004 }: { lines( gt_items ) }|.
   go_notes->set_textstream( EXPORTING text = gv_notes EXCEPTIONS OTHERS = 1 ).
@@ -199,14 +200,14 @@ FORM read_order.
   lv_so_id = |{ snwd_so-so_id ALPHA = IN }|.
   SELECT SINGLE * FROM snwd_so WHERE so_id = @lv_so_id INTO @snwd_so.
   IF sy-subrc <> 0.
-    CLEAR: snwd_bpa, gt_items.
+    CLEAR: gs_buyer, gt_items.
     RETURN.
   ENDIF.
   gv_found = abap_true.
 
   SELECT SINGLE bp_id, company_name FROM snwd_bpa
     WHERE node_key = @snwd_so-buyer_guid
-    INTO CORRESPONDING FIELDS OF @snwd_bpa.
+    INTO CORRESPONDING FIELDS OF @gs_buyer.
 
   SELECT i~so_item_pos, p~product_id, i~net_amount, i~currency_code
     FROM snwd_so_i AS i

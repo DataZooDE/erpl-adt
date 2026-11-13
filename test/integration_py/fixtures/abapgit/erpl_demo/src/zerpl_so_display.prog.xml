@@ -229,7 +229,8 @@
        <CONT_TYPE>SCREEN</CONT_TYPE>
        <CONT_NAME>SCREEN</CONT_NAME>
        <TYPE>TEMPLATE</TYPE>
-       <NAME>SNWD_BPA-COMPANY_NAME</NAME>
+       <NAME>GS_BUYER-COMPANY_NAME</NAME>
+       <TEXT>________________________________________________________________________________</TEXT>
        <ROLLING>X</ROLLING>
        <LINE>003</LINE>
        <COLUMN>020</COLUMN>
@@ -237,7 +238,6 @@
        <VISLENGTH>040</VISLENGTH>
        <HEIGHT>001</HEIGHT>
        <FORMAT>CHAR</FORMAT>
-       <FROM_DICT>X</FROM_DICT>
        <UP_LOWER>X</UP_LOWER>
        <OUTPUT_FLD>X</OUTPUT_FLD>
        <OUTPUTONLY>X</OUTPUTONLY>

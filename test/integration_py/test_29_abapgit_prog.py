@@ -153,15 +153,88 @@ class TestModulePool:
     def test_screen_read_shows_the_overview_fields(self, cli):
         screen = _screen_fields(cli, self.PROG, "0200")
         fields = {f["name"]: f for f in screen["fields"]}
-        for name in ("BOX_HEADER", "SNWD_SO-SO_ID", "SNWD_BPA-COMPANY_NAME",
+        for name in ("BOX_HEADER", "SNWD_SO-SO_ID", "GS_BUYER-COMPANY_NAME",
                      "SNWD_SO-GROSS_AMOUNT", "SNWD_SO-CURRENCY_CODE",
                      "SNWD_SO-LIFECYCLE_STATUS", "GV_BILLED", "GV_NET", "GV_GROSS",
                      "BTN_REFRESH", "TAB_ITEMS", "TAB_NOTES", "OK_CODE"):
             assert name in fields, f"{name} missing on screen 0200: {sorted(fields)}"
-        company = fields["SNWD_BPA-COMPANY_NAME"]
+        company = fields["GS_BUYER-COMPANY_NAME"]
         assert (company["line"], company["column"]) == (3, 20)
         assert company["output"] and not company["input"]
         assert (screen["lines"], screen["columns"]) == (27, 120)
+
+    CHECK_CLASS = "ZCL_ERPL_SO_DISPLAY_CHECK"
+    CHECK_SOURCE = """CLASS zcl_erpl_so_display_check DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_erpl_so_display_check IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    " What screen 0200 of ZERPL_SO_DISPLAY shows for one order: the module
+    " pool's own FORM read_order fills the fields the screen displays.
+    DATA(program) = `ZERPL_SO_DISPLAY`.
+    DATA(form) = `READ_ORDER`.
+    FIELD-SYMBOLS <value> TYPE any.
+    PERFORM (form) IN PROGRAM (program).
+    ASSIGN ('(ZERPL_SO_DISPLAY)SNWD_SO-SO_ID') TO <value>.
+    <value> = '500000728'.
+    PERFORM (form) IN PROGRAM (program).
+    LOOP AT VALUE string_table( ( `SNWD_SO-SO_ID` ) ( `GS_BUYER-COMPANY_NAME` )
+                                ( `SNWD_SO-GROSS_AMOUNT` ) ( `SNWD_SO-CURRENCY_CODE` )
+                                ( `SNWD_SO-LIFECYCLE_STATUS` ) ) INTO DATA(field).
+      DATA(global) = `(` && program && `)` && field.
+      ASSIGN (global) TO <value>.
+      IF sy-subrc = 0.
+        out->write( |{ field }={ <value> }| ).
+      ELSE.
+        out->write( |{ field }=?| ).
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+ENDCLASS.
+"""
+
+    def test_overview_header_fields_are_filled_for_an_order(self, cli, tmp_path):
+        # Regression: the buyer's company stayed empty on screen 0200 in the
+        # GUI. A screen field with a dictionary reference (SNWD_BPA-...) is only
+        # filled from a TABLES work area, and SNWD_BPA (not flat) cannot be
+        # one - so the screen shows the program field GS_BUYER-COMPANY_NAME.
+        # 1. Every dictionary field of screen 0200 is backed by TABLES.
+        xml = (SRC / f"{self.STEM}.prog.xml").read_text(encoding="utf-8")
+        screen = xml[xml.index("<SCREEN>0200</SCREEN>"):]
+        screen = screen[:screen.index("</FIELDS>")]
+        dict_tables = set()
+        for field in re.findall(r"<RPY_DYFATC>(.*?)</RPY_DYFATC>", screen, re.S):
+            name = re.search(r"<NAME>([^<]*)</NAME>", field).group(1)
+            if "<FROM_DICT>X</FROM_DICT>" in field and "-" in name:
+                dict_tables.add(name.split("-")[0])
+        source = (SRC / f"{self.STEM}.prog.abap").read_text()
+        tables = re.search(r"^TABLES:?([^.]*)\.", source, re.M).group(1)
+        declared = {t.strip().upper() for t in tables.split(",")}
+        assert dict_tables and dict_tables <= declared, (dict_tables, declared)
+        # 2. At runtime, the fields hold the order's data. Order 500000728's
+        # buyer is BP 0100000000 "OffiPOR" (SNWD_SO-BUYER_GUID -> SNWD_BPA,
+        # read on A4H with hdbsql).
+        uri = f"/sap/bc/adt/oo/classes/{self.CHECK_CLASS.lower()}"
+        cli.run("object", "delete", uri)
+        cli.run_ok("object", "create", "--type", "CLAS/OC", "--name", self.CHECK_CLASS,
+                   "--package", PACKAGE, "--description", "erpl-adt test: ZERPL_SO_DISPLAY data")
+        try:
+            src = tmp_path / "check.abap"
+            src.write_text(self.CHECK_SOURCE)
+            written = cli.run("source", "write", self.CHECK_CLASS, "--file", str(src),
+                              "--activate")
+            assert written.returncode == 0, written.stdout + written.stderr
+            output = cli.run_ok("object", "run", self.CHECK_CLASS)["output"]
+        finally:
+            cli.run("object", "delete", uri)
+        values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        assert values["SNWD_SO-SO_ID"] == "0500000728", output
+        assert values["GS_BUYER-COMPANY_NAME"] == "OffiPOR", output
+        assert values["SNWD_SO-GROSS_AMOUNT"] == "785.47", output
+        assert values["SNWD_SO-CURRENCY_CODE"] == "USD", output
+        assert values["SNWD_SO-LIFECYCLE_STATUS"] == "C", output
 
     def test_redeploy_unchanged_changes_nothing(self, cli):
         result = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
@@ -170,7 +243,8 @@ class TestModulePool:
     def test_changed_visible_length_rewrites_only_that_screen(self, cli, adt, tmp_path):
         xml = _git_copy(self.STEM, tmp_path)
         content = xml.read_text(encoding="utf-8")
-        old = ("<NAME>SNWD_BPA-COMPANY_NAME</NAME>\n       <ROLLING>X</ROLLING>\n"
+        old = ("<NAME>GS_BUYER-COMPANY_NAME</NAME>\n       <TEXT>" + "_" * 80 + "</TEXT>\n"
+               "       <ROLLING>X</ROLLING>\n"
                "       <LINE>003</LINE>\n       <COLUMN>020</COLUMN>\n"
                "       <LENGTH>080</LENGTH>\n       <VISLENGTH>040</VISLENGTH>")
         assert old in content
