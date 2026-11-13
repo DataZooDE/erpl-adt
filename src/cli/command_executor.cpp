@@ -60,6 +60,7 @@
 #include <erpl_adt/workflow/lock_workflow.hpp>
 #include <erpl_adt/workflow/screen_workflow.hpp>
 #include <erpl_adt/workflow/abapgit_deploy.hpp>
+#include <erpl_adt/app/abapgit_command.hpp>
 #include <erpl_adt/workflow/classrun_helper.hpp>
 #include <erpl_adt/adt/abapgit_repo.hpp>
 #include <erpl_adt/adt/abapgit_xml.hpp>
@@ -1446,261 +1447,6 @@ int HandleScreenDelete(const CommandArgs& args) {
 
 namespace {
 
-struct AbapGitTarget {
-    std::vector<AbapGitObjectFiles> objects;
-    std::vector<std::string> skipped;
-    std::string language = "E";
-    AbapGitRepoConfig config;
-    std::filesystem::path repo_root;  // folder of the governing .abapgit.xml, if any
-};
-
-// Finds the .abapgit.xml that governs `start` (the folder itself or a parent).
-std::optional<std::filesystem::path> FindDotAbapGit(std::filesystem::path start) {
-    std::error_code ec;
-    start = std::filesystem::absolute(start, ec);
-    for (auto dir = start; !dir.empty(); dir = dir.parent_path()) {
-        if (std::filesystem::exists(dir / ".abapgit.xml", ec)) {
-            return dir / ".abapgit.xml";
-        }
-        if (dir == dir.parent_path()) {
-            break;
-        }
-    }
-    return std::nullopt;
-}
-
-Result<AbapGitRepoConfig, Error> LoadDotAbapGit(const std::filesystem::path& file) {
-    std::ifstream in(file, std::ios::binary);
-    std::ostringstream buf;
-    buf << in.rdbuf();
-    auto parsed = ParseDotAbapGit(buf.str());
-    if (parsed.IsErr()) {
-        auto err = parsed.Error();
-        err.message = file.string() + ": " + err.message;
-        return Result<AbapGitRepoConfig, Error>::Err(err);
-    }
-    return parsed;
-}
-
-AbapGitLayout ToLayout(const AbapGitRepoConfig& config) {
-    AbapGitLayout layout;
-    layout.starting_folder = config.starting_folder;
-    layout.folder_logic = config.folder_logic;
-    layout.ignore = config.ignore;
-    return layout;
-}
-
-// <path> is either an abapGit repository folder (with .abapgit.xml) or one
-// file of a single object (e.g. src/zfoo.prog.xml).
-Result<AbapGitTarget, Error> ResolveAbapGitTarget(const std::string& path,
-                                                  const std::string& package) {
-    using R = Result<AbapGitTarget, Error>;
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) {
-        Error err;
-        err.operation = "abapGit";
-        err.message = "Path not found: " + path;
-        err.category = ErrorCategory::NotFound;
-        return R::Err(err);
-    }
-    AbapGitTarget target;
-    auto dot = FindDotAbapGit(std::filesystem::is_directory(path, ec)
-                                  ? std::filesystem::path(path)
-                                  : std::filesystem::path(path).parent_path());
-    if (dot) {
-        auto config = LoadDotAbapGit(*dot);
-        if (config.IsErr()) {
-            return R::Err(config.Error());
-        }
-        target.config = config.Value();
-        target.language = target.config.master_language.empty() ? "E"
-                                                                 : target.config.master_language;
-        target.repo_root = dot->parent_path();
-    }
-
-    if (std::filesystem::is_regular_file(path, ec) && dot) {
-        // Inside a repository: the same scan as for the whole repository,
-        // filtered to this object, so its folder decides its package.
-        auto object = ScanAbapGitObjectInRepo(path, dot->parent_path(), ToLayout(target.config),
-                                              package);
-        if (object.IsErr()) {
-            return R::Err(object.Error());
-        }
-        target.objects.push_back(object.Value());
-        return R::Ok(std::move(target));
-    }
-    if (std::filesystem::is_regular_file(path, ec)) {
-        auto object = ScanAbapGitObject(path, package);
-        if (object.IsErr()) {
-            return R::Err(object.Error());
-        }
-        target.objects.push_back(object.Value());
-        return R::Ok(std::move(target));
-    }
-    if (!dot || dot->parent_path() != std::filesystem::absolute(path, ec)) {
-        Error err;
-        err.operation = "abapGit";
-        err.message = "No .abapgit.xml in " + path +
-                      " — pass the root of an abapGit repository or a single object file";
-        err.category = ErrorCategory::NotFound;
-        return R::Err(err);
-    }
-    auto scan = ScanAbapGitFolder(path, ToLayout(target.config), package);
-    if (scan.IsErr()) {
-        return R::Err(scan.Error());
-    }
-    target.objects = scan.Value().objects;
-    for (const auto& f : scan.Value().unsupported) {
-        target.skipped.push_back(f + " (object type not supported yet)");
-    }
-    return R::Ok(std::move(target));
-}
-
-Result<AbapGitRunOptions, Error> ParseAbapGitOptions(const CommandArgs& args) {
-    AbapGitRunOptions options;
-    options.root_package = GetFlag(args, "package");
-    std::transform(options.root_package.begin(), options.root_package.end(),
-                   options.root_package.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    if (options.root_package.empty()) {
-        return Result<AbapGitRunOptions, Error>::Err(
-            MakeValidationError("Missing --package (e.g. --package '$TMP' or --package ZDEMO)"));
-    }
-    auto valid = PackageName::Create(options.root_package);
-    if (valid.IsErr()) {
-        return Result<AbapGitRunOptions, Error>::Err(
-            MakeValidationError("Invalid --package: " + valid.Error()));
-    }
-    options.transport = GetFlag(args, "transport");
-    std::transform(options.transport.begin(), options.transport.end(), options.transport.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    if (!options.transport.empty()) {
-        // Validated once here: it goes into ABAP literals and ?corrNr= queries.
-        auto valid_transport = TransportId::Create(options.transport);
-        if (valid_transport.IsErr()) {
-            return Result<AbapGitRunOptions, Error>::Err(
-                MakeValidationError("Invalid --transport: " + valid_transport.Error()));
-        }
-    }
-    options.dry_run = HasFlag(args, "dry-run");
-    options.force = HasFlag(args, "force");
-    options.strict = HasFlag(args, "strict");
-    if (!JsonMode(args) && IsStderrTty()) {
-        options.progress = [](const std::string& line) { std::cerr << line << std::endl; };
-    }
-    return Result<AbapGitRunOptions, Error>::Ok(std::move(options));
-}
-
-ClassrunHelperOptions AbapGitHelperOptions(const CommandArgs& args) {
-    ClassrunHelperOptions helper;
-    helper.helper_class = MakeHelperClassName();
-    helper.package = HasFlag(args, "helper-package") ? GetFlag(args, "helper-package") : "$TMP";
-    helper.description = "Temporary erpl-adt abapgit helper (safe to delete)";
-    helper.keep_helper = HasFlag(args, "keep-helper");
-    return helper;
-}
-
-int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
-                       const AbapGitRunOptions& options, const AbapGitRunReport& report) {
-    std::map<std::string, int> summary;
-    for (const auto& o : report.objects) {
-        ++summary[ToString(o.action)];
-    }
-    if (fmt.IsJsonMode()) {
-        nlohmann::json j;
-        j["command"] = command;
-        j["package"] = options.root_package;
-        j["dry_run"] = options.dry_run;
-        j["objects"] = nlohmann::json::array();
-        for (const auto& o : report.objects) {
-            nlohmann::json e;
-            e["type"] = o.key.type;
-            e["name"] = o.key.name;
-            e["package"] = o.package;
-            e["action"] = ToString(o.action);
-            e["parts"] = o.parts;
-            if (!o.message.empty()) {
-                e["message"] = o.message;
-            }
-            if (!o.notes.empty()) {
-                e["notes"] = o.notes;
-            }
-            if (o.error.has_value()) {
-                e["category"] = o.error->CategoryName();
-                e["exit_code"] = o.error->ExitCode();
-            }
-            j["objects"].push_back(e);
-        }
-        j["skipped"] = report.skipped;
-        j["summary"] = summary;
-        j["exit_code"] = report.ExitCode();
-        fmt.PrintJson(j.dump());
-    } else {
-        std::ostringstream out;
-        for (const auto& o : report.objects) {
-            // Only what a real run would do is "would be ..."; unchanged,
-            // refused, failed and skipped read the same in a dry run.
-            const bool would = options.dry_run && (o.action == ObjectAction::Created ||
-                                                   o.action == ObjectAction::Updated ||
-                                                   o.action == ObjectAction::Deleted);
-            out << (would ? "would be " : "") << ToString(o.action) << "  "
-                << o.key.type << " " << o.key.name << "  (" << o.package << ")";
-            if (!o.parts.empty()) {
-                out << "  ";
-                for (size_t i = 0; i < o.parts.size(); ++i) {
-                    out << (i ? ", " : "") << o.parts[i];
-                }
-            }
-            if (!o.message.empty()) {
-                out << "\n    " << o.message;
-            }
-            for (const auto& note : o.notes) {
-                out << "\n    note: " << note;
-            }
-            out << "\n";
-        }
-        for (const auto& s : report.skipped) {
-            out << "skipped  " << s << "\n";
-        }
-        std::string line;
-        for (const auto& [action, count] : summary) {
-            line += (line.empty() ? "" : ", ") + std::to_string(count) + " " + action;
-        }
-        out << (line.empty() ? "nothing to do" : line) << (options.dry_run ? " (dry run)" : "");
-        std::cout << out.str() << std::endl;
-    }
-    // The most severe object decides (see AbapGitRunReport::MostSevereError).
-    return report.ExitCode();
-}
-
-template <typename Body>
-int WithAbapGitEngine(const CommandArgs& args, OutputFormatter& fmt, Body body) {
-    auto session = CreateSession(args);
-    if (session.IsErr()) {
-        fmt.PrintError(session.Error());
-        return session.Error().ExitCode();
-    }
-    // Separate session for classrun — see workflow/classrun_helper.hpp.
-    auto classrun_session = CreateSession(args);
-    if (classrun_session.IsErr()) {
-        fmt.PrintError(classrun_session.Error());
-        return classrun_session.Error().ExitCode();
-    }
-    // Best effort: remove our own helpers that interrupted runs left behind
-    // more than two hours ago (never someone else's, never a fresh one).
-    auto& main_session = *session.Value();
-    auto swept =
-        CleanupStaleHelpers(main_session, main_session.LogonUserName(), std::chrono::minutes(120));
-    for (const auto& name : swept.deleted) {
-        LogInfo("abapgit", "Removed stale helper class " + name);
-    }
-    ClassrunEngineRunner engine(main_session, *classrun_session.Value(),
-                                AbapGitHelperOptions(args));
-    GitFileHistory history;
-    AbapGitWorkflow workflow(main_session, engine, DefaultTypeHandlers(), history);
-    return body(workflow);
-}
-
 std::vector<std::string> SplitObjectSpecs(const std::string& csv) {
     std::vector<std::string> parts;
     std::stringstream ss(csv);
@@ -1715,38 +1461,78 @@ std::vector<std::string> SplitObjectSpecs(const std::string& csv) {
     return parts;
 }
 
+ClassrunHelperOptions AbapGitHelperOptions(const CommandArgs& args) {
+    ClassrunHelperOptions helper;
+    helper.helper_class = MakeHelperClassName();
+    helper.package = HasFlag(args, "helper-package") ? GetFlag(args, "helper-package") : "$TMP";
+    helper.description = "Temporary erpl-adt abapgit helper (safe to delete)";
+    helper.keep_helper = HasFlag(args, "keep-helper");
+    return helper;
+}
+
 const char* kAbapGitUsagePath = "<path> is an abapGit repository folder (with .abapgit.xml) "
                                 "or a single object file such as src/zfoo.prog.xml";
+
+// The shared abapgit command (app/abapgit_command.hpp) behind a CLI front:
+// flags -> request, two sessions, report -> stdout.
+int RunAbapGitCli(AbapGitCommand command, const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    if (args.positional.empty()) {
+        const std::string usage =
+            command == AbapGitCommand::Export
+                ? std::string("Missing <dir>. Usage: erpl-adt abapgit export <dir> --package <PKG> "
+                              "[--object TYPE:NAME,...]")
+                : "Missing <path>. Usage: erpl-adt abapgit " +
+                      std::string(command == AbapGitCommand::Delete ? "delete" : "deploy") +
+                      " <path> --package <PKG>. " + kAbapGitUsagePath;
+        fmt.PrintError(MakeValidationError(usage));
+        return 99;
+    }
+    AbapGitRequest request;
+    request.path = args.positional[0];
+    request.package = GetFlag(args, "package");
+    request.transport = GetFlag(args, "transport");
+    request.dry_run = HasFlag(args, "dry-run");
+    request.force = HasFlag(args, "force");
+    request.strict = HasFlag(args, "strict");
+    request.objects = SplitObjectSpecs(GetFlag(args, "object"));
+    request.master_language = GetFlag(args, "master-language");
+    auto prepared = PrepareAbapGitRun(command, request);
+    if (prepared.IsErr()) {
+        fmt.PrintError(prepared.Error());
+        return prepared.Error().ExitCode();
+    }
+    auto run = std::move(prepared).Value();
+    if (!JsonMode(args) && IsStderrTty()) {
+        run.options.progress = [](const std::string& line) { std::cerr << line << std::endl; };
+    }
+
+    auto session = CreateSession(args);
+    if (session.IsErr()) {
+        fmt.PrintError(session.Error());
+        return session.Error().ExitCode();
+    }
+    // Separate session for classrun — see workflow/classrun_helper.hpp.
+    auto classrun_session = CreateSession(args);
+    if (classrun_session.IsErr()) {
+        fmt.PrintError(classrun_session.Error());
+        return classrun_session.Error().ExitCode();
+    }
+    const auto report =
+        RunAbapGit(run, *session.Value(), *classrun_session.Value(), AbapGitHelperOptions(args));
+    if (fmt.IsJsonMode()) {
+        fmt.PrintJson(AbapGitReportJson(run, report).dump());
+    } else {
+        std::cout << AbapGitReportText(run, report) << std::endl;
+    }
+    // The most severe object decides (see AbapGitRunReport::MostSevereError).
+    return report.ExitCode();
+}
 
 }  // namespace
 
 int HandleAbapGitDeploy(const CommandArgs& args) {
-    OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError(
-            std::string("Missing <path>. Usage: erpl-adt abapgit deploy <path> --package <PKG>. ") +
-            kAbapGitUsagePath));
-        return 99;
-    }
-    auto options = ParseAbapGitOptions(args);
-    if (options.IsErr()) {
-        fmt.PrintError(options.Error());
-        return 99;
-    }
-    auto target = ResolveAbapGitTarget(args.positional[0], options.Value().root_package);
-    if (target.IsErr()) {
-        fmt.PrintError(target.Error());
-        return target.Error().ExitCode();
-    }
-    auto opts = options.Value();
-    opts.language = target.Value().language;
-    opts.repo_root = target.Value().repo_root;
-    return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
-        auto report = workflow.Deploy(target.Value().objects, opts);
-        report.skipped.insert(report.skipped.end(), target.Value().skipped.begin(),
-                              target.Value().skipped.end());
-        return PrintAbapGitReport(fmt, "deploy", opts, report);
-    });
+    return RunAbapGitCli(AbapGitCommand::Deploy, args);
 }
 
 int HandleAbapGitCleanup(const CommandArgs& args) {
@@ -1795,135 +1581,15 @@ int HandleAbapGitCleanup(const CommandArgs& args) {
 }
 
 int HandleAbapGitStatus(const CommandArgs& args) {
-    CommandArgs dry = args;
-    dry.flags["dry-run"] = "true";
-    return HandleAbapGitDeploy(dry);
+    return RunAbapGitCli(AbapGitCommand::Status, args);
 }
 
 int HandleAbapGitDelete(const CommandArgs& args) {
-    OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError(
-            std::string("Missing <path>. Usage: erpl-adt abapgit delete <path> --package <PKG>. ") +
-            kAbapGitUsagePath));
-        return 99;
-    }
-    auto options = ParseAbapGitOptions(args);
-    if (options.IsErr()) {
-        fmt.PrintError(options.Error());
-        return 99;
-    }
-    auto target = ResolveAbapGitTarget(args.positional[0], options.Value().root_package);
-    if (target.IsErr()) {
-        fmt.PrintError(target.Error());
-        return target.Error().ExitCode();
-    }
-    auto opts = options.Value();
-    opts.language = target.Value().language;
-    opts.repo_root = target.Value().repo_root;
-    return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
-        return PrintAbapGitReport(fmt, "delete", opts,
-                                  workflow.Delete(target.Value().objects, opts));
-    });
+    return RunAbapGitCli(AbapGitCommand::Delete, args);
 }
 
 int HandleAbapGitExport(const CommandArgs& args) {
-    OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    if (args.positional.empty()) {
-        fmt.PrintError(MakeValidationError(
-            "Missing <dir>. Usage: erpl-adt abapgit export <dir> --package <PKG> "
-            "[--object TYPE:NAME,...]"));
-        return 99;
-    }
-    auto options = ParseAbapGitOptions(args);
-    if (options.IsErr()) {
-        fmt.PrintError(options.Error());
-        return 99;
-    }
-    auto opts = options.Value();
-    const std::filesystem::path dir = args.positional[0];
-
-    // Repository layout: reuse an existing .abapgit.xml, otherwise start a
-    // new repository with abapGit's defaults (PREFIX, /src/).
-    AbapGitRepoConfig config;
-    std::error_code ec;
-    const bool has_dot = std::filesystem::exists(dir / ".abapgit.xml", ec);
-    if (has_dot) {
-        auto loaded = LoadDotAbapGit(dir / ".abapgit.xml");
-        if (loaded.IsErr()) {
-            fmt.PrintError(loaded.Error());
-            return loaded.Error().ExitCode();
-        }
-        config = loaded.Value();
-    } else {
-        config.master_language = HasFlag(args, "master-language")
-                                     ? GetFlag(args, "master-language")
-                                     : "E";
-    }
-    opts.language = config.master_language.empty() ? "E" : config.master_language;
-
-    // What the repository already holds: each object's folder and files, so a
-    // refresh writes back in place and removes files of deleted parts.
-    std::vector<AbapGitObjectFiles> scanned;
-    if (has_dot) {
-        auto scan = ScanAbapGitFolder(dir, ToLayout(config), opts.root_package);
-        if (scan.IsErr()) {
-            fmt.PrintError(scan.Error());
-            return scan.Error().ExitCode();
-        }
-        scanned = scan.Value().objects;
-    }
-
-    // Which objects: --object list, else the supported objects already in <dir>.
-    std::vector<AbapGitObjectFiles> objects;
-    for (const auto& spec : SplitObjectSpecs(GetFlag(args, "object"))) {
-        auto colon = spec.find(':');
-        if (colon == std::string::npos) {
-            fmt.PrintError(MakeValidationError("Invalid --object '" + spec +
-                                               "', expected TYPE:NAME, e.g. PROG:ZERPL_DEMO"));
-            return 99;
-        }
-        AbapGitObjectKey key{spec.substr(0, colon), spec.substr(colon + 1)};
-        std::transform(key.type.begin(), key.type.end(), key.type.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        std::transform(key.name.begin(), key.name.end(), key.name.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        auto known = std::find_if(scanned.begin(), scanned.end(),
-                                  [&](const AbapGitObjectFiles& o) { return o.key == key; });
-        if (known != scanned.end()) {
-            objects.push_back(*known);
-        } else {
-            AbapGitObjectFiles wanted;  // folder derived from its TADIR package
-            wanted.key = key;
-            objects.push_back(wanted);
-        }
-    }
-    if (!HasFlag(args, "object")) {
-        for (const auto& o : scanned) {
-            if (o.key.type != "DEVC") {
-                objects.push_back(o);
-            }
-        }
-    }
-    if (objects.empty()) {
-        fmt.PrintError(MakeValidationError(
-            "Nothing to export: pass --object TYPE:NAME[,...] or point <dir> at an abapGit "
-            "repository whose objects should be refreshed from the system"));
-        return 99;
-    }
-
-    AbapGitExportTarget export_target;
-    export_target.repo_root = dir;
-    export_target.layout = ToLayout(config);
-
-    return WithAbapGitEngine(args, fmt, [&](AbapGitWorkflow& workflow) {
-        auto report = workflow.Export(objects, export_target, opts);
-        if (!has_dot && !opts.dry_run && !report.Failed()) {
-            std::filesystem::create_directories(dir, ec);
-            std::ofstream(dir / ".abapgit.xml", std::ios::binary) << RenderDotAbapGit(config);
-        }
-        return PrintAbapGitReport(fmt, "export", opts, report);
-    });
+    return RunAbapGitCli(AbapGitCommand::Export, args);
 }
 
 

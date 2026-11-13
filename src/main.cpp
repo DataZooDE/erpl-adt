@@ -3,6 +3,8 @@
 #include <erpl_adt/cli/command_executor.hpp>
 #include <erpl_adt/cli/command_router.hpp>
 #include <erpl_adt/config/config_loader.hpp>
+#include <erpl_adt/config/mcp_server_config.hpp>
+#include <erpl_adt/mcp/abapgit_tool_handlers.hpp>
 #include <erpl_adt/core/connection_env.hpp>
 #include <erpl_adt/core/log.hpp>
 #include <erpl_adt/core/telemetry.hpp>
@@ -117,8 +119,12 @@ void PrintMcpHelp(std::ostream& out) {
     out << "  --mcp-host <addr>    Address to bind with --http (default: 127.0.0.1)\n";
     out << "  --mcp-port <n>       Port to bind with --http (default: 8383)\n";
     out << "  --catalog-db <path>  Also expose the catalog_* tools over a DuckDB cache\n";
-    out << "  --tools <families>   Expose only these tool families (adt, bw, catalog;\n";
-    out << "                       comma-separated). Default: all registered families\n\n";
+    out << "  --tools <families>   Expose only these tool families (adt, bw, catalog,\n";
+    out << "                       abapgit; comma-separated). Default: all registered families\n";
+    out << "  --abapgit-root <dir> Folder the abapgit_* tools may read and write; paths\n";
+    out << "                       outside it (.., absolute, symlinks) are refused.\n";
+    out << "                       Default: the working directory. YAML: mcp.abapgit_root\n";
+    out << "  -c, --config <file>  YAML file (mcp: and http: blocks)\n\n";
     out << "HTTP ACCESS CONTROL (--http only)\n";
     out << "  --cors-origin <list> Comma-separated extra origins allowed to call /mcp.\n";
     out << "                       Same-origin, loopback and non-browser (no Origin\n";
@@ -564,6 +570,34 @@ int HandleMcpServer(int argc, const char* const* argv) {
     ToolRegistry registry;
     RegisterAdtTools(registry, *session);
 
+    // abapgit_* tools, confined to one folder: --abapgit-root > YAML
+    // mcp.abapgit_root > the working directory.
+    {
+        std::string abapgit_root = get("abapgit-root");
+        if (abapgit_root.empty() && !get("config").empty()) {
+            auto settings = LoadMcpServerSettings(get("config"));
+            if (settings.IsErr()) {
+                std::cerr << "Error: --config: " << settings.Error().message << "\n";
+                return kExitInternal;
+            }
+            abapgit_root = settings.Value().abapgit_root.value_or("");
+        }
+        std::error_code ec;
+        AbapGitToolOptions abapgit;
+        abapgit.root = abapgit_root.empty() ? std::filesystem::current_path(ec)
+                                            : std::filesystem::path(abapgit_root);
+        if (!std::filesystem::is_directory(abapgit.root, ec)) {
+            std::cerr << "Error: --abapgit-root: not a folder: " << abapgit.root.string()
+                      << "\n";
+            return kExitInternal;
+        }
+        abapgit.make_classrun_session = [=]() -> std::unique_ptr<IAdtSession> {
+            return std::make_unique<AdtSession>(host, port, use_https, user, password,
+                                                sap_client, opts);
+        };
+        RegisterAbapGitTools(registry, *session, std::move(abapgit));
+    }
+
     // catalog_* tools (BRD.md FR-MCP-1) — opened once here, for the process
     // lifetime (NFR-1). Optional: absent unless --catalog-db is passed,
     // since not every deployment has a sunk catalog.
@@ -593,7 +627,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
     // same for every connection to it, which is what MCP requires.
     if (!get("tools").empty()) {
         static const std::vector<std::string> kKnownFamilies = {"adt", "bw",
-                                                                 "catalog"};
+                                                                 "catalog", "abapgit"};
         std::vector<std::string> families;
         std::string current;
         auto flush = [&]() {
@@ -615,7 +649,7 @@ int HandleMcpServer(int argc, const char* const* argv) {
             if (std::find(kKnownFamilies.begin(), kKnownFamilies.end(), family) ==
                 kKnownFamilies.end()) {
                 std::cerr << "Error: --tools: unknown family '" << family
-                          << "'. Known families: adt, bw, catalog.\n";
+                          << "'. Known families: adt, bw, catalog, abapgit.\n";
                 return kExitInternal;
             }
         }

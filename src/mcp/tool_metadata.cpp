@@ -110,6 +110,16 @@ const std::vector<ToolMetadata>& ToolMetadataTable() {
         {"bw_clear_favorites",     "Clear BW favorites",            Destroys()},
         {"bw_move_requests",       "Move transport requests",       Destroys()},
 
+        // -- abapGit files <-> classic objects -------------------------------
+        // status writes no object (it runs SAP's read function modules from a
+        // temporary $TMP helper class that it deletes again). deploy and
+        // delete overwrite or remove repository objects; export overwrites
+        // local files and removes those of parts the system no longer has.
+        {"abapgit_status",         "Compare abapGit files with SAP", Reads()},
+        {"abapgit_deploy",         "Deploy abapGit files to SAP",   Destroys()},
+        {"abapgit_export",         "Export objects as abapGit files", Destroys()},
+        {"abapgit_delete",         "Delete objects of abapGit files", Destroys()},
+
         // -- Catalog --------------------------------------------------------
         // catalog_build and catalog_export read SAP and write local files;
         // they touch no SAP state.
