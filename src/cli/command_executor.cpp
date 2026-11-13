@@ -1526,7 +1526,8 @@ int RunAbapGitCli(AbapGitCommand command, const CommandArgs& args) {
                                  creds ? std::to_string(creds->port) : "", "50000") +
         "/" + ResolveConnectionSetting(args, "client", "CLIENT", creds ? creds->client : "", "001");
     const auto report = RunAbapGit(run, *session.Value(), *classrun_session.Value(),
-                                   AbapGitHelperOptions(args), system);
+                                   AbapGitHelperOptions(args), system,
+                                   DeployRecordDirectory(run));
     if (fmt.IsJsonMode()) {
         fmt.PrintJson(AbapGitReportJson(run, report).dump());
     } else {

@@ -647,6 +647,11 @@ std::filesystem::path FileDeployRecord::DefaultDirectory(const std::filesystem::
         }
     }
     // Not a git work tree: the user's cache directory.
+    return CacheDirectory() / "deployed";
+}
+
+std::filesystem::path FileDeployRecord::CacheDirectory() {
+    std::error_code ec;
     std::filesystem::path cache;
 #ifdef _WIN32
     if (const char* local = std::getenv("LOCALAPPDATA")) {
@@ -662,7 +667,7 @@ std::filesystem::path FileDeployRecord::DefaultDirectory(const std::filesystem::
     if (cache.empty()) {
         cache = std::filesystem::temp_directory_path(ec);
     }
-    return cache / "erpl-adt" / "deployed";
+    return cache / "erpl-adt";
 }
 
 std::string ToString(ObjectAction action) {
@@ -1304,6 +1309,17 @@ AbapGitRunReport AbapGitWorkflow::Export(const std::vector<AbapGitObjectFiles>& 
                 continue;
             }
             folder = target.repo_root / StartingFolder(target.layout) / relative.Value();
+            // Never outside the repository, whatever the layout says.
+            const auto root = target.repo_root.lexically_normal();
+            const auto rel = folder.lexically_normal().lexically_relative(root);
+            if (rel.empty() || *rel.begin() == "..") {
+                auto err = MakeError(key.type + " " + key.name + " cannot be exported here: its "
+                                     "folder " + folder.lexically_normal().string() +
+                                     " is outside the repository " + root.string(),
+                                     ErrorCategory::Authorization);
+                report.objects.push_back(FailedOutcome(key, package, ObjectAction::Refused, err));
+                continue;
+            }
         }
 
         auto outcome = Outcome(key, package, ObjectAction::Exported);

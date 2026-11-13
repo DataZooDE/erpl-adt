@@ -219,6 +219,8 @@ public:
     // worktree / submodule); otherwise $XDG_CACHE_HOME/erpl-adt/deployed
     // (~/.cache/..., %LOCALAPPDATA%\erpl-adt\deployed on Windows).
     static std::filesystem::path DefaultDirectory(const std::filesystem::path& folder);
+    // $XDG_CACHE_HOME/erpl-adt (~/.cache/erpl-adt, %LOCALAPPDATA%\erpl-adt).
+    static std::filesystem::path CacheDirectory();
 
 private:
     std::filesystem::path ObjectDir(const AbapGitObjectKey& key) const;

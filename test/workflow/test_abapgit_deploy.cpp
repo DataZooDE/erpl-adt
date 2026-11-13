@@ -1442,3 +1442,23 @@ TEST_CASE("abapGit deploy: a type whose update drops translations compares them 
     CHECK(report.objects[0].action == ObjectAction::Refused);
     CHECK(f.handler->applied.empty());
 }
+
+TEST_CASE("abapGit export: a destination outside the repository is never written",
+          "[workflow][abapgit_deploy][guard]") {
+    // A layout that did not come through ParseDotAbapGit (or a package folder
+    // that climbs out) must not write or remove files outside the root.
+    Fixture f;
+    f.system["ZERPL_D_A"] = {{"zerpl_d_a.doma.xml", "<new/>"}};
+    f.engine.package_chains["ZERPL_D_A"] = "$TMP";
+    auto target = Target(f.repo.root / "repo", "$TMP");
+    target.layout.starting_folder = "/../outside/";
+    const auto outside = f.repo.root / "outside";
+    Touch(outside / "zerpl_d_a.doma.screen_0100.abap", "someone else's file");
+
+    auto report = f.Workflow().Export({Wanted("DOMA", "ZERPL_D_A")}, target, f.Options());
+
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK_FALSE(std::filesystem::exists(outside / "zerpl_d_a.doma.xml"));
+    CHECK(std::filesystem::exists(outside / "zerpl_d_a.doma.screen_0100.abap"));
+}

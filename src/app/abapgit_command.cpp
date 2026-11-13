@@ -284,9 +284,21 @@ Result<PreparedAbapGitRun, Error> PrepareAbapGitRun(AbapGitCommand command,
     return R::Ok(std::move(run));
 }
 
+fs::path DeployRecordDirectory(const PreparedAbapGitRun& run) {
+    std::error_code ec;
+    fs::path folder = run.scope.empty() ? fs::current_path(ec) : run.scope;
+    if (!fs::is_directory(folder, ec)) {
+        folder = folder.parent_path();
+    }
+    if (folder.empty()) {
+        folder = ".";
+    }
+    return FileDeployRecord::DefaultDirectory(folder);
+}
+
 AbapGitRunReport RunAbapGit(const PreparedAbapGitRun& run, IAdtSession& session,
                             IAdtSession& classrun_session, const ClassrunHelperOptions& helper,
-                            const std::string& system) {
+                            const std::string& system, const fs::path& record_directory) {
     // Best effort: remove our own helpers that interrupted runs left behind
     // more than two hours ago (never someone else's, never a fresh one).
     auto swept = CleanupStaleHelpers(session, session.LogonUserName(), std::chrono::minutes(120));
@@ -296,15 +308,7 @@ AbapGitRunReport RunAbapGit(const PreparedAbapGitRun& run, IAdtSession& session,
     ClassrunEngineRunner engine(session, classrun_session, helper);
     GitFileHistory history;
     // What this clone last deployed to this system (see IDeployRecord).
-    std::error_code ec;
-    fs::path folder = run.scope.empty() ? fs::current_path(ec) : run.scope;
-    if (!fs::is_directory(folder, ec)) {
-        folder = folder.parent_path();
-    }
-    if (folder.empty()) {
-        folder = ".";
-    }
-    FileDeployRecord record(FileDeployRecord::DefaultDirectory(folder), system);
+    FileDeployRecord record(record_directory, system);
     AbapGitWorkflow workflow(session, engine, DefaultTypeHandlers(), history, record);
 
     switch (run.command) {

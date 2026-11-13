@@ -454,3 +454,20 @@ TEST_CASE("ParseAbapGitXml: CRLF input normalizes to the LF form", "[abapgit_xml
     CHECK(parsed.Value().values_xml == "<A>1</A>");
     CHECK(RenderAbapGitXml(parsed.Value()) == lf);
 }
+
+TEST_CASE("ParseDotAbapGit: a starting folder that leaves the repository is refused",
+          "[abapgit_xml]") {
+    auto dot = [](const std::string& folder) {
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<asx:abap "
+               "xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\">\n <asx:values>\n"
+               "  <DATA>\n   <MASTER_LANGUAGE>E</MASTER_LANGUAGE>\n   <STARTING_FOLDER>" +
+               folder + "</STARTING_FOLDER>\n  </DATA>\n </asx:values>\n</asx:abap>\n";
+    };
+    for (const char* folder : {"/../../outside/", "/src/../../x/", "..", "/src/..\\..\\x/"}) {
+        auto parsed = ParseDotAbapGit(dot(folder));
+        CHECK(parsed.IsErr());
+    }
+    auto fine = ParseDotAbapGit(dot("/src/abap/"));
+    REQUIRE(fine.IsOk());
+    CHECK(fine.Value().starting_folder == "/src/abap/");
+}

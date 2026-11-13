@@ -239,3 +239,36 @@ TEST_CASE("abapgit tools validate package and transport like the CLI", "[mcp][ab
     CHECK(Text(r).find("Invalid --transport") != std::string::npos);
     CHECK(tools.SapCalls() == 0);
 }
+
+// ===========================================================================
+// Deploy record location (what this clone last deployed)
+// ===========================================================================
+
+TEST_CASE("McpDeployRecordDirectory: a .git inside the root keeps the record there",
+          "[mcp][abapgit][root]") {
+    Sandbox box;
+    fs::create_directories(box.root / "repo" / ".git");
+    const auto dir = McpDeployRecordDirectory(box.root, box.root / "repo", box.base / "cache");
+    CHECK(dir == fs::weakly_canonical(box.root / "repo" / ".git") / "erpl-adt" / "deployed");
+}
+
+TEST_CASE("McpDeployRecordDirectory: a .git pointer leading out of the root is not followed",
+          "[mcp][abapgit][root]") {
+    Sandbox box;
+    std::ofstream(box.root / "repo" / ".git") << "gitdir: " << box.outside.string() << "\n";
+    const auto cache = box.base / "cache";
+    const auto dir = McpDeployRecordDirectory(box.root, box.root / "repo", cache);
+    // A server-side directory, one per repository, never the pointer's target.
+    CHECK(dir.lexically_relative(cache).begin()->string() == "mcp-deployed");
+    CHECK(dir.string().find(box.outside.string()) == std::string::npos);
+    CHECK(dir != McpDeployRecordDirectory(box.root, box.root, cache));
+    CHECK(dir == McpDeployRecordDirectory(box.root, box.root / "repo" / "src" / "..", cache));
+}
+
+TEST_CASE("McpDeployRecordDirectory: no git work tree uses the server cache, not the user's",
+          "[mcp][abapgit][root]") {
+    Sandbox box;
+    const auto cache = box.base / "cache";
+    const auto dir = McpDeployRecordDirectory(box.root, box.root / "repo", cache);
+    CHECK(dir.lexically_relative(cache).begin()->string() == "mcp-deployed");
+}

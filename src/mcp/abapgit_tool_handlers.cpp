@@ -2,10 +2,14 @@
 
 #include <erpl_adt/app/abapgit_command.hpp>
 #include <erpl_adt/mcp/tool_metadata.hpp>
+#include <erpl_adt/workflow/abapgit_deploy.hpp>
 #include <erpl_adt/workflow/classrun_helper.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
 #include <set>
 #include <sstream>
 #include <string>
@@ -233,7 +237,12 @@ ToolResult RunTool(const ToolSpec& spec, IAdtSession& session, const AbapGitTool
     ClassrunHelperOptions helper;
     helper.helper_class = MakeHelperClassName();
     helper.description = "Temporary erpl-adt abapgit helper (safe to delete)";
-    const auto report = RunAbapGit(run, session, *classrun_session, helper, options.system);
+    const auto cache =
+        options.record_cache.empty() ? FileDeployRecord::CacheDirectory() : options.record_cache;
+    const auto report =
+        RunAbapGit(run, session, *classrun_session, helper, options.system,
+                   McpDeployRecordDirectory(options.root,
+                                            run.scope.empty() ? req.path : run.scope, cache));
     const auto j = AbapGitReportJson(run, report);
     // Same document as `erpl-adt --json abapgit ...`; isError mirrors a
     // non-zero exit code.
@@ -261,6 +270,33 @@ Result<fs::path, Error> ResolvePathUnderRoot(const fs::path& root, const std::st
                                   ", outside the abapGit root " + canonical_root.string()));
     }
     return R::Ok(resolved);
+}
+
+fs::path McpDeployRecordDirectory(const fs::path& root, const fs::path& scope,
+                                  const fs::path& cache) {
+    std::error_code ec;
+    fs::path folder = fs::weakly_canonical(fs::absolute(scope, ec), ec);
+    if (!fs::is_directory(folder, ec)) {
+        folder = folder.parent_path();
+    }
+    const auto canonical_root = fs::weakly_canonical(fs::absolute(root, ec), ec);
+    const auto in_repo = fs::weakly_canonical(FileDeployRecord::DefaultDirectory(folder), ec);
+    if (!ec && IsWithin(canonical_root, in_repo)) {
+        return in_repo;
+    }
+    // One server-side directory per repository: FNV-1a of the canonical
+    // path, after its last folder name for a reader of the cache.
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char c : folder.generic_string()) {
+        hash = (hash ^ c) * 1099511628211ULL;
+    }
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
+    std::string name;
+    for (const char c : folder.filename().string()) {
+        name += std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' ? c : '_';
+    }
+    return cache / "mcp-deployed" / ((name.empty() ? std::string("repo") : name) + "-" + hex);
 }
 
 Result<void, Error> CheckNoSymlinkEscape(const fs::path& root, const fs::path& dir) {

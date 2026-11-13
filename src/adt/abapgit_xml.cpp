@@ -693,6 +693,21 @@ Result<AbapGitRepoConfig, Error> ParseDotAbapGit(std::string_view content) {
     }
     if (const Node* folder = data->Child("STARTING_FOLDER")) {
         config.starting_folder = folder->text;
+        // A folder of the repository: never one above it (an export writes
+        // there, and removes files there).
+        std::string segment;
+        for (const char c : folder->text + "/") {
+            if (c != '/' && c != '\\') {
+                segment += c;
+                continue;
+            }
+            if (segment == "..") {
+                return Result<AbapGitRepoConfig, Error>::Err(MakeError(
+                    operation, "STARTING_FOLDER " + folder->text +
+                                   " leaves the repository ('..' is not allowed)"));
+            }
+            segment.clear();
+        }
     }
     if (const Node* logic = data->Child("FOLDER_LOGIC")) {
         if (logic->text == "PREFIX") {

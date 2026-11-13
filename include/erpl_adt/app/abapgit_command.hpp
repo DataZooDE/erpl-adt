@@ -65,17 +65,24 @@ struct PreparedAbapGitRun {
 [[nodiscard]] Result<PreparedAbapGitRun, Error> PrepareAbapGitRun(AbapGitCommand command,
                                                                  const AbapGitRequest& request);
 
+// Where the CLI keeps the record of what this clone last deployed (see
+// IDeployRecord): FileDeployRecord::DefaultDirectory of the run's scope - the
+// repository's git directory, or the user's cache outside a git work tree.
+[[nodiscard]] std::filesystem::path DeployRecordDirectory(const PreparedAbapGitRun& run);
+
 // Runs the prepared command: removes stale helper classes of the logon user
 // (older than two hours), then runs the workflow with one temporary helper
 // class. `classrun_session` is a second, independent session (see
 // workflow/classrun_helper.hpp). `system` identifies the SAP system
 // ("host:port/client") for the record of what this clone last deployed
-// there (see IDeployRecord). Export writes .abapgit.xml for a new
-// repository.
+// there (see IDeployRecord), kept in `record_directory` (the CLI passes
+// DeployRecordDirectory(run); the MCP server a directory inside its root or
+// its own cache). Export writes .abapgit.xml for a new repository.
 [[nodiscard]] AbapGitRunReport RunAbapGit(const PreparedAbapGitRun& run, IAdtSession& session,
                                           IAdtSession& classrun_session,
                                           const ClassrunHelperOptions& helper,
-                                          const std::string& system);
+                                          const std::string& system,
+                                          const std::filesystem::path& record_directory);
 
 // The exit code of the command: status (= deploy --dry-run) reports
 // refusals without failing unless --strict (AbapGitRunReport::StatusExitCode);
