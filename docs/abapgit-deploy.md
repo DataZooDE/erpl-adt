@@ -241,7 +241,9 @@ problems in the code being deployed.
   does not change.
 * abapGit's MIXED folder logic is not supported (PREFIX and FULL are).
 * A screen whose flow logic SAP rejects (e.g. a `FIELD` that is not on the
-  screen) is still saved: `RPY_DYNPRO_INSERT` saves before it generates, as
-  SE51 does. The deploy fails with SAP's message (exit 5), and because dynpros
-  record no last changer, the next deploy of the fixed file is refused as
-  drift until the failed attempt is committed (or with `--force`).
+  screen) is saved by `RPY_DYNPRO_INSERT` before it is generated, as in SE51.
+  The deploy therefore reads the screen first (`RPY_DYNPRO_READ`) and, when
+  SAP cannot generate the new version, writes the previous one back — or
+  deletes the screen again if it did not exist. The deploy fails with SAP's
+  message (exit 5) plus "Screen NNNN was restored to its previous version";
+  the system is as before, and the fixed file deploys without `--force`.

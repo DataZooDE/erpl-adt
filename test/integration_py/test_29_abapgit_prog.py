@@ -350,11 +350,15 @@ ENDCLASS.
         for name in exported:
             assert (tmp_path / "src" / name).read_bytes() == (SRC / name).read_bytes(), name
 
-    def test_broken_flow_logic_fails_with_sap_error(self, cli, adt, tmp_path):
-        # RPY_DYNPRO_INSERT generates the screen: a field that is not on the
-        # screen is rejected when it is saved. (An unknown MODULE is not: SAP
-        # activates such a screen and only the runtime / extended check sees it.)
-        xml = _git_copy(self.STEM, tmp_path)
+    def test_broken_flow_logic_is_rolled_back(self, cli, adt, tmp_path):
+        # RPY_DYNPRO_INSERT saves the screen before it generates it: a field
+        # that is not on the screen is only rejected then. The deploy reads
+        # the previous version first and writes it back, so the system keeps
+        # the screen it had - and the fixed file deploys without --force.
+        # (An unknown MODULE is not rejected: SAP activates such a screen and
+        # only the runtime / extended check sees it.)
+        cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE, "--force")
+        xml = _git_copy(self.STEM, tmp_path)  # the system holds the committed version
         flow = tmp_path / f"{self.STEM}.prog.screen_0100.abap"
         flow.write_text(flow.read_text().replace(
             "  MODULE status_0100.\n", "  MODULE status_0100.\n  FIELD gv_unknown MODULE check_so_id.\n"))
@@ -366,20 +370,40 @@ ENDCLASS.
         message = _entry(json.loads(result.stdout), "PROG", self.PROG)["message"]
         assert 'Input/output field "GV_UNKNOWN" not defined' in message
         assert "Screen 0100" in message
+        assert "restored to its previous version" in message
         assert adt.inactive(self.PROG) == []
-        # RPY_DYNPRO_INSERT saves the screen before it generates it, so the
-        # rejected flow logic is in the system (saved, not generated) - as
-        # after a failed save in SE51. A plain redeploy of the fixed file is
-        # therefore refused as drift; once the attempt is committed, the git
-        # history knows that version and the fix goes through.
-        refused = cli.run("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
-        assert refused.returncode == 6, refused.stdout + refused.stderr
-        _commit(tmp_path, "broken attempt")
-        shutil.copy(SRC / flow.name, flow)
-        fixed = cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE)
-        entry = _entry(fixed, "PROG", self.PROG)
-        assert entry["action"] == "updated"
-        assert entry["parts"] == ["screen 0100"]
+        exported = tmp_path / "export"
+        cli.run_ok("abapgit", "export", str(exported), "--object", f"PROG:{self.PROG}",
+                   "--package", PACKAGE)
+        for name in (flow.name, xml.name):
+            assert (exported / "src" / name).read_bytes() == (SRC / name).read_bytes(), name
+        fixed = cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE)
+        assert _entry(fixed, "PROG", self.PROG)["action"] == "unchanged"
+
+    def test_new_screen_that_cannot_be_generated_is_removed_again(self, cli, adt, tmp_path):
+        cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE, "--force")
+        xml = _git_copy(self.STEM, tmp_path)  # the system holds the committed version
+        content = xml.read_text(encoding="utf-8")
+        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>\n"
+                              "      <SCREEN>0300</SCREEN>")
+        end = content.index("    </item>\n", start) + len("    </item>\n")
+        screen = content[start:end].replace("<SCREEN>0300</SCREEN>", "<SCREEN>0400</SCREEN>")
+        xml.write_text(content[:end] + "   " + screen.lstrip() + content[end:], encoding="utf-8")
+        (tmp_path / f"{self.STEM}.prog.screen_0400.abap").write_text(
+            "PROCESS BEFORE OUTPUT.\n  FIELD gv_unknown MODULE check_so_id.\n"
+            "PROCESS AFTER INPUT.\n")
+
+        result = cli.run("abapgit", "deploy", str(xml), "--package", PACKAGE)
+
+        assert result.returncode == 5, result.stdout + result.stderr
+        message = _entry(json.loads(result.stdout), "PROG", self.PROG)["message"]
+        assert "removed again" in message
+        exported = tmp_path / "export"
+        cli.run_ok("abapgit", "export", str(exported), "--object", f"PROG:{self.PROG}",
+                   "--package", PACKAGE)
+        assert not (exported / "src" / f"{self.STEM}.prog.screen_0400.abap").exists()
+        status = cli.run_ok("abapgit", "status", str(self.XML), "--package", PACKAGE)
+        assert _entry(status, "PROG", self.PROG)["action"] == "unchanged"
 
     def test_broken_source_fails_activation_with_sap_error(self, cli, adt, tmp_path):
         xml = _copy(self.STEM, tmp_path)

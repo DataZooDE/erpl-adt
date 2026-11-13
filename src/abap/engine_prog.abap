@@ -124,11 +124,18 @@
       RETURNING VALUE(ok)      TYPE abap_bool.
     "! abapGit DESERIALIZE_DYNPROS (without native dynpros): RPY_DYNPRO_INSERT
     "! with abapGit's force-off rules. Returns abap_false (after emitting) on failure.
+    "! Screens SAP rejects are rolled back: RPY_DYNPRO_INSERT saves before it
+    "! generates, so on failure the previous version (read before the
+    "! insert) is written back, or a screen that did not exist is deleted.
     METHODS prog_write_dynpros
       IMPORTING program        TYPE syrepid
                 dynpros        TYPE ty_prog_dynpros
                 flows          TYPE ty_prog_flows
       RETURNING VALUE(ok)      TYPE abap_bool.
+    "! RPY_DYNPRO_INSERT with abapGit's force-off rules; returns sy-subrc.
+    METHODS prog_insert_dynpro
+      IMPORTING dynpro        TYPE ty_prog_dynpro
+      RETURNING VALUE(subrc)  TYPE sysubrc.
     "! abapGit SERIALIZE_CUA.
     METHODS prog_read_cua
       IMPORTING program        TYPE syrepid
@@ -624,9 +631,8 @@
 
 
   METHOD prog_write_dynpros.
-    " '/' tells RPY_DYNPRO_INSERT to switch a flag off instead of deriving it.
-    CONSTANTS force_off TYPE c LENGTH 1 VALUE '/'.
     DATA dynpro TYPE ty_prog_dynpro.
+    DATA previous TYPE ty_prog_dynpro.
 
     LOOP AT dynpros INTO dynpro.
       dynpro-header-program = program.
@@ -635,56 +641,101 @@
         dynpro-flow_logic = VALUE #( FOR line IN prog_text_to_lines( <flow>-source ) ( line = line ) ).
       ENDIF.
 
-      LOOP AT dynpro-fields ASSIGNING FIELD-SYMBOL(<field>).
-        " DDIC field with a parameter ID: the import would switch SET/GET on.
-        IF <field>-param_id IS NOT INITIAL AND <field>-from_dict = abap_true.
-          IF <field>-set_param IS INITIAL.
-            <field>-set_param = force_off.
-          ENDIF.
-          IF <field>-get_param IS INITIAL.
-            <field>-get_param = force_off.
-          ENDIF.
-        ENDIF.
-        " Otherwise 'F' would be taken over and overlap other fields.
-        IF <field>-type = 'CHECK' AND <field>-from_dict = abap_true
-            AND <field>-text IS INITIAL AND <field>-modific IS INITIAL.
-          <field>-modific = 'X'.
-        ENDIF.
-        " abapGit #2747.
-        IF <field>-foreignkey IS INITIAL.
-          <field>-foreignkey = force_off.
-        ENDIF.
-      ENDLOOP.
-
-      CALL FUNCTION 'RPY_DYNPRO_INSERT'
+      " The version to go back to if SAP rejects the new one.
+      CLEAR previous.
+      CALL FUNCTION 'RPY_DYNPRO_READ'
         EXPORTING
-          header                 = dynpro-header
-          suppress_exist_checks  = abap_true
-          suppress_generate      = dynpro-header-no_execute
+          progname             = program
+          dynnr                = dynpro-header-screen
+        IMPORTING
+          header               = previous-header
         TABLES
-          containers             = dynpro-containers
-          fields_to_containers   = dynpro-fields
-          flow_logic             = dynpro-flow_logic
+          containers           = previous-containers
+          fields_to_containers = previous-fields
+          flow_logic           = previous-flow_logic
         EXCEPTIONS
-          cancelled              = 1
-          already_exists         = 2
-          program_not_exists     = 3
-          not_executed           = 4
-          missing_required_field = 5
-          illegal_field_value    = 6
-          field_not_allowed      = 7
-          not_generated          = 8
-          illegal_field_position = 9
-          OTHERS                 = 10.
-      IF sy-subrc <> 0 AND sy-subrc <> 2.
-        DATA(subrc) = sy-subrc.
+          OTHERS               = 1.
+      DATA(existed) = xsdbool( sy-subrc = 0 ).
+
+      DATA(subrc) = prog_insert_dynpro( dynpro ).
+      IF subrc <> 0 AND subrc <> 2.
+        " Snapshot SAP's reason before the rollback overwrites sy-msg*.
         emit_symsg( ).
+        DATA(rolled_back) = abap_false.
+        IF existed = abap_true.
+          rolled_back = xsdbool( prog_insert_dynpro( previous ) = 0 ).
+        ELSE.
+          CALL FUNCTION 'RS_SCRP_DELETE'
+            EXPORTING
+              dynnr      = dynpro-header-screen
+              progname   = program
+              with_popup = abap_false
+            EXCEPTIONS
+              OTHERS     = 1.
+          rolled_back = xsdbool( sy-subrc = 0 ).
+        ENDIF.
         emit( kind = 'ERR' text = |Screen { dynpro-header-screen } of { program } could not be saved (RPY_DYNPRO_INSERT rc { subrc }).| ).
+        IF rolled_back = abap_true.
+          emit( kind = 'ERR' text = COND #( WHEN existed = abap_true
+                                            THEN |Screen { dynpro-header-screen } was restored to its previous version.|
+                                            ELSE |Screen { dynpro-header-screen } was removed again (it did not exist before).| ) ).
+        ELSE.
+          emit( kind = 'ERR' text = |Screen { dynpro-header-screen } of { program } could not be rolled back; it holds the rejected version.| ).
+        ENDIF.
         emit_rc( subrc ).
         RETURN.
       ENDIF.
     ENDLOOP.
     ok = abap_true.
+  ENDMETHOD.
+
+
+  METHOD prog_insert_dynpro.
+    " '/' tells RPY_DYNPRO_INSERT to switch a flag off instead of deriving it.
+    CONSTANTS force_off TYPE c LENGTH 1 VALUE '/'.
+    DATA(fixed) = dynpro.
+    LOOP AT fixed-fields ASSIGNING FIELD-SYMBOL(<field>).
+      " DDIC field with a parameter ID: the import would switch SET/GET on.
+      IF <field>-param_id IS NOT INITIAL AND <field>-from_dict = abap_true.
+        IF <field>-set_param IS INITIAL.
+          <field>-set_param = force_off.
+        ENDIF.
+        IF <field>-get_param IS INITIAL.
+          <field>-get_param = force_off.
+        ENDIF.
+      ENDIF.
+      " Otherwise 'F' would be taken over and overlap other fields.
+      IF <field>-type = 'CHECK' AND <field>-from_dict = abap_true
+          AND <field>-text IS INITIAL AND <field>-modific IS INITIAL.
+        <field>-modific = 'X'.
+      ENDIF.
+      " abapGit #2747.
+      IF <field>-foreignkey IS INITIAL.
+        <field>-foreignkey = force_off.
+      ENDIF.
+    ENDLOOP.
+
+    CALL FUNCTION 'RPY_DYNPRO_INSERT'
+      EXPORTING
+        header                 = fixed-header
+        suppress_exist_checks  = abap_true
+        suppress_generate      = fixed-header-no_execute
+      TABLES
+        containers             = fixed-containers
+        fields_to_containers   = fixed-fields
+        flow_logic             = fixed-flow_logic
+      EXCEPTIONS
+        cancelled              = 1
+        already_exists         = 2
+        program_not_exists     = 3
+        not_executed           = 4
+        missing_required_field = 5
+        illegal_field_value    = 6
+        field_not_allowed      = 7
+        not_generated          = 8
+        illegal_field_position = 9
+        OTHERS                 = 10.
+    subrc = sy-subrc.
   ENDMETHOD.
 
 
