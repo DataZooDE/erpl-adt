@@ -204,8 +204,12 @@ A deploy **manages exactly the languages its files name**: a translation or
 documentation language that exists only in the system (e.g. added in SE63)
 is neither compared nor written nor removed; abapGit leaves it alone too.
 Transactions are the exception: their update is delete + insert, which drops
-the short-text translations, so a translation only in the system counts as
-drift there (refused unless `--force`).
+every short-text translation the system holds (no workbench API writes them
+back). Such an update is refused with its own message ("would drop its
+translations in the system (I18N_TPOOL (D))", exit 6); `--force` drops them
+and notes it. An exported transaction file carries them (as abapGit's does)
+and deploys unchanged; translations the system does not hold are refused
+(exit 8).
 An object whose files carry no translations therefore deploys exactly as
 before. `export` writes every language the system has, as abapGit does.
 Only what changed is written and reported (`DD07_TEXTS`, `I18N_TPOOL`,
@@ -386,7 +390,12 @@ problems in the code being deployed.
   persistence of the new transaction editor, which SAP enables only in SAP's
   own development systems) does the same, without lock or transport. Maintain
   the check in SE93. The same holds for report transactions with a variant
-  (`CINFO` x'10') and translated short texts.
+  (`CINFO` x'10') and translated short texts. Because an update is delete +
+  insert, an existing transaction whose system version has such a check, a
+  variant flag or an OO type (x'08') is refused as well (exit 8, also with
+  `--force`): the re-insert would silently drop it. On A4H no such
+  transaction can be set up without direct table writes, so this refusal is
+  unit-tested only.
 * The drift check needs `git` on the PATH to consult file history (the last
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.
