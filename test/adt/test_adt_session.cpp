@@ -1104,7 +1104,7 @@ TEST_CASE("AdtSession: leaving stateful mode closes the server session",
 
     svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
         std::lock_guard<std::mutex> lock(mu);
-        if (req.has_param("sap-sessioncmd") && req.get_param_value("sap-sessioncmd") == "close") {
+        if (req.path == "/sap/public/bc/icf/logoff") {
             close_cookies.push_back(req.get_header_value("Cookie"));
             close_session_types.push_back(req.get_header_value("X-sap-adt-sessiontype"));
             closed = true;
@@ -1142,7 +1142,7 @@ TEST_CASE("AdtSession: no close request when no stateful session was opened",
     httplib::Server svr;
     std::atomic<int> closes{0};
     svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
-        if (req.has_param("sap-sessioncmd")) {
+        if (req.path == "/sap/public/bc/icf/logoff") {
             ++closes;
         }
         res.set_content("<ok/>", "application/xml");
@@ -1184,8 +1184,7 @@ struct LogoffServer {
                                                 httplib::Response& res) {
             std::lock_guard<std::mutex> lock(mu);
             ++requests;
-            if (req.has_param("sap-sessioncmd") &&
-                req.get_param_value("sap-sessioncmd") == "logoff") {
+            if (req.path == "/sap/public/bc/icf/logoff") {
                 logoff_cookies.push_back(req.get_header_value("Cookie"));
             } else if (set_logon_cookie) {
                 res.set_header("Set-Cookie", "SAP_SESSIONID_A4H_001=LOGON-1; path=/");
