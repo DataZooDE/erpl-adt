@@ -175,6 +175,10 @@ struct AdtSession::Impl {
     bool stateful_ = false;
     std::string sap_context_id_;
     std::map<std::string, std::string> cookies_;
+    // Set when the session was saved to or loaded from a --session-file:
+    // another erpl-adt process continues this logon, so it must not be
+    // logged off when this object goes away.
+    bool keep_logon_ = false;
     // Kept for error messages: a transport failure that does not name the
     // server it tried is the hardest kind to diagnose.
     std::string base_url_;
@@ -528,7 +532,45 @@ AdtSession::AdtSession(const std::string& host,
     : impl_(std::make_unique<Impl>(host, port, use_https, user, password,
                                    sap_client.Value(), options)) {}
 
-AdtSession::~AdtSession() = default;
+namespace {
+
+// SAP's logon (security) session cookie: SAP_SESSIONID_<SID>_<CLIENT>.
+bool HoldsLogonSession(const std::map<std::string, std::string>& cookies) {
+    for (const auto& [name, _] : cookies) {
+        if (name.rfind("SAP_SESSIONID_", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// Logs off the logon session this object opened. SAP otherwise keeps every
+// logon until rdisp/plugin_auto_logout (30 min by default), and a CI job or
+// test suite running a few hundred commands as one user exhausts the
+// per-user logon limit: every request is then answered "429 Too Many
+// Logons" (observed on A4H). sap-sessioncmd=logoff is the ICF parameter
+// that ends the logon (and any stateful context with it); the URL is the
+// cheapest ADT resource. Best effort: a failure only leaves the logon to
+// time out, as before.
+AdtSession::~AdtSession() {
+    if (!impl_ || impl_->keep_logon_ || !HoldsLogonSession(impl_->cookies_)) {
+        return;
+    }
+    try {
+        auto ended = impl_->DoGet(
+            "/sap/bc/adt/repository/informationsystem/objecttypes"
+            "?maxItemCount=1&name=PROG&data=usedByProvider&sap-sessioncmd=logoff",
+            {});
+        if (ended.IsErr()) {
+            LogDebug("http", "Logging off failed (the logon will time out on the server): " +
+                                 ended.Error().message);
+        }
+    } catch (...) {
+        // A destructor must not throw; the logon times out on the server.
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Get — with 403 CSRF retry
@@ -779,6 +821,7 @@ Result<void, Error> AdtSession::SaveSession(const std::string& path) const {
                              "Failed to open file for writing"));
     }
     ofs << j.dump(2);
+    impl_->keep_logon_ = true;
 #ifndef _WIN32
     // Set file permissions to owner read/write only (chmod 600).
     chmod(path.c_str(), S_IRUSR | S_IWUSR);
@@ -819,6 +862,7 @@ Result<void, Error> AdtSession::LoadSession(const std::string& path) {
         impl_->cookies_ =
             j["cookies"].get<std::map<std::string, std::string>>();
     }
+    impl_->keep_logon_ = true;
 
     return Result<void, Error>::Ok();
 }
