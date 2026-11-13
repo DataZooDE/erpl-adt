@@ -117,11 +117,20 @@ void CommandRouter::SetStrictFlags(const std::string& group) {
     strict_flag_groups_.insert(group);
 }
 
+void CommandRouter::SetStrictFlags(const std::string& group, const std::string& action) {
+    strict_flag_commands_.insert(group + ":" + action);
+}
+
+bool CommandRouter::IsStrictFlags(const std::string& group, const std::string& action) const {
+    return strict_flag_groups_.count(group) > 0 ||
+           strict_flag_commands_.count(group + ":" + action) > 0;
+}
+
 const std::vector<std::string>& CommandRouter::GlobalFlagNames() {
     static const std::vector<std::string> names = {
         "host", "port", "user", "password", "password-env", "client", "language",
         "https", "insecure", "json", "timeout", "session-file", "color", "no-color",
-        "no-telemetry", "config", "help"};
+        "no-telemetry", "config", "help", "quiet", "no-banner"};
     return names;
 }
 
@@ -259,40 +268,40 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
         return 1;
     }
 
-    if (strict_flag_groups_.count(args.group) > 0) {
-        std::vector<std::string> known = GlobalFlagNames();
-        if (it->second.help.has_value()) {
-            for (const auto& f : it->second.help->flags) {
-                known.push_back(f.name);
+    std::vector<std::string> known = GlobalFlagNames();
+    if (it->second.help.has_value()) {
+        for (const auto& f : it->second.help->flags) {
+            known.push_back(f.name);
+        }
+    }
+    const bool strict = IsStrictFlags(args.group, args.action);
+    for (const auto& [flag, value] : args.flags) {
+        if (std::find(known.begin(), known.end(), flag) != known.end()) {
+            continue;
+        }
+        std::string hint;
+        size_t best_distance = 3;  // suggest only close matches
+        for (const auto& k : known) {
+            const size_t d = EditDistance(flag, k);
+            if (d < best_distance) {
+                best_distance = d;
+                hint = " (did you mean --" + k + "?)";
             }
         }
-        for (const auto& [flag, value] : args.flags) {
-            if (std::find(known.begin(), known.end(), flag) != known.end()) {
-                continue;
-            }
-            std::string message = "Unknown flag --" + flag + " for '" + args.group + " " +
-                                   args.action + "'";
-            std::string best;
-            size_t best_distance = 3;  // suggest only close matches
-            for (const auto& k : known) {
-                const size_t d = EditDistance(flag, k);
-                if (d < best_distance) {
-                    best_distance = d;
-                    best = k;
-                }
-            }
-            if (!best.empty()) {
-                message += " (did you mean --" + best + "?)";
-            }
-            message += ". Nothing was done; see 'erpl-adt " + args.group + " " + args.action +
-                       " --help'.";
-            if (json_mode) {
-                PrintJsonError(message, std::cerr);
-            } else {
-                std::cerr << "Error: " << message << "\n";
-            }
-            return 99;
+        const std::string command = "'" + args.group + " " + args.action + "'";
+        if (!strict) {
+            std::cerr << "warning: unknown flag --" << flag << " for " << command << hint << "\n";
+            continue;
         }
+        const std::string message = "Unknown flag --" + flag + " for " + command + hint +
+                                    ". Nothing was done; see 'erpl-adt " + args.group + " " +
+                                    args.action + " --help'.";
+        if (json_mode) {
+            PrintJsonError(message, std::cerr);
+        } else {
+            std::cerr << "Error: " << message << "\n";
+        }
+        return 99;
     }
 
     return it->second.handler(args);

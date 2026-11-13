@@ -8848,6 +8848,8 @@ void RegisterAllCommands(CommandRouter& router) {
             {"max-depth", "<n>", "Max package-tree recursion depth (default: 50)", false},
             {"resume", "", "Continue from the checkpoint left by an interrupted sync of the same "
                            "scope, instead of starting over", false},
+            {"resolve-ddic-types", "", "Enrich TABL fields with data-element descriptions/types (slower)", false},
+            {"include-raw-source", "", "Also stash each object's full raw source/XML (slower, larger DB)", false},
         };
         help.examples = {
             "erpl-adt catalog sync catalog.duckdb --sid A4H --package ZTEST",
@@ -8885,6 +8887,7 @@ void RegisterAllCommands(CommandRouter& router) {
         help.flags = {
             {"port", "<n>", "Port to listen on (default: 8383)", false},
             {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
+            {"catalog-db", "<path.duckdb>", "DuckDB file, instead of the positional argument", false},
             {"cors-origin", "<list>", "Comma-separated extra origins allowed to call the API", false},
             {"allowed-hosts", "<list>", "Host headers this server answers to beyond loopback and IP literals; a browser using any other is refused", false},
             {"config", "<path>", "YAML file whose http: block supplies these settings", false},
@@ -9265,6 +9268,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-area 0D_NW_DEMO",
@@ -9311,6 +9315,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-query 0D_FC_NW_C01_Q0001",
@@ -9354,6 +9359,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-cube 0D_NW_C01",
@@ -9747,11 +9753,16 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw qprops
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw qprops";
+        help.usage = "erpl-adt bw qprops <infoprovider> [--type=<tlogo>] [--version=<a|m>]";
+        help.args_description = "<infoprovider>    InfoProvider whose query properties to read";
         help.long_description = "Read BW query-properties rule service (rules/qprops).";
+        help.flags = {
+            {"type", "<tlogo>", "InfoProvider type (e.g. ADSO, HCPR)", false},
+            {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
+        };
         help.examples = {
-            "erpl-adt bw qprops",
-            "erpl-adt --json bw qprops",
+            "erpl-adt bw qprops 0D_NW_C01",
+            "erpl-adt --json bw qprops 0D_NW_C01 --type=CUBE",
         };
         router.Register("bw", "qprops", "Read BW query properties rules",
                          HandleBwQueryProperties, std::move(help));
@@ -9837,6 +9848,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw dbinfo";
         help.long_description = "Show HANA database connection info (host, port, schema).";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw dbinfo",
             "erpl-adt --json bw dbinfo",
@@ -9850,6 +9864,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw sysinfo";
         help.long_description = "Show BW system properties.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw sysinfo",
             "erpl-adt --json bw sysinfo",
@@ -9863,6 +9880,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw changeability";
         help.long_description = "Show per-TLOGO changeability and transport settings.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw changeability",
             "erpl-adt --json bw changeability",
@@ -9876,6 +9896,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw adturi";
         help.long_description = "Show BW-to-ADT URI mappings.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw adturi",
             "erpl-adt --json bw adturi",
@@ -9905,6 +9928,28 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("bw", "job", "BW background job operations",
                          HandleBwJob, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // Unknown flags: every command warns and runs, except these, which refuse
+    // (exit 99, nothing done). They delete, release or execute something, or
+    // have a safety switch whose misspelling (--simulat, --no-wirte, --dryrun)
+    // would silently do the real thing. The abapgit group is strict as a
+    // whole (SetStrictFlags("abapgit") above).
+    // -----------------------------------------------------------------------
+    for (const auto& [group, action] : std::vector<std::pair<const char*, const char*>>{
+             {"object", "delete"},      // deletes a repository object
+             {"transport", "release"},  // releases a request (irreversible)
+             {"bw", "delete"},          // deletes a BW object
+             {"screen", "delete"},      // deletes a dynpro
+             {"bw", "activate"},        // --simulate / --validate are safety switches
+             {"bw", "transport"},       // write: --simulate is the dry run
+             {"bw", "locks"},           // delete removes another user's lock
+             {"bw", "job"},             // cancel / restart / cleanup
+             {"bw", "favorites"},       // clear
+             {"source", "edit"},        // --no-write is the dry run
+         }) {
+        router.SetStrictFlags(group, action);
     }
 }
 

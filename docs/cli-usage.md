@@ -39,6 +39,30 @@ A saved `.adt.creds` in the working directory still wins over nothing at all, bu
 loses to the environment — so an exported `ERPL_ADT_HOST` is never silently
 ignored in favour of a stale cache.
 
+### Unknown flags
+
+Every command checks its flags against the flags in its `--help` plus the
+global flags above. A misspelled flag is reported on stderr, with a suggestion
+when a known flag is close, and the command still runs:
+
+```bash
+$ erpl-adt source write ZCL_MY_CLASS --file src.abap --activte
+warning: unknown flag --activte for 'source write' (did you mean --activate?)
+```
+
+Commands that delete, release or execute something, or whose safety switch a
+typo would turn off, refuse instead — exit code 99, nothing is done:
+
+```bash
+$ erpl-adt object delete /sap/bc/adt/oo/classes/zcl_old --transprt A4HK900042
+Error: Unknown flag --transprt for 'object delete' (did you mean --transport?). Nothing was done; see 'erpl-adt object delete --help'.
+```
+
+Strict commands: every `abapgit` command, `object delete`, `transport release`,
+`screen delete`, `source edit` (`--no-write`), `bw delete`, `bw activate`
+(`--simulate`, `--validate`), `bw transport` (`--simulate`), `bw locks`,
+`bw job` and `bw favorites`.
+
 ## Command Groups
 
 ### search -- Search for ABAP objects

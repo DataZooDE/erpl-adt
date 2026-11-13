@@ -102,11 +102,15 @@ public:
     // Example: "erpl-adt search ZCL_*" → dispatches to search:query with positional[0]="ZCL_*"
     void SetDefaultAction(const std::string& group, const std::string& action);
 
-    // Reject flags a command does not know (exit 99, with a "did you mean"
-    // hint) for every command of `group`. Known flags: the command's
-    // CommandHelp::flags plus the global connection/output flags. For groups
-    // with destructive commands, where a typo like --dryrun must not run.
-    void SetStrictFlags(const std::string& group);
+    // Unknown flags. Every command checks its flags against its
+    // CommandHelp::flags plus the global connection/output flags. By default
+    // an unknown flag prints "warning: unknown flag --x for 'g a' (did you
+    // mean --y?)" to stderr and the command runs. A strict command refuses it
+    // instead (exit 99, nothing done): for commands that change or delete
+    // things, where a typo like --dryrun or --simulat must not run.
+    void SetStrictFlags(const std::string& group);  // every command of the group
+    void SetStrictFlags(const std::string& group, const std::string& action);
+    [[nodiscard]] bool IsStrictFlags(const std::string& group, const std::string& action) const;
 
     // Global flags every command accepts (host, port, user, json, ...).
     static const std::vector<std::string>& GlobalFlagNames();
@@ -157,6 +161,7 @@ private:
     std::map<std::string, std::vector<std::string>> group_examples_;
     std::map<std::string, std::string> default_actions_;
     std::set<std::string> strict_flag_groups_;
+    std::set<std::string> strict_flag_commands_;  // "group:action"
 };
 
 } // namespace erpl_adt
