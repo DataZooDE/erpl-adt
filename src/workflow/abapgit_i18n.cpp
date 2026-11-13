@@ -36,7 +36,9 @@ std::string EntryLanguage(const std::string& section, const std::string& entry_n
         return entry_name == "LANGU" ? Inner(entry) : "";
     }
     if (section == "I18N_TPOOL") {
-        return FirstText(entry, "LANGUAGE");
+        // PROG: LANGUAGE + TEXTPOOL; TRAN: SPRSL + TTEXT (TSTCT rows).
+        const auto language = FirstText(entry, "LANGUAGE");
+        return language.empty() ? FirstText(entry, "SPRSL") : language;
     }
     if (IsLongtextSection(section)) {
         return FirstText(FirstText(entry, "DOKIL"), "LANGU");

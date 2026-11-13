@@ -1076,9 +1076,16 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         }
         // Translations and documentation languages the files do not carry
         // are not compared (and not written): see abapgit_i18n.hpp.
-        const ObjectState current = Handler(object.key.type)->KeepsUnmanagedTranslations()
-                                        ? ScopeTranslations(desired[i], state.Value())
-                                        : state.Value();
+        const ObjectState current = ScopeTranslations(desired[i], state.Value());
+        // A type whose update replaces the whole object (TRAN: delete +
+        // insert) drops every translation the system holds - also the ones
+        // the files carry, which it cannot write. That is its own refusal
+        // (pulling them into git does not help), --force drops them.
+        std::vector<std::string> dropped;
+        if (!Handler(object.key.type)->KeepsUnmanagedTranslations() &&
+            !(current.exists && current.files == desired[i] && current.pending.empty())) {
+            dropped = UnmanagedI18n(ObjectFileSet{}, state.Value());
+        }
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
@@ -1096,6 +1103,21 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         if (valid.IsErr()) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Failed, valid.Error()));
+            broken.push_back(object.key);
+            continue;
+        }
+        if (!dropped.empty() && !options.force) {
+            std::string list;
+            for (const auto& d : dropped) {
+                list += (list.empty() ? "" : "; ") + d;
+            }
+            report.objects.push_back(FailedOutcome(
+                object.key, object.package, ObjectAction::Refused,
+                MakeError(object.key.type + " " + object.key.name +
+                              ": an update replaces the whole object and would drop its "
+                              "translations in the system (" + list + "), which no workbench "
+                              "API writes back. Nothing was written; --force drops them.",
+                          ErrorCategory::LockConflict)));
             broken.push_back(object.key);
             continue;
         }
@@ -1126,9 +1148,14 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             broken.push_back(object.key);
             continue;
         }
+        std::vector<std::string> drop_notes;
+        for (const auto& d : dropped) {
+            drop_notes.push_back("drops the translation " + d + " (--force)");
+        }
         if (options.dry_run) {
             auto outcome = Outcome(object.key, object.package, action);
             outcome.parts = plan.Value().parts;
+            outcome.notes = drop_notes;
             if (!IsLocalPackage(object.package) && options.transport.empty()) {
                 outcome.notes.push_back("package " + object.package +
                                         " is transportable: the deploy needs --transport "
@@ -1146,6 +1173,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         // Reported as planned; RunPlans turns it into failed / skipped.
         auto outcome = Outcome(object.key, object.package, action);
         outcome.parts = plan.Value().parts;
+        outcome.notes = drop_notes;
         report.objects.push_back(std::move(outcome));
         Work work;
         work.outcome = report.objects.size() - 1;

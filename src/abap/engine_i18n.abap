@@ -653,12 +653,15 @@
     " workflow refuses such files before anything is written, this is the
     " second line). DOCU_UPDATE keys on HEAD-TDID / TDNAME / TDSPRAS.
     DATA no_masterlang TYPE dokil-masterlang.
+    DATA written TYPE string.
+    " Every entry is checked before the first is written: no partial write.
+    LOOP AT longtexts ASSIGNING FIELD-SYMBOL(<checked>)
+         WHERE dokil-typ <> 'E' AND dokil-typ <> 'T'.
+      emit( kind = 'ERR' text = |Documentation { id } { object } ({ <checked>-dokil-langu }) has type { <checked>-dokil-typ }; DOCU_UPDATE writes only E and T. Nothing was written.| ).
+      emit_rc( 4 ).
+      RETURN.
+    ENDLOOP.
     LOOP AT longtexts ASSIGNING FIELD-SYMBOL(<longtext>).
-      IF <longtext>-dokil-typ <> 'E' AND <longtext>-dokil-typ <> 'T'.
-        emit( kind = 'ERR' text = |Documentation { id } { object } has type { <longtext>-dokil-typ }; DOCU_UPDATE writes only E and T.| ).
-        emit_rc( 4 ).
-        RETURN.
-      ENDIF.
       <longtext>-dokil-id     = id.
       <longtext>-dokil-object = object.
       <longtext>-head-tdobject = 'DOKU'.
@@ -682,10 +685,13 @@
           AND typ = @<longtext>-dokil-typ
         INTO @DATA(saved).
       IF sy-subrc <> 0 OR saved <> abap_true.
-        emit( kind = 'ERR' text = |The { <longtext>-dokil-langu } documentation { id } { object } was not saved (DOCU_UPDATE).| ).
+        emit( kind = 'ERR' text = |The { <longtext>-dokil-langu } documentation { id } { object } was not saved (DOCU_UPDATE)| &&
+                                  COND #( WHEN written IS INITIAL THEN `; nothing else was written.`
+                                          ELSE |; already written: { written }.| ) ).
         emit_rc( 4 ).
         RETURN.
       ENDIF.
+      written = written && COND #( WHEN written IS INITIAL THEN `` ELSE `, ` ) && <longtext>-dokil-langu.
     ENDLOOP.
     emit_rc( 0 ).
   ENDMETHOD.

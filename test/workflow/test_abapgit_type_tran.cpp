@@ -233,3 +233,65 @@ TEST_CASE("TRAN handler: Validate reports unsupported parts without writing",
     CHECK(f.engine.runs.empty());
     CHECK(f.handler->Validate(f.key, f.Files(kVa03Values), ObjectState{}, "E").IsOk());
 }
+
+TEST_CASE("TRAN handler: an existing transaction with parts the insert cannot reproduce is "
+          "refused",
+          "[workflow][abapgit_tran]") {
+    // An update is delete + insert. A version in the system with an
+    // authorization-object check (TSTCA, CINFO x'04'), a variant flag (x'10')
+    // or an OO type (x'08') would come back without it - whatever the files
+    // say, and also with --force.
+    Fixture f;
+    const auto desired = f.Files(f.ReplaceText("Display Sales Order", "Display Sales Order (EPM)"));
+    struct Case {
+        std::string values;
+        std::string expect;
+    };
+    const std::vector<Case> cases = {
+        {std::string(kVa03Values) +
+             "<AUTHORIZATIONS><item><TCODE>ZERPL_VA03</TCODE><OBJCT>S_TCODE</OBJCT>"
+             "<FIELD>TCD</FIELD><VALUE>ZERPL_VA03</VALUE></item></AUTHORIZATIONS>",
+         "AUTHORIZATIONS"},
+        {f.ReplaceText("<DYPNO>0100</DYPNO>", "<DYPNO>0100</DYPNO><CINFO>BA==</CINFO>"),
+         "authorization-object check"},
+        {f.ReplaceText("<DYPNO>0100</DYPNO>", "<DYPNO>0100</DYPNO><CINFO>kA==</CINFO>"),
+         "variant"},
+        {f.ReplaceText("<DYPNO>0100</DYPNO>", "<DYPNO>0100</DYPNO><CINFO>CA==</CINFO>"),
+         "OO transaction"},
+    };
+    for (const auto& c : cases) {
+        ObjectState current;
+        current.exists = true;
+        current.files = f.Files(c.values);
+        auto valid = f.handler->Validate(f.key, desired, current, "E");
+        REQUIRE(valid.IsErr());
+        CHECK(valid.Error().message.find(c.expect) != std::string::npos);
+        CHECK(valid.Error().message.find("in the system") != std::string::npos);
+        CHECK(valid.Error().category == ErrorCategory::CheckError);
+    }
+    // A plain existing transaction is fine.
+    ObjectState plain;
+    plain.exists = true;
+    plain.files = f.Files(kVa03Values);
+    CHECK(f.handler->Validate(f.key, desired, plain, "E").IsOk());
+}
+
+TEST_CASE("TRAN handler: exported translations deploy unchanged; changed ones are refused",
+          "[workflow][abapgit_tran]") {
+    // export writes the system's I18N_TPOOL (as abapGit does). Such a file
+    // must deploy; only translations the system does not hold are refused.
+    Fixture f;
+    const std::string i18n =
+        "<I18N_TPOOL><item><SPRSL>D</SPRSL><TTEXT>Kundenauftrag anzeigen</TTEXT></item>"
+        "</I18N_TPOOL>";
+    ObjectState current;
+    current.exists = true;
+    current.files = f.Files(std::string(kVa03Values) + i18n);
+    CHECK(f.handler->Validate(f.key, f.Files(std::string(kVa03Values) + i18n), current, "E")
+              .IsOk());
+    auto changed = f.handler->Validate(
+        f.key, f.Files(std::string(kVa03Values) + "<I18N_TPOOL><item><SPRSL>D</SPRSL><TTEXT>"
+                                                  "Anders</TTEXT></item></I18N_TPOOL>"),
+        current, "E");
+    CHECK(changed.IsErr());
+}

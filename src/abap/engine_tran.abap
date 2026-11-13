@@ -157,6 +157,21 @@
     SELECT SINGLE * FROM tstc WHERE tcode = @name INTO @old_tstc.
     DATA(existed) = boolc( sy-subrc = 0 ).
     IF existed = abap_true.
+      " Second line behind the workflow's check: what RPY_TRANSACTION_INSERT
+      " cannot write back (authorization-object check TSTCA / CINFO x'04',
+      " variant flag x'10', OO transaction x'08') is never deleted.
+      CONSTANTS c_hex_auth TYPE x VALUE '04'.
+      CONSTANTS c_hex_vari TYPE x VALUE '10'.
+      SELECT COUNT(*) FROM tstca WHERE tcode = @name INTO @DATA(auth_rows).
+      IF auth_rows > 0 OR old_tstc-cinfo O c_hex_auth OR old_tstc-cinfo O c_hex_vari
+         OR old_tstc-cinfo O c_hex_obj.
+        emit( kind = 'ERR' text = |{ name } has an authorization-object check, a variant or an OO type that an update (delete + insert) cannot reproduce; nothing was written - maintain it in SE93.| ).
+        emit( kind = 'KIND' text = `CHECK` ).
+        emit_rc( 8 ).
+        RETURN.
+      ENDIF.
+      SELECT sprsl FROM tstct WHERE tcode = @name AND sprsl <> @language
+        INTO TABLE @DATA(other_languages).
       SELECT SINGLE * FROM tstcc WHERE tcode = @name INTO @old_tstcc.
       SELECT SINGLE * FROM tstct WHERE sprsl = @language AND tcode = @name INTO @old_tstct.
       SELECT SINGLE * FROM tstcp WHERE tcode = @name INTO @old_tstcp.
@@ -194,8 +209,12 @@
         DATA(restored) = tran_insert( name = name language = language devclass = old_devclass
                                       trkorr = trkorr is_tstc = old_tstc is_tstcc = old_tstcc
                                       is_tstct = old_tstct is_tstcp = old_tstcp ).
-        IF restored = 0.
+        IF restored = 0 AND other_languages IS INITIAL.
           emit( kind = 'ERR' text = |{ name } was not updated; its previous version was restored.| ).
+        ELSEIF restored = 0.
+          DATA(lost) = REDUCE string( INIT t = `` FOR l IN other_languages
+                                      NEXT t = t && COND #( WHEN t IS INITIAL THEN `` ELSE `, ` ) && l-sprsl ).
+          emit( kind = 'ERR' text = |{ name } was not updated; its previous version was restored, without its short-text translations ({ lost }): no workbench API writes them.| ).
         ELSE.
           emit_symsg( ).
           emit( kind = 'ERR' text = |{ name } was deleted for the update, and neither the new nor the previous version could be inserted; redeploy it.| ).

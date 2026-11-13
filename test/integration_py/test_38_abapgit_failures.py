@@ -28,18 +28,22 @@ OK = "ZERPL_T4_OK"
 BROKEN = "ZERPL_T4_BROKEN"
 TRAN = "ZERPL_T4_TRAN"        # report transaction -> BROKEN
 OK_TRAN = "ZERPL_T4_OKTRAN"   # report transaction -> OK
+DE_TRAN = "ZERPL_T4_DETRAN"   # report transaction -> OK, short text only in German
+MAIN = "ZERPL_T4_R1"          # report whose data lives in a new include
+TOP = "ZERPL_T4_R1_TOP"       # its include (SUBC I)
+MAIN_TRAN = "ZERPL_T4_R1TRAN"  # report transaction -> MAIN
 
 BOM = "﻿"
 
 
-def _prog_xml(name, title):
+def _prog_xml(name, title, subc="1"):
     return (f'{BOM}<?xml version="1.0" encoding="utf-8"?>\n'
             '<abapGit version="v1.0.0" serializer="LCL_OBJECT_PROG" serializer_version="v1.0.0">\n'
             ' <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n'
             '  <asx:values>\n'
             '   <PROGDIR>\n'
             f'    <NAME>{name}</NAME>\n'
-            '    <SUBC>1</SUBC>\n'
+            f'    <SUBC>{subc}</SUBC>\n'
             '    <RLOAD>E</RLOAD>\n'
             '    <FIXPT>X</FIXPT>\n'
             '    <UCCHECK>X</UCCHECK>\n'
@@ -56,7 +60,7 @@ def _prog_xml(name, title):
             '</abapGit>\n')
 
 
-def _tran_xml(tcode, program, text):
+def _tran_xml(tcode, program, text, lang="E"):
     return (f'{BOM}<?xml version="1.0" encoding="utf-8"?>\n'
             '<abapGit version="v1.0.0" serializer="LCL_OBJECT_TRAN" serializer_version="v1.0.0">\n'
             ' <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n'
@@ -74,7 +78,7 @@ def _tran_xml(tcode, program, text):
             '    <S_PLATIN>X</S_PLATIN>\n'
             '   </TSTCC>\n'
             '   <TSTCT>\n'
-            '    <SPRSL>E</SPRSL>\n'
+            f'    <SPRSL>{lang}</SPRSL>\n'
             f'    <TCODE>{tcode}</TCODE>\n'
             f'    <TTEXT>{text}</TTEXT>\n'
             '   </TSTCT>\n'
@@ -97,6 +101,21 @@ BROKEN_SOURCE = ("REPORT zerpl_t4_broken.\n"
                  "  WRITE / gv_missing.\n")
 
 
+MAIN_SOURCE = ("REPORT zerpl_t4_r1.\n"
+               "\n"
+               "INCLUDE zerpl_t4_r1_top.\n"
+               "\n"
+               "PARAMETERS p_max TYPE i DEFAULT 10.\n"
+               "\n"
+               "START-OF-SELECTION.\n"
+               "  gv_count = p_max.\n"
+               "  WRITE / gv_count.\n")
+TOP_SOURCE = ("*&---------------------------------------------------------------------*\n"
+              "*& Include ZERPL_T4_R1_TOP\n"
+              "*&---------------------------------------------------------------------*\n"
+              "DATA gv_count TYPE i.\n")
+
+
 def _write(path, text):
     path.write_bytes(text.encode("utf-8"))
 
@@ -116,13 +135,13 @@ def _repo(root, objects):
     return repo
 
 
-def _prog(name, title, source):
-    return {f"{name.lower()}.prog.xml": _prog_xml(name, title),
+def _prog(name, title, source, subc="1"):
+    return {f"{name.lower()}.prog.xml": _prog_xml(name, title, subc),
             f"{name.lower()}.prog.abap": source}
 
 
-def _tran(tcode, program, text):
-    return {f"{tcode.lower()}.tran.xml": _tran_xml(tcode, program, text)}
+def _tran(tcode, program, text, lang="E"):
+    return {f"{tcode.lower()}.tran.xml": _tran_xml(tcode, program, text, lang)}
 
 
 def _entry(result, obj_type, name):
@@ -160,7 +179,9 @@ def _tstc_program(tcode):
 def _cleanup(cli, tmp_path_factory):
     """Removes every ZERPL_T4_* object this module may have left."""
     files = {**_prog(OK, "x", OK_SOURCE), **_prog(BROKEN, "x", BROKEN_SOURCE),
-             **_tran(TRAN, BROKEN, "x"), **_tran(OK_TRAN, OK, "x")}
+             **_tran(TRAN, BROKEN, "x"), **_tran(OK_TRAN, OK, "x"),
+             **_prog(MAIN, "x", MAIN_SOURCE), **_prog(TOP, "x", TOP_SOURCE, "I"),
+             **_tran(MAIN_TRAN, MAIN, "x"), **_tran(DE_TRAN, OK, "x")}
     repo = _repo(tmp_path_factory.mktemp("t4_cleanup"), {"all": files})
     cli.run("abapgit", "delete", str(repo), "--package", PACKAGE, "--force")
 
@@ -244,3 +265,58 @@ class TestTransactionRollback:
         assert rows == [["$TMP"]], rows
         status = cli.run_ok("abapgit", "status", str(repo), "--package", PACKAGE)
         assert _entry(status, "TRAN", OK_TRAN)["action"] == "unchanged", status
+
+
+@pytest.mark.abapgit_deploy
+class TestTransactionTranslations:
+    """A transaction whose short text exists in a language the files do not
+    carry: its update (delete + insert) would drop it. That is its own
+    refusal - not drift with an export hint - and an exported file (which
+    carries it, as abapGit's does) deploys unchanged."""
+
+    def test_translation_only_in_the_system_is_not_dropped_silently(self, cli, clean,
+                                                                     tmp_path):
+        # Created from a German repository: TSTCT holds only language D.
+        german = _repo(tmp_path / "de", {
+            OK: _prog(OK, "Valid report", OK_SOURCE),
+            DE_TRAN: _tran(DE_TRAN, OK, "Gueltiger Bericht", lang="D"),
+        })
+        dot = german / ".abapgit.xml"
+        dot.write_bytes(dot.read_bytes().replace(b"<MASTER_LANGUAGE>E<",
+                                                 b"<MASTER_LANGUAGE>D<"))
+        cli.run_ok("abapgit", "deploy", str(german), "--package", PACKAGE)
+        texts = _hana(f"SELECT SPRSL, TTEXT FROM {hana_oracle().table('TSTCT')} "
+                      f"WHERE TCODE = '{DE_TRAN}'")
+        assert texts == [["D", "Gueltiger Bericht"]], texts
+
+        # The English repository's version of it.
+        english = tmp_path / "en" / f"{DE_TRAN.lower()}.tran.xml"
+        english.parent.mkdir()
+        _write(english, _tran_xml(DE_TRAN, OK, "Valid report"))
+        result = cli.run("abapgit", "deploy", str(english), "--package", PACKAGE)
+        assert result.returncode == 6, result.stdout + result.stderr
+        entry = _entry(json.loads(result.stdout), "TRAN", DE_TRAN)
+        assert entry["action"] == "refused", entry
+        assert "would drop its translations" in entry["message"], entry
+        assert "I18N_TPOOL (D)" in entry["message"], entry
+        assert "abapgit export" not in entry["message"], entry
+        assert _hana(f"SELECT SPRSL, TTEXT FROM {hana_oracle().table('TSTCT')} "
+                     f"WHERE TCODE = '{DE_TRAN}'") == texts
+
+        # Exported (English master), the file carries the German text and is
+        # deployable: unchanged.
+        out = tmp_path / "out"
+        cli.run_ok("abapgit", "export", str(out), "--package", PACKAGE,
+                   "--object", f"TRAN:{DE_TRAN}")
+        exported = out / "src" / f"{DE_TRAN.lower()}.tran.xml"
+        assert b"<I18N_TPOOL>" in exported.read_bytes()
+        again = cli.run_ok("abapgit", "deploy", str(out), "--package", PACKAGE)
+        assert _entry(again, "TRAN", DE_TRAN)["action"] == "unchanged", again
+
+        # --force drops it, and says so.
+        forced = cli.run_ok("abapgit", "deploy", str(english), "--package", PACKAGE, "--force")
+        entry = _entry(forced, "TRAN", DE_TRAN)
+        assert entry["action"] == "updated", entry
+        assert any("I18N_TPOOL (D)" in n for n in entry.get("notes", [])), entry
+        assert _hana(f"SELECT SPRSL, TTEXT FROM {hana_oracle().table('TSTCT')} "
+                     f"WHERE TCODE = '{DE_TRAN}'") == [["E", "Valid report"]]

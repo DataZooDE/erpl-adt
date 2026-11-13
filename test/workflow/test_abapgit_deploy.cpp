@@ -1448,6 +1448,48 @@ TEST_CASE("abapGit deploy: a type whose update drops translations compares them 
     REQUIRE(report.objects.size() == 1);
     CHECK(report.objects[0].action == ObjectAction::Refused);
     CHECK(f.handler->applied.empty());
+    // Its own refusal - not drift with an export hint (an export carries the
+    // translations, but the update would drop them all the same).
+    const auto& message = report.objects[0].message;
+    CHECK(message.find("I18N_TPOOL (D)") != std::string::npos);
+    CHECK(message.find("would drop") != std::string::npos);
+    CHECK(message.find("abapgit export") == std::string::npos);
+
+    // The same with the translations in the files (as an export writes them).
+    auto exported = f.repo.Doma("zerpl_d_a", "Changed");
+    {
+        auto loaded = LoadObjectFiles(exported);
+        REQUIRE(loaded.IsOk());
+        std::ofstream(exported.files["xml"], std::ios::binary | std::ios::trunc)
+            << WithSections(loaded.Value().begin()->second,
+                            "<I18N_TPOOL><item><SPRSL>D</SPRSL><TTEXT>Anzeigen</TTEXT>"
+                            "</item></I18N_TPOOL>");
+    }
+    auto with_files = f.Workflow().Deploy({exported}, f.Options());
+    CHECK(with_files.objects[0].action == ObjectAction::Refused);
+    CHECK(with_files.objects[0].message.find("would drop") != std::string::npos);
+
+    // --force drops them, and says so.
+    auto options = f.Options();
+    options.force = true;
+    auto forced = f.Workflow().Deploy({exported}, options);
+    CHECK(forced.objects[0].action == ObjectAction::Updated);
+    CHECK(f.handler->applied == std::vector<std::string>{"ZERPL_D_A"});
+    REQUIRE_FALSE(forced.objects[0].notes.empty());
+    CHECK(forced.objects[0].notes[0].find("I18N_TPOOL (D)") != std::string::npos);
+}
+
+TEST_CASE("abapGit deploy: an unchanged object of such a type is left alone with its translations",
+          "[workflow][abapgit_deploy]") {
+    Fixture f;
+    f.handler->writes_translations = false;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    auto& file = f.system["ZERPL_D_A"].begin()->second;
+    file = WithSections(file, "<I18N_TPOOL><item><SPRSL>D</SPRSL><TTEXT>Anzeigen</TTEXT>"
+                              "</item></I18N_TPOOL>");
+    auto report = f.Workflow().Deploy({obj}, f.Options());
+    CHECK(report.objects[0].action == ObjectAction::Unchanged);
 }
 
 TEST_CASE("abapGit export: a destination outside the repository is never written",

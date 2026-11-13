@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <set>
 
 namespace erpl_adt {
@@ -183,6 +184,69 @@ std::map<std::string, std::string> SectionMap(const ObjectFileSet& files,
     return out;
 }
 
+// The file's sections without an I18N_TPOOL equal to the system's: an
+// export writes the system's translations (as abapGit does) and such a file
+// must deploy; translations the system does not hold cannot be written.
+std::vector<std::pair<std::string, std::string>> WithoutSystemTranslations(
+    std::vector<std::pair<std::string, std::string>> sections, const ObjectState& current,
+    const std::string& file) {
+    const auto have = SectionMap(current.files, file);
+    auto it = have.find("I18N_TPOOL");
+    sections.erase(std::remove_if(sections.begin(), sections.end(),
+                                  [&](const auto& s) {
+                                      return s.first == "I18N_TPOOL" && it != have.end() &&
+                                             it->second == s.second;
+                                  }),
+                   sections.end());
+    return sections;
+}
+
+Error UnsupportedError(const std::string& message, const std::vector<std::string>& problems) {
+    Error err;
+    err.operation = "abapGit";
+    err.message = message;
+    for (size_t i = 0; i < problems.size(); ++i) {
+        err.message += (i ? "; " : "") + problems[i];
+    }
+    err.category = ErrorCategory::CheckError;
+    return err;
+}
+
+// What the files ask for that cannot be written, and - for an existing
+// transaction - what its system version holds that an update (delete +
+// insert) cannot reproduce. The latter is refused whatever the files say and
+// also with --force: it would silently drop an authorization check.
+std::optional<Error> TranProblems(const AbapGitObjectKey& key,
+                                  const std::vector<std::pair<std::string, std::string>>& sections,
+                                  const ObjectState& current, const std::string& language) {
+    const std::string file = FileName(key, "xml");
+    if (current.exists) {
+        std::vector<std::pair<std::string, std::string>> have;
+        for (auto& entry : SectionMap(current.files, file)) {
+            if (entry.first != "I18N_TPOOL") {  // translations: see the workflow
+                have.push_back(entry);
+            }
+        }
+        const auto lost = UnsupportedParts(key, have, language);
+        if (!lost.empty()) {
+            return UnsupportedError(
+                "Transaction " + key.name + " in the system has parts an update (delete + "
+                "insert through RPY_TRANSACTION_*) cannot reproduce, so it would lose them; "
+                "nothing was written - maintain it in SE93: ",
+                lost);
+        }
+    }
+    const auto problems =
+        UnsupportedParts(key, WithoutSystemTranslations(sections, current, file), language);
+    if (!problems.empty()) {
+        return UnsupportedError("Transaction " + key.name +
+                                    " has parts erpl-adt cannot deploy through SE93's API "
+                                    "(RPY_TRANSACTION_INSERT); nothing was written: ",
+                                problems);
+    }
+    return std::nullopt;
+}
+
 class TranHandler final : public IClassicTypeHandler {
 public:
     std::string Type() const override { return "TRAN"; }
@@ -222,7 +286,7 @@ public:
     }
 
     Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
-                                 const ObjectState& /*current*/,
+                                 const ObjectState& current,
                                  const std::string& language) const override {
         const std::string file = FileName(key, "xml");
         auto it = desired.find(file);
@@ -233,19 +297,9 @@ public:
         if (parsed.IsErr()) {
             return Result<void, Error>::Err(parsed.Error());
         }
-        const auto problems =
-            UnsupportedParts(key, SplitAsxValues(parsed.Value().values_xml), language);
-        if (!problems.empty()) {
-            Error err;
-            err.operation = "abapGit";
-            err.message = "Transaction " + key.name +
-                          " has parts erpl-adt cannot deploy through SE93's API "
-                          "(RPY_TRANSACTION_INSERT); nothing was written: ";
-            for (size_t i = 0; i < problems.size(); ++i) {
-                err.message += (i ? "; " : "") + problems[i];
-            }
-            err.category = ErrorCategory::CheckError;
-            return Result<void, Error>::Err(err);
+        if (auto problem =
+                TranProblems(key, SplitAsxValues(parsed.Value().values_xml), current, language)) {
+            return Result<void, Error>::Err(*problem);
         }
         return Result<void, Error>::Ok();
     }
@@ -267,18 +321,8 @@ public:
         }
         const auto sections = SplitAsxValues(parsed.Value().values_xml);
 
-        const auto problems = UnsupportedParts(key, sections, ctx.language);
-        if (!problems.empty()) {
-            Error err;
-            err.operation = "abapGit";
-            err.message = "Transaction " + key.name +
-                          " has parts erpl-adt cannot deploy through SE93's API "
-                          "(RPY_TRANSACTION_INSERT); nothing was written: ";
-            for (size_t i = 0; i < problems.size(); ++i) {
-                err.message += (i ? "; " : "") + problems[i];
-            }
-            err.category = ErrorCategory::CheckError;
-            return R::Err(err);
+        if (auto problem = TranProblems(key, sections, current, ctx.language)) {
+            return R::Err(*problem);
         }
 
         // Payload: the four writable parts, each present (empty when absent),
