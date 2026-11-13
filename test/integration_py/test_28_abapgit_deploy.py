@@ -475,6 +475,26 @@ class TestRepositoryRoundTrip:
                           timeout=1800)
         assert {o["action"] for o in data["objects"]} == {"unchanged"}, data["objects"]
 
+    def test_crlf_working_copy_reads_as_unchanged(self, cli, tmp_path):
+        # A Windows checkout with core.autocrlf=true: every LF is CRLF, in the
+        # object files and in .abapgit.xml. It reads as the LF files abapGit
+        # writes, so nothing is reported changed and nothing is rewritten.
+        repo = tmp_path / "crlf"
+        shutil.copytree(FIXTURES, repo)
+        converted = 0
+        for f in repo.rglob("*"):
+            if f.is_file():
+                f.write_bytes(f.read_bytes().replace(b"\n", b"\r\n"))
+                converted += 1
+        assert converted > 10 and b"\r\n" in (repo / ".abapgit.xml").read_bytes()
+
+        for action in ("status", "deploy"):
+            data = cli.run_ok("abapgit", action, str(repo), "--package", PACKAGE,
+                              timeout=1800)
+            actions = {(o["type"], o["name"]): o["action"] for o in data["objects"]}
+            assert len(actions) == 8, (action, actions)
+            assert set(actions.values()) == {"unchanged"}, (action, actions)
+
     def test_export_deploy_export_is_byte_identical(self, cli, tmp_path):
         first = tmp_path / "first"
         cli.run_ok("abapgit", "export", str(first), "--package", PACKAGE,

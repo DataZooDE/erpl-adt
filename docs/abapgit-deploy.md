@@ -349,10 +349,12 @@ problems in the code being deployed.
 
 ## Limitations
 
-* Line endings: abapGit files are compared byte for byte, so a CRLF checkout
-  (Windows with `core.autocrlf=true`) reads as a change on every object and
-  exports differ from the files. Keep the repository's abapGit folder out of
-  line-ending conversion, e.g. with `src/** -text` in `.gitattributes`.
+* Line endings: a CRLF working copy (Windows with `core.autocrlf=true`) is
+  read as LF. `deploy`, `status` and `delete` turn every CRLF pair in the
+  object files and in `.abapgit.xml` into LF before they compare, plan and
+  record, so such a checkout reads as unchanged. Only CRLF pairs change: a
+  lone CR in ABAP source stays content (in XML, a CR that is content is
+  written as `&#13;` and kept). `export` writes LF, as abapGit does.
 * Supported types: DOMA, DTEL, FUGR (function modules), PROG, TRAN. Classes,
   interfaces, tables (TABL) and packages (DEVC) are not created by `abapgit
   deploy`; create packages with `erpl-adt object create --type DEVC/K`, and

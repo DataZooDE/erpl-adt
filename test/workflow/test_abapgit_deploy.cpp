@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -580,6 +581,101 @@ TEST_CASE("LoadObjectFiles: XML is normalized to abapGit's exact rendering",
     CHECK(xml.rfind("\xEF\xBB\xBF<?xml", 0) == 0);
     CHECK(xml.find("\n   <DD01V>\n    <DDTEXT>A</DDTEXT>\n   </DD01V>\n") != std::string::npos);
     CHECK(files.Value().at("zerpl_d_a.doma.abap") == "REPORT zerpl_p.\n");
+}
+
+namespace {
+
+// A working copy checked out with core.autocrlf=true: every LF became CRLF.
+void ToCrlf(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    const std::string lf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::string crlf;
+    for (const char c : lf) {
+        crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+    }
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << crlf;
+}
+
+}  // namespace
+
+TEST_CASE("LoadObjectFiles: a CRLF working copy reads as the LF files",
+          "[workflow][abapgit_deploy][crlf]") {
+    TempRepo repo;
+    auto obj = repo.Doma("zerpl_d_a", "Status");
+    std::ofstream(repo.root / "zerpl_d_a.doma.abap", std::ios::binary)
+        << "REPORT zerpl_p.\n* lone\rCR stays\nWRITE 'x'.\n";
+    obj.files["abap"] = repo.root / "zerpl_d_a.doma.abap";
+    auto lf = LoadObjectFiles(obj);
+    REQUIRE(lf.IsOk());
+
+    ToCrlf(repo.root / "zerpl_d_a.doma.xml");
+    ToCrlf(repo.root / "zerpl_d_a.doma.abap");
+    auto crlf = LoadObjectFiles(obj);
+
+    REQUIRE(crlf.IsOk());
+    CHECK(crlf.Value() == lf.Value());
+    for (const auto& [name, bytes] : crlf.Value()) {
+        INFO(name);
+        CHECK(bytes.find("\r\n") == std::string::npos);
+    }
+    // Only CRLF pairs are converted: a CR on its own is content.
+    CHECK(crlf.Value().at("zerpl_d_a.doma.abap") ==
+          "REPORT zerpl_p.\n* lone\rCR stays\nWRITE 'x'.\n");
+}
+
+TEST_CASE("abapGit deploy and status: a CRLF working copy of a deployed object is unchanged",
+          "[workflow][abapgit_deploy][crlf]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    const auto recorded = f.record.objects.at("DOMA ZERPL_D_A");
+    f.handler->applied.clear();
+    ToCrlf(obj.files["xml"]);
+
+    auto status_options = f.Options();
+    status_options.dry_run = true;
+    auto status = f.Workflow().Deploy({obj}, status_options);
+    REQUIRE(status.objects.size() == 1);
+    CHECK(status.objects[0].action == ObjectAction::Unchanged);
+
+    auto report = f.Workflow().Deploy({obj}, f.Options());
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Unchanged);
+    CHECK(f.handler->applied.empty());
+    // The deploy record keeps the LF bytes.
+    CHECK(f.record.objects.at("DOMA ZERPL_D_A") == recorded);
+}
+
+TEST_CASE("abapGit deploy: a CRLF change is written and recorded as LF",
+          "[workflow][abapgit_deploy][crlf][record]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    auto obj = f.repo.Doma("zerpl_d_a", "Order status");
+    ToCrlf(obj.files["xml"]);
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({obj}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Updated);
+    const auto& recorded = f.record.objects.at("DOMA ZERPL_D_A").begin()->second;
+    CHECK(recorded.find("Order status") != std::string::npos);
+    CHECK(recorded.find('\r') == std::string::npos);
+    CHECK(f.handler->planned.at("ZERPL_D_A").begin()->second.find('\r') == std::string::npos);
+}
+
+TEST_CASE("abapGit delete: a CRLF working copy equal to the system is not drift",
+          "[workflow][abapgit_deploy][crlf][drift]") {
+    Fixture f;
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    f.record.objects.clear();  // no record: only the file comparison decides
+    f.handler->changed_by = "COLLEAGUE";
+    ToCrlf(obj.files["xml"]);
+
+    auto report = f.Workflow().Delete({obj}, f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Deleted);
 }
 
 // ---------------------------------------------------------------------------

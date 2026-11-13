@@ -455,6 +455,18 @@ TEST_CASE("ParseAbapGitXml: CRLF input normalizes to the LF form", "[abapgit_xml
     CHECK(RenderAbapGitXml(parsed.Value()) == lf);
 }
 
+TEST_CASE("ParseDotAbapGit: CRLF input reads like the LF file", "[abapgit_xml]") {
+    const std::string lf = ReadBytes(AbapGitTestDataDir() / "PROG" / ".abapgit.xml");
+    const std::string crlf = std::regex_replace(lf, std::regex("\n"), "\r\n");
+    auto from_lf = ParseDotAbapGit(lf);
+    auto from_crlf = ParseDotAbapGit(crlf);
+    REQUIRE(from_lf.IsOk());
+    REQUIRE(from_crlf.IsOk());
+    CHECK(from_crlf.Value().starting_folder == from_lf.Value().starting_folder);
+    CHECK(from_crlf.Value().ignore == from_lf.Value().ignore);
+    CHECK(RenderDotAbapGit(from_crlf.Value()) == lf);
+}
+
 TEST_CASE("ParseDotAbapGit: a starting folder that leaves the repository is refused",
           "[abapgit_xml]") {
     auto dot = [](const std::string& folder) {
