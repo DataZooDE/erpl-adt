@@ -48,6 +48,8 @@ public:
     // activate_objects fails (rc 8) with these messages but leaves nothing
     // in DWINACTIV - the case where only the messages name the object.
     std::vector<std::string> activation_errors;
+    // ... plus these DWINACTIV leftovers ("PROG ZFOO\tREPS ZFOO_TOP").
+    std::vector<std::string> activation_inactive;
     std::optional<Error> fail_run;                        // the whole run fails
     size_t fail_run_at = 0;                               // ... this run (0-based)
 
@@ -128,6 +130,10 @@ public:
                 if (!activation_errors.empty()) {
                     r.errors = activation_errors;
                     r.rc = 8;
+                }
+                for (const auto& line : activation_inactive) {
+                    r.values["INACTIVE"].push_back(line);
+                    failed.insert(line.substr(0, line.find('\t')));
                 }
                 activations.push_back(entries);
             } else if (execute && op.call.rfind("fake_get(", 0) != 0) {
@@ -1650,4 +1656,66 @@ TEST_CASE("abapGit status: previews the parts a deploy writes, and planning erro
         }
     }
     CHECK(preview.objects[0].parts == std::vector<std::string>{"DD01V"});
+}
+
+TEST_CASE("abapGit deploy: an object's own name is no dependency on another type's failure",
+          "[workflow][abapgit_deploy][deps]") {
+    // FUGR ZERPL_X is refused; PROG ZERPL_X names itself in its own files and
+    // must not be skipped for it.
+    Fixture f;
+    auto fugr = f.Add("FUGR", "adt");
+    f.Add("PROG", "write");
+    fugr->invalid_for = "ZERPL_X";
+    auto g = f.repo.Doma("zerpl_x_fg", "ZERPL_X");
+    g.key = {"FUGR", "ZERPL_X"};
+    auto p = f.repo.Doma("zerpl_x", "REPORT ZERPL_X.");
+    p.key = {"PROG", "ZERPL_X"};
+
+    auto report = f.Workflow().Deploy({g, p}, f.Options());
+
+    REQUIRE(report.objects.size() == 2);
+    CHECK(report.objects[0].action == ObjectAction::Failed);
+    CHECK(report.objects[1].key.type == "PROG");
+    CHECK(report.objects[1].action == ObjectAction::Created);
+}
+
+TEST_CASE("abapGit batching: an include's activation error belongs to its program",
+          "[workflow][abapgit_deploy][batch]") {
+    // DWINACTIV says ZERPL_P's include ZERPL_P_TOP stayed inactive; SAP's
+    // message names the include, not the program. It is ZERPL_P's error -
+    // and not ZERPL_Q's.
+    Fixture f;
+    f.Add("PROG", "write");
+    auto a = f.repo.Doma("zerpl_p", "A");
+    a.key = {"PROG", "ZERPL_P"};
+    auto b = f.repo.Doma("zerpl_q", "B");
+    b.key = {"PROG", "ZERPL_Q"};
+    f.engine.activation_errors = {"ZERPL_P_TOP: Field \"GV_X\" is unknown.",
+                                  "ZERPL_Q: a warning that names the other program"};
+    f.engine.activation_inactive = {"PROG ZERPL_P\tREPS ZERPL_P_TOP"};
+
+    auto report = f.Workflow().Deploy({a, b}, f.Options());
+
+    const auto& p = report.objects[0];
+    REQUIRE(p.action == ObjectAction::Failed);
+    CHECK(p.message.find("GV_X") != std::string::npos);
+    CHECK(p.message.find("other program") == std::string::npos);
+}
+
+TEST_CASE("abapGit deploy: a data element on the domain of its own name still depends on it",
+          "[workflow][abapgit_deploy][deps]") {
+    Fixture f;
+    auto dtel = f.Add("DTEL", "ddic");
+    auto doma = f.Add("DOMA", "ddic");
+    doma->invalid_for = "ZERPL_Y";
+    auto d = f.repo.Doma("zerpl_y", "Y");
+    d.key = {"DOMA", "ZERPL_Y"};
+    auto e = f.repo.Doma("zerpl_y_e", "</DDTEXT><DOMNAME>ZERPL_Y</DOMNAME><DDTEXT>");
+    e.key = {"DTEL", "ZERPL_Y"};
+
+    auto report = f.Workflow().Deploy({d, e}, f.Options());
+
+    REQUIRE(report.objects.size() == 2);
+    CHECK(report.objects[1].action == ObjectAction::Skipped);
+    CHECK(dtel->applied.empty());
 }

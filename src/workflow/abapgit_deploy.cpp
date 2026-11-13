@@ -216,6 +216,23 @@ bool Mentions(const ObjectFileSet& files, const std::string& name) {
                        [&](const auto& file) { return NamesWord(file.second, name); });
 }
 
+// Whether the object whose files are `files` (named `own_name`) depends on
+// the object `name`. A file names its own object everywhere (PROGDIR-NAME,
+// REPORT zx., ...), so an object of another type with the same name only
+// counts through a reference field: a data element's domain (DOMNAME), a
+// transaction's program (PGMNA).
+bool DependsOn(const ObjectFileSet& files, const std::string& own_name, const std::string& name) {
+    if (Upper(name) != Upper(own_name)) {
+        return Mentions(files, name);
+    }
+    const std::string upper = Upper(name);
+    return std::any_of(files.begin(), files.end(), [&](const auto& file) {
+        const std::string text = Upper(file.second);
+        return text.find("<DOMNAME>" + upper + "</DOMNAME>") != std::string::npos ||
+               text.find("<PGMNA>" + upper + "</PGMNA>") != std::string::npos;
+    });
+}
+
 // Path characters that may go into the popen command line (inside double
 // quotes): an allowlist, so no shell metacharacter (quotes, $, `, ;, |, &,
 // <, >, parentheses, globs, newlines) can ever reach the shell.
@@ -308,16 +325,39 @@ void SkipIfDependencyBroken(std::vector<Work>& works, Work& w, AbapGitRunReport&
 // The activation result as far as it concerns `w`: SAP's messages and log
 // lines that name the object, or all of them when none does.
 EngineOpResult ActivationResultFor(const EngineOpResult& r, const Work& w) {
+    // The object's name, and the names of its parts that stayed inactive
+    // (DWINACTIV: "PROG ZFOO<TAB>REPS ZFOO_TOP"): SAP's messages name the
+    // include, not the program it belongs to.
+    std::vector<std::string> names = {w.key.name};
+    auto inactive = r.values.find("INACTIVE");
+    if (inactive != r.values.end()) {
+        for (const auto& line : inactive->second) {
+            const auto tab = line.find('\t');
+            if (tab == std::string::npos || line.substr(0, tab) != w.owner) {
+                continue;
+            }
+            std::istringstream words(line.substr(tab + 1));
+            std::string object;
+            std::string obj_name;
+            if (words >> object >> obj_name) {  // a DYNP: the program, then the screen
+                names.push_back(obj_name);
+            }
+        }
+    }
+    auto named = [&](const std::string& text) {
+        return std::any_of(names.begin(), names.end(),
+                           [&](const std::string& n) { return NamesWord(text, n); });
+    };
     EngineOpResult own = r;
     own.errors.clear();
     own.messages.clear();
     for (const auto& e : r.errors) {
-        if (NamesWord(e, w.key.name)) {
+        if (named(e)) {
             own.errors.push_back(e);
         }
     }
     for (const auto& m : r.messages) {
-        if (NamesWord(m.text, w.key.name)) {
+        if (named(m.text)) {
             own.messages.push_back(m);
         }
     }
@@ -1055,7 +1095,8 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
     };
     auto failed_dependency = [&](size_t i) -> std::optional<AbapGitObjectKey> {
         for (const auto& key : broken) {
-            if (pos(key) < pos(eligible[i]->key) && Mentions(desired[i], key.name)) {
+            if (pos(key) < pos(eligible[i]->key) &&
+                DependsOn(desired[i], eligible[i]->key.name, key.name)) {
                 return key;
             }
         }
@@ -1181,7 +1222,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         work.package = object.package;
         work.owner = object.key.type + " " + object.key.name;
         for (size_t j = 0; j < works.size(); ++j) {
-            if (Mentions(desired[i], works[j].key.name)) {
+            if (DependsOn(desired[i], object.key.name, works[j].key.name)) {
                 work.deps.push_back(j);
             }
         }
