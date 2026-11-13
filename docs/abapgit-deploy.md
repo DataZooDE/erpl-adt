@@ -56,9 +56,14 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
    * unsupported object types and files are listed, never silently dropped;
    * each type handler validates the files (missing source or flow-logic
      file, parts it cannot write such as TRAN authorization objects, RFC
-     function modules) — `status` reports these exactly as `deploy` would.
+     function modules, documentation that names another object) — `status`
+     reports these exactly as `deploy` would;
+   * a file that cannot be read or parsed fails its object, and `status`
+     exits non-zero for it even without `--strict`.
 3. **Read** the current state of every object in one round trip and render it
-   exactly as abapGit would.
+   exactly as abapGit would. A read that fails — including a translation or
+   documentation read — fails the object; it never reads as "nothing there"
+   (an export would drop the texts, a deploy would compare nothing).
 4. **Compare** byte for byte. Unchanged objects are left alone — re-running a
    deploy is safe and fast. Changed objects are updated in place, part by part
    (`source`, `screen 0200`, `CUA`, `TPOOL`, …).
@@ -88,6 +93,10 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
 6. **Activate** through the standard workbench activation; activation errors
    are reported per object.
 
+`status` (a dry run) goes through steps 1–5 and plans step 6 without writing:
+it reports the same parts, refusals, planning errors and skipped dependents a
+deploy would.
+
 Steps 4–6 are batched by phase, so a deploy runs at most **three** helper-class
 runs whatever the number of objects:
 
@@ -101,9 +110,17 @@ runs whatever the number of objects:
 DDIC objects are active before anything that uses them is written or
 generated, and programs are activated before the transactions that call them
 are written. Failures stay with their object: every operation carries its
-owner, an object whose dependency failed earlier in the same run is reported
-`skipped: dependency X failed`, and whatever the activation leaves inactive
-fails the object it belongs to (with SAP's messages that name it).
+owner, and an object whose prerequisite failed is reported
+`skipped: dependency X failed` and not attempted — whatever the prerequisite
+failed on: a guard rail, a broken file, the system read, drift, validation,
+planning, a write or the activation. Only objects earlier in dependency order
+count as prerequisites (a domain for the data element that names it, a
+program for its transaction). The worklist activation
+(`RS_WORKING_OBJECTS_ACTIVATE` without popup) is all or nothing — one program
+with a syntax error cancels it for all; erpl-adt then activates each object
+still inactive on its own, so only the broken one stays inactive and fails
+(with SAP's messages, matched by whole object name: a message about `ZFOO_TOP`
+does not fail `ZFOO`).
 
 ### Own deploys
 
@@ -116,7 +133,10 @@ commit). Outside a git work tree the record lives in
 `$XDG_CACHE_HOME/erpl-adt/deployed` (`~/.cache/...`; `%LOCALAPPDATA%` on
 Windows). A system version equal to the recorded last deploy counts as your
 own; anything else is still refused. The record is per clone: a colleague
-deploying from their own clone does not make their version "yours".
+deploying from their own clone does not make their version "yours". The MCP
+server keeps the record in the repository's git directory only when that
+directory lies inside its abapGit root; otherwise it uses its own cache
+(`$XDG_CACHE_HOME/erpl-adt/mcp-deployed/<repo>-<hash of the path>`).
 
 Dependency order: `DOMA → DTEL → FUGR (function modules) → PROG (source,
 text pool, dynpros, GUI status) → TRAN`.
@@ -133,16 +153,16 @@ SE51/SE41/SE93/SE11:
 | Object / part | Read | Write | Delete |
 |---|---|---|---|
 | Domain, data element (DOMA, DTEL) | `DDIF_DOMA_GET`, `DDIF_DTEL_GET` | `RS_CORR_INSERT`, `DDIF_*_PUT`, `DDIF_*_ACTIVATE` | `RS_DD_DELETE_OBJ` (request via its `corrnum`) |
-| Dynpro | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ` | `RPY_DYNPRO_INSERT` | `RS_SCRP_DELETE` |
+| Dynpro | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ` | `RPY_DYNPRO_INSERT` | `RS_SCRP_DELETE` (no request parameter; recorded through the program's R3TR PROG entry, as in abapGit) |
 | Native dynpro (`NAT_HEADER`/`NAT_FIELDS`, e.g. a splitter control) | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ_NATIVE` | `RPY_DYNPRO_INSERT_NATIVE` | `RS_SCRP_DELETE` |
 | GUI status, titles (CUA) | `RS_CUA_INTERNAL_FETCH` | `RS_CUA_INTERNAL_WRITE` (inactive) | |
 | Text pool | `READ TEXTPOOL` | `INSERT TEXTPOOL … STATE 'I'` | |
 | Report variants (`VARIS`, system variants `SAP&…`/`CUS&…`) | `RS_ALL_VARIANTS_4_1_REPORT`, `RS_VARIANT_VALUES_TECH_DAT_255`, `RS_VARIANT_CONTENTS_255`, `RS_GET_SCREENS_4_1_VARIANT`, `VARIT` (texts) | `RS_VARIANT_DELETE` + `RS_CREATE_VARIANT_255` + `RS_CHANGE_CREATED_VARIANT_255`, after the activation | `RS_VARIANT_DELETE`; with the program by `RS_DELETE_PROGRAM` |
 | Translations: DOMA, DTEL short texts / fixed values / labels | `DDIF_DOMA_GET`, `DDIF_DTEL_GET` per language (languages from `DD01V`/`DD07V`/`DD04V`) | `RS_CORR_INSERT`, `DDIF_*_PUT` per language, `DDIF_*_ACTIVATE` | with the object |
 | Translations: PROG text pool | `READ TEXTPOOL … LANGUAGE` (languages from `D010TINF`) | `RS_CORR_INSERT`, `INSERT TEXTPOOL … LANGUAGE … STATE 'A'` | with the object |
-| Documentation (SE61: DOMA `DO`, DTEL `DE`/`DZ`, PROG `RE`) | `DOKIL`, `DOCU_READ` | `RS_CORR_INSERT`, `DOCU_UPDATE` (state `A`) | `DOCU_DEL` |
+| Documentation (SE61: DOMA `DO`, DTEL `DE`/`DZ`, PROG `RE`) | `DOKIL`, `DOCU_READ` | `RS_CORR_INSERT`, `DOCU_UPDATE` (state `A`; identity set from the object, result checked through `DOKIL`) | `DOCU_DEL` |
 | Activation of dynpros/CUA/text pool | | `RS_WORKING_OBJECTS_ACTIVATE` | |
-| Transaction (TRAN) | `TSTC`, `TSTCC`, `TSTCT`, `TSTCP` | `RPY_TRANSACTION_INSERT` | `RPY_TRANSACTION_DELETE` |
+| Transaction (TRAN) | `TSTC`, `TSTCC`, `TSTCT`, `TSTCP` | `RPY_TRANSACTION_DELETE` + `RPY_TRANSACTION_INSERT`; a failed insert re-inserts the previous version in its package | `RPY_TRANSACTION_DELETE` |
 | System facts | `sy-uname`, `TRNSPACE`, `TADIR`/`TDEVC` (export: package of an object) | | |
 
 Program and function-module **source** goes through the regular ADT source
@@ -154,7 +174,7 @@ ABAP source. The class body is a real ABAP file in this repository
 (`src/abap/`), so it can be read and reviewed like any other code. A class
 that fails to compile is never run (SAP would otherwise run its previous
 version). If a run is interrupted (network, short dump), a leftover helper is
-reported by name. Every `abapgit` command quietly removes your own helpers
+reported by name, with the hint to run `erpl-adt abapgit cleanup`. Every `abapgit` command quietly removes your own helpers
 that are older than two hours; `erpl-adt abapgit cleanup [--older-than 60]`
 does it on demand. Only genuine helper names (`ZCL_ERPLHLP_` + 8 hex digits)
 owned by the logon user are touched, never a helper young enough to belong to
@@ -183,6 +203,9 @@ fixed value without a translation is kept with empty texts, as in abapGit.
 A deploy **manages exactly the languages its files name**: a translation or
 documentation language that exists only in the system (e.g. added in SE63)
 is neither compared nor written nor removed; abapGit leaves it alone too.
+Transactions are the exception: their update is delete + insert, which drops
+the short-text translations, so a translation only in the system counts as
+drift there (refused unless `--force`).
 An object whose files carry no translations therefore deploys exactly as
 before. `export` writes every language the system has, as abapGit does.
 Only what changed is written and reported (`DD07_TEXTS`, `I18N_TPOOL`,
@@ -194,7 +217,20 @@ overwritten only when the system version is in the file's commit history or
 was deployed from this clone (see *Own deploys*); a translation the system
 does not have yet is never drift. The documentation's last changer is
 `DOKHL-DOKLUSER`. `delete` removes the documentation with the object (as
-abapGit does); translations go with the object.
+abapGit does); translations go with the object. Because they go with it,
+`delete` compares every language and **refuses** (exit 6) when the system
+holds translation or documentation languages the files do not have (e.g.
+`DD07_TEXTS (D)`, `LONGTEXTS (D, E)`), unless `--force`: pull them into git
+with the printed export command first.
+
+The documentation of a file is written as the documentation of the object
+being deployed: `DOKIL-ID`/`OBJECT` and `THEAD-TDOBJECT`/`TDNAME`/`TDID` are
+set from the object, never taken from the file, and a file whose
+`LONGTEXTS` name another object (a file copied from `ZFOO`, or one naming
+SAP's own `MATNR`) or a document type `DOCU_UPDATE` does not write (`TYP`
+other than `E`/`T`) is refused before anything is written (exit 8).
+`DOCU_UPDATE` has no exceptions; the engine checks the document's `DOKIL`
+entry afterwards.
 
 ## Working in a team
 
@@ -222,14 +258,17 @@ abapGit does); translations go with the object.
   refusals and parts a deploy could not write are reported (text and JSON),
   not fatal. With `--strict` any refusal or failure exits with the most
   severe code (e.g. 6 for drift) — use that to block a merge. A system that
-  cannot be read (connection, helper class) always exits non-zero. `--json` gives one entry per object with
+  cannot be read (connection, helper class) and a file that cannot be loaded
+  or parsed always exit non-zero. `--json` has `command` (`status` for
+  status, with `dry_run: true`) and gives one entry per object with
   `action` (`created`, `updated`, `unchanged`, `deleted`, `missing`,
   `exported`, `failed`, `refused`, `skipped`), the written `parts`, SAP's
   `message`, `notes`, and for failures `category` and `exit_code`; the
   top-level `exit_code` is the command's exit code.
-* **Failures in dependency order** — when an object fails, later objects whose
-  files name it (a data element's domain, a transaction's program) are
-  reported as `skipped: dependency DOMA X failed` and not attempted.
+* **Failures in dependency order** — when an object fails or is refused,
+  later objects whose files name it (a data element's domain, a transaction's
+  program) are reported as `skipped: dependency DOMA X failed` and not
+  attempted; `status` shows the same.
 * **Progress** — on a terminal (and without `--json`) deploy and delete print
   one line per object to stderr: `[3/8] updating PROG ZERPL_SO_DISPLAY`.
 * **Export** — a refresh writes every object back into the folder it was
@@ -275,8 +314,12 @@ symlinks are resolved first). A path that ends up outside the root — `..`,
 an absolute path elsewhere, a symlink pointing out — is refused before
 anything runs (category `authorization`, exit code 1), as is a repository
 containing a symlink that leads outside the root (a deploy would read through
-it, an export would write through it). The search for `.abapgit.xml` stops at
-the root.
+it, an export would write through it). Absolute paths inside the root are
+accepted. The search for `.abapgit.xml` stops at the root. A `STARTING_FOLDER`
+with a `..` segment is refused for every command (CLI too), and an export
+never writes or removes files in a folder outside the repository, whatever
+the layout says. The deploy record stays inside the root or in the server's
+cache (see *Own deploys*).
 
 ## Exit codes
 
@@ -290,7 +333,7 @@ the root.
 | 8 | the deploy cannot write a part (unsupported part, RFC module) |
 | 9 | transport problem (missing `--transport`, object locked in another request) |
 | 10 | timeout, or the system answered "too many requests" |
-| 99 | usage error (unknown flag, invalid argument) or internal error |
+| 99 | usage error (unknown flag, invalid argument), a local file that cannot be read, parsed or written, or internal error |
 
 Failures are classified by evidence, never by (translated) message text: the
 helper's own verdict from the function module's exception, else SAP's T100
@@ -349,8 +392,21 @@ problems in the code being deployed.
   you count as safe — screens and transactions then always need `--force`.
 * Transport recording (`--transport`) uses the function modules' own request
   parameters and `RS_CORR_INSERT`, but it has not been verified live: the
-  A4H trial's client settings were left unchanged, so no transportable
-  package with a request was available for tests.
+  A4H trial's client settings were left unchanged (owner decision), so no
+  transportable package with a request was available for tests. Screen
+  deletions follow abapGit exactly: `RS_SCRP_DELETE` has no request
+  parameter, and the deletion is expected on the request through the R3TR
+  PROG entry `RS_CORR_INSERT` makes first (abapGit's
+  `ZCL_ABAPGIT_OBJECTS_PROGRAM->DESERIALIZE_DYNPROS` relies on the same) —
+  unverified as well.
+* A transaction update is delete + insert (there is no update API).
+  `RPY_TRANSACTION_INSERT` checks little — measured on A4H, it accepts a
+  `PGMNA` that does not exist — but when it fails (e.g. its `RS_CORR_INSERT`
+  rejects the package), the previous version (`TSTC`/`TSTCC`/`TSTCT`/`TSTCP`
+  as read before the delete) is inserted again into its package and the
+  object fails with "its previous version was restored". Short-text
+  translations of the previous version are not restored (no workbench API
+  writes them; see above).
 * Each engine run rewrites, activates and runs the temporary helper class
   (created once per command, deleted at the end - about 3 s together). A
   deploy needs at most three runs (see *What a deploy does*). Measured on the

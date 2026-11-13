@@ -215,10 +215,15 @@ Configure it in your MCP client (e.g., Claude Desktop, Claude Code):
 The `abapgit_status` (read-only), `abapgit_deploy`, `abapgit_export` and
 `abapgit_delete` (destructive) tools are the [`abapgit` commands](#classic-gui-objects-from-git-abapgit-files)
 with the same arguments (`path`, `package`, `transport`, `dry_run`, `force`,
-`strict`, `objects`) and the same JSON report. They only read and write files
-below one folder, `--abapgit-root <dir>` (YAML `mcp.abapgit_root`, default:
-the server's working directory); `..`, absolute paths and symlinks leading
-outside it are refused:
+`strict`, `objects`) and the same JSON report. They only read and write
+repository files below one folder, `--abapgit-root <dir>` (YAML
+`mcp.abapgit_root`, default: the server's working directory): relative paths
+resolve against it, absolute paths are accepted only inside it, and `..`,
+symlinks or a `.abapgit.xml` `STARTING_FOLDER` leading outside it are refused.
+The record of what the server last deployed stays in the repository's `.git`
+only when that git directory is inside the root; otherwise (a `.git` pointer
+file leading out, no git work tree) the server keeps it in its own cache
+directory, one per repository - never in a place the repository chooses:
 
 ```bash
 erpl-adt mcp --host sap.example.com --abapgit-root ~/src/erpl-demo-repos
@@ -324,9 +329,12 @@ erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO                        
 ```
 
 Deploys are idempotent (unchanged objects are left alone), run in dependency
-order, record changes on the given transport, respect GUI locks, refuse to
-overwrite objects someone changed in the system outside git (unless `--force`),
-and only touch customer objects. Under the hood erpl-adt calls the workbench
+order (an object whose prerequisite failed is skipped), record changes on the
+given transport, respect GUI locks, refuse to overwrite objects someone changed
+in the system outside git (unless `--force`), and only touch customer objects.
+`status` previews the same parts and refusals a deploy would hit and fails on
+a file it cannot load, so it can gate pull requests (`--strict` makes every
+refusal fatal). Under the hood erpl-adt calls the workbench
 function modules SE51/SE41/SE93/SE11 use from a temporary console class in
 `$TMP`. Details, the API table and limitations: [docs/abapgit-deploy.md](docs/abapgit-deploy.md).
 
