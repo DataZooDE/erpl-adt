@@ -158,7 +158,7 @@ void DeleteHelper(IAdtSession& session, const std::string& helper_class) {
     }
     if (deleted.IsErr()) {
         LogWarn(kComponent, "Failed to delete temporary helper class " + helper_class +
-                                " (delete it in SE24 or with 'erpl-adt object delete'): " +
+                                " (remove it with 'erpl-adt abapgit cleanup', or in SE24): " +
                                 deleted.Error().message);
     }
 }

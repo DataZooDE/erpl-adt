@@ -88,7 +88,8 @@ json SchemaFor(const ToolSpec& spec) {
             props[a] = BoolProp("Only report what would change");
         } else if (a == "force") {
             props[a] = BoolProp(spec.command == AbapGitCommand::Status
-                                    ? "Report drifted objects as they would be overwritten"
+                                    ? "Preview a deploy with force: drifted objects show as "
+                                      "updates instead of refusals"
                                     : "Overwrite / delete objects changed in the system "
                                       "outside git");
         } else if (a == "strict") {

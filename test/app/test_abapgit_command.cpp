@@ -73,3 +73,34 @@ TEST_CASE("abapgit command: status fails on a file it cannot load, even without 
     refused.objects.push_back(drift);
     CHECK(AbapGitExitCode(run, refused) == 0);
 }
+
+TEST_CASE("abapgit command: a sub-folder of a repository names the repository root",
+          "[app][abapgit]") {
+    TempDir dir;
+    fs::create_directories(dir.path / "repo" / "src");
+    std::ofstream(dir.path / "repo" / ".abapgit.xml")
+        << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<asx:abap "
+           "xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\">\n <asx:values>\n  "
+           "<DATA>\n   <MASTER_LANGUAGE>E</MASTER_LANGUAGE>\n   "
+           "<STARTING_FOLDER>/src/</STARTING_FOLDER>\n  </DATA>\n </asx:values>\n</asx:abap>\n";
+    AbapGitRequest request;
+    request.path = dir.path / "repo" / "src";
+    request.package = "$TMP";
+    auto prepared = PrepareAbapGitRun(AbapGitCommand::Deploy, request);
+    REQUIRE(prepared.IsErr());
+    CHECK(prepared.Error().message.find("is inside the abapGit repository") != std::string::npos);
+    CHECK(prepared.Error().message.find((dir.path / "repo").string()) != std::string::npos);
+}
+
+TEST_CASE("abapgit command: a local error without an object decides the exit code",
+          "[app][abapgit]") {
+    PreparedAbapGitRun run;
+    run.command = AbapGitCommand::Export;
+    AbapGitRunReport report;
+    Error err;
+    err.message = "Cannot write /ro/.abapgit.xml";
+    err.category = ErrorCategory::Internal;
+    report.local_error = err;
+    CHECK(AbapGitExitCode(run, report) == 99);
+    CHECK(AbapGitReportJson(run, report)["error"] == err.message);
+}

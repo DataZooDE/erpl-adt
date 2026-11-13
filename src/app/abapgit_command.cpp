@@ -147,11 +147,16 @@ Result<ResolvedFiles, Error> ResolveFiles(const AbapGitRequest& request,
         target.objects.push_back(object.Value());
         return R::Ok(std::move(target));
     }
-    if (!dot || fs::weakly_canonical(dot->parent_path(), ec) !=
-                    fs::weakly_canonical(fs::absolute(path, ec), ec)) {
+    if (!dot) {
         return R::Err(NotFound("No .abapgit.xml in " + path.string() +
                                " — pass the root of an abapGit repository or a single object "
                                "file"));
+    }
+    if (fs::weakly_canonical(dot->parent_path(), ec) !=
+        fs::weakly_canonical(fs::absolute(path, ec), ec)) {
+        return R::Err(NotFound(path.string() + " is inside the abapGit repository " +
+                               dot->parent_path().string() + " — pass the repository root (" +
+                               dot->parent_path().string() + ") or a single object file"));
     }
     auto scan = ScanAbapGitFolder(path, ToLayout(config), package);
     if (scan.IsErr()) {
@@ -323,10 +328,21 @@ AbapGitRunReport RunAbapGit(const PreparedAbapGitRun& run, IAdtSession& session,
         case AbapGitCommand::Export: {
             auto report = workflow.Export(run.objects, run.export_target, run.options);
             if (run.write_dot_abapgit && !run.options.dry_run && !report.Failed()) {
+                const auto dot = run.export_target.repo_root / ".abapgit.xml";
                 std::error_code ec;
                 fs::create_directories(run.export_target.repo_root, ec);
-                std::ofstream(run.export_target.repo_root / ".abapgit.xml", std::ios::binary)
-                    << RenderDotAbapGit(run.export_config);
+                std::ofstream out(dot, std::ios::binary);
+                out << RenderDotAbapGit(run.export_config);
+                out.close();
+                if (ec || !out) {
+                    // Without it the exported files are no repository.
+                    Error err;
+                    err.operation = "abapGit";
+                    err.message = "Cannot write " + dot.string() +
+                                  (ec ? ": " + ec.message() : std::string());
+                    err.category = ErrorCategory::Internal;
+                    report.local_error = err;
+                }
             }
             return report;
         }
@@ -362,6 +378,9 @@ nlohmann::json AbapGitReportJson(const PreparedAbapGitRun& run, const AbapGitRun
             e["exit_code"] = o.error->ExitCode();
         }
         j["objects"].push_back(e);
+    }
+    if (report.local_error) {
+        j["error"] = report.local_error->message;
     }
     j["skipped"] = report.skipped;
     j["summary"] = summary;
@@ -404,6 +423,9 @@ std::string AbapGitReportText(const PreparedAbapGitRun& run, const AbapGitRunRep
     }
     for (const auto& s : report.skipped) {
         out << "skipped  " << s << "\n";
+    }
+    if (report.local_error) {
+        out << "error    " << report.local_error->message << "\n";
     }
     std::string line;
     for (const auto& [action, count] : summary) {

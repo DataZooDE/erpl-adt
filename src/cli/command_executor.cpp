@@ -68,6 +68,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -1547,20 +1548,23 @@ int HandleAbapGitCleanup(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
     int minutes = 60;
     if (HasFlag(args, "older-than")) {
-        try {
-            minutes = std::stoi(GetFlag(args, "older-than"));
-        } catch (...) {
-            minutes = -1;
-        }
-        if (minutes < 0) {
-            fmt.PrintError(MakeValidationError("Invalid --older-than: expected minutes, e.g. 60"));
+        // The whole value must be a number of minutes: "10x" is a typo, not 10.
+        const std::string value = GetFlag(args, "older-than");
+        const auto parsed =
+            std::from_chars(value.data(), value.data() + value.size(), minutes);
+        if (value.empty() || parsed.ec != std::errc() ||
+            parsed.ptr != value.data() + value.size() || minutes < 0) {
+            fmt.PrintError(MakeValidationError("Invalid --older-than '" + value +
+                                               "': expected minutes, e.g. 60"));
             return 99;
         }
     }
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
+    auto created = CreateSession(args);
+    if (created.IsErr()) {
+        fmt.PrintError(created.Error());
+        return created.Error().ExitCode();
     }
+    auto session = std::move(created).Value();
     auto report = CleanupStaleHelpers(*session, session->LogonUserName(),
                                       std::chrono::minutes(minutes));
     if (fmt.IsJsonMode()) {
@@ -7841,6 +7845,7 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt abapgit deploy ./my-repo/src/zdemo.prog.xml --package '$TMP'",
         "$ erpl-adt abapgit export ./my-repo --package ZDEMO",
         "$ erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZDEMO,TRAN:ZDEMO",
+        "$ erpl-adt abapgit cleanup    # helper classes left by interrupted runs",
     });
     {
         const std::string how_it_works =
@@ -7897,7 +7902,7 @@ void RegisterAllCommands(CommandRouter& router) {
                 "Use it in pull-request checks: without --transport, transportable packages "
                 "only get a note (--strict makes that a refusal).";
             help.flags.push_back({"strict", "", "Exit with the most severe code of any refusal (drift 6, missing --transport 9)", false});
-            help.flags.push_back({"force", "", "Report drifted objects as they would be overwritten with --force", false});
+            help.flags.push_back({"force", "", "Preview a 'deploy --force': show drifted objects as updates instead of refusals", false});
             help.examples = {"erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO"};
             router.Register("abapgit", "status", "Show what a deploy would change (no writes)",
                             HandleAbapGitStatus, std::move(help));
