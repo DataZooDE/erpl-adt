@@ -18,6 +18,18 @@
     METHODS tran_delete
       IMPORTING name   TYPE tcode
                 trkorr TYPE trkorr.
+    "! RPY_TRANSACTION_INSERT of one version (TSTC / TSTCC / TSTCT / TSTCP);
+    "! returns its sy-subrc (0 = inserted), SAP's message stays in sy-msg*.
+    METHODS tran_insert
+      IMPORTING name          TYPE tcode
+                language      TYPE sylangu
+                devclass      TYPE devclass
+                trkorr        TYPE trkorr
+                is_tstc       TYPE tstc
+                is_tstcc      TYPE tstcc
+                is_tstct      TYPE tstct
+                is_tstcp      TYPE tstcp
+      RETURNING VALUE(rc)     TYPE sysubrc.
     METHODS tran_split_parameters
       CHANGING cs_tstcp  TYPE tstcp
                cs_rsstcd TYPE rsstcd
@@ -114,20 +126,16 @@
 
   METHOD tran_put.
     " CINFO flags, as in ZCL_ABAPGIT_OBJECT_TRAN->deserialize.
-    CONSTANTS c_hex_par TYPE x VALUE '02'.
-    CONSTANTS c_hex_rep TYPE x VALUE '80'.
     CONSTANTS c_hex_obj TYPE x VALUE '08'.
     DATA ls_tstc   TYPE tstc.
     DATA ls_tstcc  TYPE tstcc.
     DATA ls_tstct  TYPE tstct.
     DATA ls_tstcp  TYPE tstcp.
-    DATA ls_rsstcd TYPE rsstcd.
-    DATA lt_params TYPE s_param.
-    DATA tr_type   TYPE stran_type.
-    DATA dynpro    TYPE d020s-dnum.
-    DATA html      TYPE s_webgui.
-    DATA ewt       TYPE s_ewt.
-    DATA existing  TYPE tstc-tcode.
+    DATA old_tstc  TYPE tstc.
+    DATA old_tstcc TYPE tstcc.
+    DATA old_tstct TYPE tstct.
+    DATA old_tstcp TYPE tstcp.
+    DATA old_devclass TYPE devclass.
     DATA(xml) = take_payload( ).
 
     CALL TRANSFORMATION id SOURCE XML xml
@@ -136,38 +144,28 @@
     " Force the transaction code (abapGit does the same, for security reasons).
     ls_tstc-tcode = name.
     ls_tstcp-tcode = name.
-
-    IF ls_tstc-cinfo O c_hex_rep.
-      tr_type = 'R'.
-    ELSEIF ls_tstc-cinfo O c_hex_obj.
+    IF ls_tstc-cinfo O c_hex_obj.
       emit( kind = 'ERR' text = |{ name } is an OO transaction; RPY_TRANSACTION_INSERT cannot create it.| ).
       emit_rc( 8 ).
       RETURN.
-    ELSEIF ls_tstc-cinfo O c_hex_par.
-      IF ls_tstcp-param(1) = '@'.
-        tr_type = 'V'.
-      ELSE.
-        tr_type = 'P'.
-      ENDIF.
-    ELSE.
-      tr_type = 'D'.
-    ENDIF.
-
-    IF ls_tstcp IS NOT INITIAL.
-      tran_split_parameters( CHANGING cs_tstcp = ls_tstcp cs_rsstcd = ls_rsstcd ct_params = lt_params ).
-    ENDIF.
-
-    dynpro = ls_tstc-dypno.
-    IF ls_tstcc-s_webgui = '2'.
-      ewt = abap_true.
-    ELSEIF ls_tstcc-s_webgui IS NOT INITIAL.
-      html = ls_tstcc-s_webgui.
     ENDIF.
 
     " No update API: delete + insert, as abapGit does. Both calls lock the
-    " transaction and record it on the transport.
-    SELECT SINGLE tcode FROM tstc WHERE tcode = @name INTO @existing.
-    IF sy-subrc = 0.
+    " transaction and record it on the transport. The version in the system
+    " is read first (the same reads as tran_get), so a failed insert can put
+    " it back instead of leaving the transaction deleted.
+    SELECT SINGLE * FROM tstc WHERE tcode = @name INTO @old_tstc.
+    DATA(existed) = boolc( sy-subrc = 0 ).
+    IF existed = abap_true.
+      SELECT SINGLE * FROM tstcc WHERE tcode = @name INTO @old_tstcc.
+      SELECT SINGLE * FROM tstct WHERE sprsl = @language AND tcode = @name INTO @old_tstct.
+      SELECT SINGLE * FROM tstcp WHERE tcode = @name INTO @old_tstcp.
+      SELECT SINGLE devclass FROM tadir
+        WHERE pgmid = 'R3TR' AND object = 'TRAN' AND obj_name = @name
+        INTO @old_devclass.
+      IF old_devclass IS INITIAL.
+        old_devclass = devclass.
+      ENDIF.
       CALL FUNCTION 'RPY_TRANSACTION_DELETE'
         EXPORTING
           transaction      = name
@@ -183,25 +181,92 @@
       ENDIF.
     ENDIF.
 
+    DATA(rc) = tran_insert( name = name language = language devclass = devclass trkorr = trkorr
+                            is_tstc = ls_tstc is_tstcc = ls_tstcc is_tstct = ls_tstct
+                            is_tstcp = ls_tstcp ).
+    IF rc <> 0.
+      emit_symsg( ).
+      IF rc = 3.
+        emit( kind = 'KIND' text = `AUTH` ).
+      ENDIF.
+      IF existed = abap_true.
+        " Roll back: the previous version, as it was read above, in its package.
+        DATA(restored) = tran_insert( name = name language = language devclass = old_devclass
+                                      trkorr = trkorr is_tstc = old_tstc is_tstcc = old_tstcc
+                                      is_tstct = old_tstct is_tstcp = old_tstcp ).
+        IF restored = 0.
+          emit( kind = 'ERR' text = |{ name } was not updated; its previous version was restored.| ).
+        ELSE.
+          emit_symsg( ).
+          emit( kind = 'ERR' text = |{ name } was deleted for the update, and neither the new nor the previous version could be inserted; redeploy it.| ).
+        ENDIF.
+      ENDIF.
+      emit_rc( rc ).
+      RETURN.
+    ENDIF.
+    emit_rc( 0 ).
+  ENDMETHOD.
+
+
+  METHOD tran_insert.
+    CONSTANTS c_hex_par TYPE x VALUE '02'.
+    CONSTANTS c_hex_rep TYPE x VALUE '80'.
+    DATA ls_tstcp  TYPE tstcp.
+    DATA ls_rsstcd TYPE rsstcd.
+    DATA lt_params TYPE s_param.
+    DATA tr_type   TYPE stran_type.
+    DATA dynpro    TYPE d020s-dnum.
+    DATA html      TYPE s_webgui.
+    DATA ewt       TYPE s_ewt.
+
+    ls_tstcp = is_tstcp.
+    IF is_tstc-cinfo O c_hex_rep.
+      tr_type = 'R'.
+    ELSEIF is_tstc-cinfo O c_hex_par.
+      IF ls_tstcp-param(1) = '@'.
+        tr_type = 'V'.
+      ELSE.
+        tr_type = 'P'.
+      ENDIF.
+    ELSE.
+      tr_type = 'D'.
+    ENDIF.
+
+    IF ls_tstcp IS NOT INITIAL.
+      tran_split_parameters( CHANGING cs_tstcp = ls_tstcp cs_rsstcd = ls_rsstcd ct_params = lt_params ).
+    ENDIF.
+
+    dynpro = is_tstc-dypno.
+    IF is_tstcc-s_webgui = '2'.
+      ewt = abap_true.
+    ELSEIF is_tstcc-s_webgui IS NOT INITIAL.
+      html = is_tstcc-s_webgui.
+    ENDIF.
+
+    " A dialog the function module tries to show (e.g. RS_CORR_INSERT's
+    " popup for a package that does not exist) cannot be sent from a
+    " classrun and raises CX_SY_SEND_DYNPRO_NO_RECEIVER: caught here, so the
+    " caller can still restore the previous version.
+    TRY.
     CALL FUNCTION 'RPY_TRANSACTION_INSERT'
       EXPORTING
         transaction             = name
-        program                 = ls_tstc-pgmna
+        program                 = is_tstc-pgmna
         dynpro                  = dynpro
         language                = language
         development_class       = devclass
         transport_number        = trkorr
         transaction_type        = tr_type
-        shorttext               = ls_tstct-ttext
+        shorttext               = is_tstct-ttext
         called_transaction      = ls_rsstcd-call_tcode
         called_transaction_skip = ls_rsstcd-st_skip_1
         variant                 = ls_rsstcd-variant
         cl_independend          = ls_rsstcd-s_ind_vari
         easy_web_transaction    = ewt
         html_enabled            = html
-        java_enabled            = ls_tstcc-s_platin
-        wingui_enabled          = ls_tstcc-s_win32
-        servicefile             = ls_tstcc-s_service
+        java_enabled            = is_tstcc-s_platin
+        wingui_enabled          = is_tstcc-s_win32
+        servicefile             = is_tstcc-s_service
       TABLES
         param_values            = lt_params
       EXCEPTIONS
@@ -214,19 +279,22 @@
         object_inconsistent     = 7
         db_access_error         = 8
         OTHERS                  = 9.
-    IF sy-subrc <> 0.
-      DATA(rc) = sy-subrc.
-      emit_symsg( ).
-      IF existing IS NOT INITIAL.
-        emit( kind = 'ERR' text = |{ name } was deleted for the update but could not be inserted again; redeploy it.| ).
-      ENDIF.
-      IF rc = 3.
-        emit( kind = 'KIND' text = `AUTH` ).
-      ENDIF.
-      emit_rc( rc ).
-      RETURN.
+    rc = sy-subrc.
+      CATCH cx_root INTO DATA(failure).
+        emit( kind = 'ERR' text = |RPY_TRANSACTION_INSERT { name }: { failure->get_text( ) }| ).
+        rc = 9.
+    ENDTRY.
+    IF rc <> 0.
+      " The function module frees its edit lock on its own error paths, not
+      " when it is aborted: free it, so the previous version can go back.
+      CALL FUNCTION 'RS_ACCESS_PERMISSION'
+        EXPORTING
+          mode         = 'FREE'
+          object       = name
+          object_class = 'TRAN'
+        EXCEPTIONS
+          OTHERS       = 1.
     ENDIF.
-    emit_rc( 0 ).
   ENDMETHOD.
 
 

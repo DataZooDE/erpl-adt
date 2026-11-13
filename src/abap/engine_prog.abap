@@ -675,6 +675,12 @@
       RETURN.
     ENDIF.
 
+    " Screens no longer in the files, exactly as abapGit's
+    " ZCL_ABAPGIT_OBJECTS_PROGRAM->DESERIALIZE_DYNPROS deletes them:
+    " RS_SCRP_DELETE has no request parameter; the deletion (LIMU DYNP) is
+    " recorded through the R3TR PROG entry corr_insert put on the request
+    " above, as for abapGit, which calls CORR_INSERT once per object before
+    " deserializing. Not verified on a transportable package (see the docs).
     LOOP AT delete_screens INTO DATA(dynnr).
       CALL FUNCTION 'RS_SCRP_DELETE'
         EXPORTING

@@ -8,6 +8,11 @@
 * call, every entry that is still in DWINACTIV is reported as
 * "INACTIVE <owner> TAB <object> <obj_name>" and marks its owner failed, so
 * operations that require it (e.g. a transaction of the program) are skipped.
+* A worklist activation without popup is all or nothing: one program with a
+* syntax error cancels it for every object ("Editing canceled"). When it
+* leaves more than one owner inactive, each of those owners is activated on
+* its own (in deploy order), so only the broken one stays inactive; its
+* messages are emitted prefixed with the owner.
 "@@DEFINITIONS
     TYPES:
       BEGIN OF ty_act_entry,
@@ -74,6 +79,50 @@
           failures = abap_true.
         ENDLOOP.
       ENDLOOP.
+    ENDIF.
+
+    " All or nothing failed for several owners: one owner at a time.
+    DATA owners_left TYPE string_table.
+    LOOP AT entries ASSIGNING FIELD-SYMBOL(<left>).
+      SELECT SINGLE object FROM dwinactiv
+        WHERE object = @<left>-object AND obj_name = @<left>-obj_name
+        INTO @DATA(left_inactive).
+      IF sy-subrc = 0 AND NOT line_exists( owners_left[ table_line = <left>-owner ] ).
+        APPEND <left>-owner TO owners_left.
+      ENDIF.
+    ENDLOOP.
+    IF lines( owners_left ) > 1.
+      LOOP AT owners_left INTO DATA(owner_left).
+        CLEAR: objects_tab, checklist, errors.
+        LOOP AT entries ASSIGNING <left> WHERE owner = owner_left.
+          APPEND VALUE #( object = <left>-object obj_name = <left>-obj_name ) TO objects_tab.
+        ENDLOOP.
+        CALL FUNCTION 'RS_WORKING_OBJECTS_ACTIVATE'
+          EXPORTING
+            activate_ddic_objects  = abap_false
+            with_popup             = abap_false
+            ui_decoupled           = abap_true
+          IMPORTING
+            p_checklist            = checklist
+          TABLES
+            objects                = objects_tab
+          EXCEPTIONS
+            excecution_error       = 1
+            cancelled              = 2
+            insert_into_corr_error = 3
+            OTHERS                 = 4.
+        IF checklist IS BOUND.
+          checklist->get_error_messages( IMPORTING p_error_tab = errors ).
+          LOOP AT errors ASSIGNING FIELD-SYMBOL(<owner_error>).
+            LOOP AT <owner_error>-mtext INTO DATA(owner_message).
+              emit( kind = 'ERR' text = |{ owner_left }: { <owner_error>-object_text }: { owner_message }| ).
+            ENDLOOP.
+          ENDLOOP.
+        ENDIF.
+      ENDLOOP.
+      " Judged by what is still inactive below, not by the first call.
+      subrc = 0.
+      failures = abap_false.
     ENDIF.
 
     " What is still inactive did not activate: its owner failed.
