@@ -43,10 +43,16 @@ TEST_CASE("LoadMcpServerSettings: relative abapgit_root is relative to the confi
 }
 
 TEST_CASE("LoadMcpServerSettings: absolute abapgit_root is kept", "[config][mcp]") {
-    TempConfig cfg("mcp:\n  abapgit_root: /srv/abapgit\n");
+#ifdef _WIN32
+    // "/srv/abapgit" has no drive on Windows and is therefore relative there.
+    const std::string absolute = "C:\\srv\\abapgit";
+#else
+    const std::string absolute = "/srv/abapgit";
+#endif
+    TempConfig cfg("mcp:\n  abapgit_root: '" + absolute + "'\n");
     auto s = LoadMcpServerSettings(cfg.file.string());
     REQUIRE(s.IsOk());
-    CHECK(*s.Value().abapgit_root == "/srv/abapgit");
+    CHECK(*s.Value().abapgit_root == absolute);
 }
 
 TEST_CASE("LoadMcpServerSettings: no mcp block is not an error", "[config][mcp]") {
