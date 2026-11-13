@@ -4,6 +4,7 @@
 #include <tinyxml2.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -260,6 +261,86 @@ Result<ActivationResult, Error> ActivateObjects(
 
     return Result<ActivationResult, Error>::Err(
         Error::FromHttpStatus("ActivateObject", kActivateObjectPath, http.status_code, http.body));
+}
+
+namespace {
+
+struct UriTypeMapping {
+    const char* path_segment;  // after "/sap/bc/adt/"
+    const char* type;
+};
+
+// Longer (more specific) prefixes first: the parts of a function group
+// must win over the group.
+constexpr UriTypeMapping kUriTypeMap[] = {
+    {"programs/programs/", "PROG/P"},
+    {"programs/includes/", "PROG/I"},
+    {"oo/classes/", "CLAS/OC"},
+    {"oo/interfaces/", "INTF/OI"},
+    {"functions/groups/", "FUGR/F"},
+    {"packages/", "DEVC/K"},
+    {"ddic/ddl/sources/", "DDLS/DF"},
+    {"ddic/tables/", "TABL/DT"},
+    {"ddic/dataelements/", "DTEL/DE"},
+    {"messageclass/", "MSAG/N"},
+};
+
+// One URI segment as an ABAP name: "%2fdmo%2ffm" -> "/DMO/FM".
+std::string SegmentToName(const std::string& segment) {
+    std::string out;
+    for (size_t i = 0; i < segment.size(); ++i) {
+        if (i + 2 < segment.size() &&
+            (segment.compare(i, 3, "%2f") == 0 || segment.compare(i, 3, "%2F") == 0)) {
+            out += '/';
+            i += 2;
+        } else {
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(segment[i])));
+        }
+    }
+    return out;
+}
+
+std::string FirstSegment(const std::string& path) {
+    return path.substr(0, path.find('/'));
+}
+
+}  // namespace
+
+ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri) {
+    ActivateObjectParams params;
+    params.uri = object_uri;
+
+    const std::string base = "/sap/bc/adt/";
+    if (object_uri.compare(0, base.size(), base) != 0) {
+        return params;
+    }
+    const std::string tail = object_uri.substr(base.size());
+
+    for (const auto& m : kUriTypeMap) {
+        const std::string seg(m.path_segment);
+        if (tail.size() <= seg.size() || tail.compare(0, seg.size(), seg) != 0) {
+            continue;
+        }
+        const std::string rest = tail.substr(seg.size());  // "<name>[/...]"
+        const std::string first = FirstSegment(rest);
+        params.type = m.type;
+        params.name = SegmentToName(first);
+
+        if (params.type == "FUGR/F" && first.size() < rest.size()) {
+            // ".../groups/<g>/fmodules/<fm>" or ".../groups/<g>/includes/<incl>"
+            const std::string below = rest.substr(first.size() + 1);
+            const std::string kind = FirstSegment(below);
+            const std::string part =
+                kind.size() < below.size() ? FirstSegment(below.substr(kind.size() + 1)) : "";
+            if (!part.empty() && (kind == "fmodules" || kind == "includes")) {
+                params.type = kind == "fmodules" ? "FUGR/FF" : "FUGR/I";
+                params.name = SegmentToName(part);
+                params.parent_uri = base + seg + first;
+            }
+        }
+        break;
+    }
+    return params;
 }
 
 } // namespace erpl_adt
