@@ -233,6 +233,36 @@ class TestPartialFailure:
 
 
 @pytest.mark.abapgit_deploy
+class TestPartialFailureWithInclude:
+    """A program whose new include is activated in the same deploy, next to a
+    broken program: after the worklist activation fails as a whole, the
+    healthy main program must not fail only because it was retried before
+    its include."""
+
+    def test_main_program_and_its_new_include_survive_a_broken_neighbour(self, cli, clean,
+                                                                         tmp_path):
+        repo = _repo(tmp_path / "repo", {
+            MAIN: _prog(MAIN, "Report with include", MAIN_SOURCE),
+            TOP: _prog(TOP, "Include ZERPL_T4_R1_TOP", TOP_SOURCE, "I"),
+            BROKEN: _prog(BROKEN, "Broken report", BROKEN_SOURCE),
+            MAIN_TRAN: _tran(MAIN_TRAN, MAIN, "Report with include"),
+        })
+
+        result = cli.run("abapgit", "deploy", str(repo), "--package", PACKAGE)
+
+        data = json.loads(result.stdout)
+        assert result.returncode == 5, result.stdout + result.stderr
+        assert _entry(data, "PROG", MAIN)["action"] == "created", data
+        assert _entry(data, "PROG", TOP)["action"] == "created", data
+        assert _entry(data, "TRAN", MAIN_TRAN)["action"] == "created", data
+        assert _entry(data, "PROG", BROKEN)["action"] == "failed", data
+        assert not _pending(MAIN) and not _pending(TOP)
+        assert _source_states(MAIN) == {"A"} and _source_states(TOP) == {"A"}
+        assert _pending(BROKEN)
+        assert _tstc_program(MAIN_TRAN) == MAIN
+
+
+@pytest.mark.abapgit_deploy
 class TestTransactionRollback:
     """A transaction update that SAP rejects restores the previous version."""
 
