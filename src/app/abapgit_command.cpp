@@ -243,7 +243,7 @@ Result<void, Error> PrepareExport(const AbapGitRequest& request, PreparedAbapGit
 std::string ToString(AbapGitCommand command) {
     switch (command) {
         case AbapGitCommand::Deploy: return "deploy";
-        case AbapGitCommand::Status: return "deploy";  // status is a dry-run deploy
+        case AbapGitCommand::Status: return "status";  // dry_run: true says the rest
         case AbapGitCommand::Export: return "export";
         case AbapGitCommand::Delete: return "delete";
     }

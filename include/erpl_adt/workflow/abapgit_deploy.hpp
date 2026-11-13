@@ -283,10 +283,14 @@ struct AbapGitRunReport {
     // The first error reading the system's state: the run could not
     // compare everything (connection, helper class, ...).
     std::optional<Error> read_error;
+    // The first local file that could not be read or parsed: the repository
+    // itself is broken, which no deploy can fix in the system.
+    std::optional<Error> local_error;
     // Exit code of `status` (a dry run): 0 when it could run - drift, a
-    // missing --transport or a namespace refusal are reported, not fatal -
-    // unless `strict`, where any refusal or failure exits with the most
-    // severe code. A failed system read always exits with its code.
+    // missing --transport, a namespace refusal or a part the handler cannot
+    // write are reported, not fatal - unless `strict`, where any refusal or
+    // failure exits with the most severe code. A failed system read and a
+    // local file that cannot be loaded always exit with their code.
     [[nodiscard]] int StatusExitCode(bool strict) const;
 };
 

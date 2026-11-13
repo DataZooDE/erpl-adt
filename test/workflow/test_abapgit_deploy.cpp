@@ -1462,3 +1462,21 @@ TEST_CASE("abapGit export: a destination outside the repository is never written
     CHECK_FALSE(std::filesystem::exists(outside / "zerpl_d_a.doma.xml"));
     CHECK(std::filesystem::exists(outside / "zerpl_d_a.doma.screen_0100.abap"));
 }
+
+TEST_CASE("abapGit status: a file that cannot be loaded is a local error",
+          "[workflow][abapgit_deploy]") {
+    Fixture f;
+    auto good = f.repo.Doma("zerpl_d_a", "Status");
+    auto bad = f.repo.Doma("zerpl_d_b", "B");
+    std::ofstream(bad.files["xml"], std::ios::binary | std::ios::trunc) << "<abapGit><broken";
+    auto options = f.Options();
+    options.dry_run = true;
+
+    auto report = f.Workflow().Deploy({good, bad}, options);
+
+    REQUIRE(report.objects.size() == 2);
+    REQUIRE(report.local_error.has_value());
+    CHECK(report.local_error->message.find("zerpl_d_b.doma.xml") != std::string::npos);
+    CHECK(report.StatusExitCode(false) != 0);
+    CHECK_FALSE(report.read_error.has_value());
+}

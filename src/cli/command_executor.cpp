@@ -1482,8 +1482,7 @@ int RunAbapGitCli(AbapGitCommand command, const CommandArgs& args) {
             command == AbapGitCommand::Export
                 ? std::string("Missing <dir>. Usage: erpl-adt abapgit export <dir> --package <PKG> "
                               "[--object TYPE:NAME,...]")
-                : "Missing <path>. Usage: erpl-adt abapgit " +
-                      std::string(command == AbapGitCommand::Delete ? "delete" : "deploy") +
+                : "Missing <path>. Usage: erpl-adt abapgit " + ToString(command) +
                       " <path> --package <PKG>. " + kAbapGitUsagePath;
         fmt.PrintError(MakeValidationError(usage));
         return 99;

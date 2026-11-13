@@ -746,7 +746,10 @@ int AbapGitRunReport::StatusExitCode(bool strict) const {
     if (strict) {
         return ExitCode();
     }
-    return read_error ? read_error->ExitCode() : 0;
+    if (read_error) {
+        return read_error->ExitCode();
+    }
+    return local_error ? local_error->ExitCode() : 0;
 }
 
 Result<ObjectFileSet, Error> LoadObjectFiles(const AbapGitObjectFiles& object) {
@@ -1011,6 +1014,9 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         if (files.IsErr()) {
             report.objects.push_back(FailedOutcome(object.key, object.package,
                                                    ObjectAction::Failed, files.Error()));
+            if (!report.local_error) {
+                report.local_error = files.Error();
+            }
             continue;
         }
         eligible.push_back(&object);
@@ -1165,6 +1171,9 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
         if (files.IsErr()) {
             report.objects.push_back(
                 FailedOutcome(it->key, it->package, ObjectAction::Failed, files.Error()));
+            if (!report.local_error) {
+                report.local_error = files.Error();
+            }
             continue;
         }
         eligible.push_back(&*it);

@@ -222,6 +222,27 @@ class TestGuardRails:
         finally:
             cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
 
+    def test_status_fails_on_a_broken_file(self, cli, tmp_path):
+        # A pull request that breaks an XML file must not pass `status`
+        # (without --strict), while the other objects are still reported.
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / ".abapgit.xml").write_bytes((SRC.parent / ".abapgit.xml").read_bytes())
+        (repo / "src" / self.FILE.name).write_bytes(self.FILE.read_bytes())
+        (repo / "src" / "zerpl_d_broken.doma.xml").write_bytes(
+            self.FILE.read_bytes()[:400])  # cut off mid-element
+
+        status = cli.run("abapgit", "status", str(repo), "--package", PACKAGE)
+
+        assert status.returncode != 0, status.stdout + status.stderr
+        data = json.loads(status.stdout)
+        assert data["command"] == "status"
+        assert data["dry_run"] is True
+        assert data["exit_code"] == status.returncode
+        assert _entry(data, "DOMA", "ZERPL_D_BROKEN")["action"] == "failed"
+        assert _entry(data, "DOMA", "ZERPL_D_SO_STATUS")["action"] in ("created", "updated",
+                                                                       "unchanged")
+
     def test_status_reports_without_writing(self, cli, adt):
         cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
 
