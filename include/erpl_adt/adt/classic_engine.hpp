@@ -36,6 +36,35 @@ struct EngineOp {
 // Logon user (META changed_by field) and changeable namespaces (values["NS"]).
 EngineOp SystemInfoOp();
 
+// --- batched runs -----------------------------------------------------------
+// One run can carry the operations of many objects. Every operation runs in
+// its own TRY block, so an exception fails that operation (rc 99, the text in
+// `errors`), not the run.
+
+// `op` on behalf of `owner` (the deployed object, "PROG ZFOO"): skipped -
+// values["SKIP"] names the failed owner, rc 1 - when an operation of one of
+// `required` failed earlier in the same run; when `op` itself fails, `owner`
+// counts as failed for the operations after it.
+EngineOp GuardedOp(const EngineOp& op, const std::string& owner,
+                   const std::vector<std::string>& required);
+
+// A DWINACTIV working object: object "REPS" / "DYNP" / "CUAD" / "REPT" ...,
+// obj_name as SAP keys it (for DYNP: the program padded to 40 + the screen).
+struct WorkingObject {
+    std::string owner;
+    std::string object;
+    std::string obj_name;
+};
+
+// The DYNP working object of screen `screen` of `program`.
+std::string DynproWorkingName(const std::string& program, const std::string& screen);
+
+// Commits the run's writes and activates `objects` in one
+// RS_WORKING_OBJECTS_ACTIVATE call (skipping owners that failed earlier in
+// the run). values["INACTIVE"] lists "<owner>\t<object> <obj_name>" for each
+// entry left inactive; such owners count as failed for later operations.
+EngineOp ActivateObjectsOp(const std::vector<WorkingObject>& objects);
+
 // Escapes `value` as an ABAP character literal ('...', quotes doubled).
 std::string AbapQuote(const std::string& value);
 

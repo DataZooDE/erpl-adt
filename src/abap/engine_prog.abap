@@ -6,8 +6,8 @@
 *   write:    RS_CORR_INSERT, RPY_PROGRAM_INSERT (create), UPDATE_PROGDIR,
 *             RPY_DYNPRO_INSERT / RS_SCRP_DELETE, RS_CUA_INTERNAL_WRITE,
 *             INSERT TEXTPOOL -- everything saved inactive
-*   activate: RS_WORKING_OBJECTS_ACTIVATE (REPS / DYNP / CUAD / REPT), run as
-*             its own engine run after the writes
+*   activate: activate_objects (engine_activate.abap) at the end of the
+*             deploy's write run, for every program at once
 *   delete:   RS_DELETE_PROGRAM
 * Source code of an existing program is written over ADT (lock + PUT), not here.
 "@@DEFINITIONS
@@ -107,9 +107,6 @@
                 write_progdir TYPE abap_bool
                 write_cua     TYPE abap_bool
                 write_tpool   TYPE abap_bool.
-    METHODS prog_activate
-      IMPORTING name    TYPE syrepid
-                objects TYPE string.
     "! Emits DATA PENDING: the program's parts that have an inactive version
     "! (REPS, REPT, CUAD, DYNPnnnn), e.g. after a failed activation.
     METHODS prog_emit_pending
@@ -774,63 +771,6 @@
       RETURN.
     ENDIF.
     ok = abap_true.
-  ENDMETHOD.
-
-
-  METHOD prog_activate.
-    DATA objects_tab TYPE STANDARD TABLE OF dwinactiv WITH DEFAULT KEY.
-    DATA checklist TYPE REF TO cl_wb_checklist.
-    DATA errors TYPE swbme_error_tab.
-    DATA padded TYPE c LENGTH 40.
-    DATA obj_name TYPE dwinactiv-obj_name.
-
-    padded = name.
-    SPLIT objects AT ` ` INTO TABLE DATA(kinds).
-    LOOP AT kinds INTO DATA(kind) WHERE table_line IS NOT INITIAL.
-      DATA(object) = substring( val = kind len = 4 ).
-      IF object = 'DYNP' AND strlen( kind ) > 4.
-        " DYNP objects are named <program padded to 40><screen number>.
-        DATA(dynnr) = substring( val = kind off = 4 ).
-        CONCATENATE padded dynnr INTO obj_name RESPECTING BLANKS.
-      ELSE.
-        obj_name = name.
-      ENDIF.
-      APPEND VALUE #( object = object obj_name = obj_name ) TO objects_tab.
-    ENDLOOP.
-
-    CALL FUNCTION 'RS_WORKING_OBJECTS_ACTIVATE'
-      EXPORTING
-        activate_ddic_objects  = abap_false
-        with_popup             = abap_false
-        ui_decoupled           = abap_true
-      IMPORTING
-        p_checklist            = checklist
-      TABLES
-        objects                = objects_tab
-      EXCEPTIONS
-        excecution_error       = 1
-        cancelled              = 2
-        insert_into_corr_error = 3
-        OTHERS                 = 4.
-    DATA(subrc) = sy-subrc.
-    DATA(failed) = xsdbool( subrc <> 0 ).
-    IF subrc <> 0.
-      emit_symsg( ).
-    ENDIF.
-    IF checklist IS BOUND.
-      checklist->get_error_messages( IMPORTING p_error_tab = errors ).
-      LOOP AT errors ASSIGNING FIELD-SYMBOL(<error>).
-        LOOP AT <error>-mtext INTO DATA(text).
-          emit( kind = 'ERR' text = |{ <error>-object_text }: { text }| ).
-          failed = abap_true.
-        ENDLOOP.
-      ENDLOOP.
-    ENDIF.
-    IF failed = abap_true.
-      emit_rc( COND #( WHEN subrc <> 0 THEN subrc ELSE 8 ) ).
-      RETURN.
-    ENDIF.
-    emit_rc( 0 ).
   ENDMETHOD.
 
 

@@ -152,24 +152,50 @@ TEST_CASE("PROG: a program that only exists inactive has no files", "[workflow][
     CHECK(state.Value().files.empty());
 }
 
-TEST_CASE("PROG: create writes everything in one run, then activates in another",
+namespace {
+
+// The plan's working objects in short form: "REPS", "DYNP0100", "CUAD", "REPT".
+std::string Activation(const DeployPlan& plan) {
+    std::string out;
+    for (const auto& w : plan.activate) {
+        CHECK(w.owner.empty());  // set by the workflow
+        std::string item = w.object;
+        if (w.object == "DYNP") {
+            CHECK(w.obj_name.size() == 44);
+            CHECK(w.obj_name.rfind("ZERPL_T_PROG ", 0) == 0);
+            item += w.obj_name.substr(40);
+        } else {
+            CHECK(w.obj_name == "ZERPL_T_PROG");
+        }
+        out += (out.empty() ? "" : " ") + item;
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("PROG: create is one engine write plus its working objects",
           "[workflow][abapgit_prog]") {
     Ctx c;
     ProgFiles files;
-    auto parts = Handler()->Apply(kKey, files.Build(), ObjectState{}, c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"source", "PROGDIR", "screen 0100",
-                                                    "screen 0200", "CUA", "TPOOL"});
-    CHECK(c.session.PutCallCount() == 0);  // no ADT write for a new program
-    REQUIRE(c.engine.runs.size() == 2);
-    const auto& put = c.engine.runs[0].at(0);
+    auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"source", "PROGDIR", "screen 0100",
+                                               "screen 0200", "CUA", "TPOOL"});
+    CHECK_FALSE(p.adt);  // no ADT write for a new program
+    CHECK(p.ddic.empty());
+    REQUIRE(p.writes.size() == 1);
+    const auto& put = p.writes[0].op;
+    CHECK(p.writes[0].what == "Creating program ZERPL_T_PROG");
     CHECK(put.call.find("prog_put( name = 'ZERPL_T_PROG'") == 0);
     CHECK(put.call.find("create = abap_true") != std::string::npos);
     CHECK(put.call.find("write_cua = abap_true") != std::string::npos);
     CHECK(put.payload.find("<SOURCE>PROGRAM zerpl_t_prog.\n</SOURCE>") != std::string::npos);
     CHECK(put.payload.find("<FLOWS><item><SCREEN>0100</SCREEN>") != std::string::npos);
-    CHECK(c.engine.runs[1].at(0).call ==
-          "prog_activate( name = 'ZERPL_T_PROG' objects = 'REPS DYNP0100 DYNP0200 CUAD REPT' ).");
+    CHECK(Activation(p) == "REPS DYNP0100 DYNP0200 CUAD REPT");
+    CHECK(c.engine.runs.empty());  // planning writes nothing
+    CHECK(c.session.PutCallCount() == 0);
 }
 
 TEST_CASE("PROG: only the changed screen is written and activated", "[workflow][abapgit_prog]") {
@@ -177,18 +203,19 @@ TEST_CASE("PROG: only the changed screen is written and activated", "[workflow][
     ProgFiles current;
     ProgFiles desired;
     desired.screens[1] = Screen("0200", "015");
-    auto parts = Handler()->Apply(kKey, desired.Build(), Existing(current), c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"screen 0200"});
-    CHECK(c.session.PutCallCount() == 0);
-    REQUIRE(c.engine.runs.size() == 2);
-    const auto& put = c.engine.runs[0].at(0);
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"screen 0200"});
+    CHECK_FALSE(p.adt);
+    REQUIRE(p.writes.size() == 1);
+    const auto& put = p.writes[0].op;
     CHECK(put.call.find("create = abap_false") != std::string::npos);
     CHECK(put.call.find("write_cua = abap_false") != std::string::npos);
     CHECK(put.call.find("write_tpool = abap_false") != std::string::npos);
     CHECK(put.payload.find("<SCREEN>0100</SCREEN>") == std::string::npos);
     CHECK(put.payload.find("<VISLENGTH>015</VISLENGTH>") != std::string::npos);
-    CHECK(c.engine.runs[1].at(0).call.find("objects = 'DYNP0200'") != std::string::npos);
+    CHECK(Activation(p) == "DYNP0200");
 }
 
 TEST_CASE("PROG: changed flow logic rewrites that screen", "[workflow][abapgit_prog]") {
@@ -196,10 +223,10 @@ TEST_CASE("PROG: changed flow logic rewrites that screen", "[workflow][abapgit_p
     ProgFiles current;
     ProgFiles desired;
     desired.flows["0100"] = "PROCESS BEFORE OUTPUT.\n  MODULE status_0100.\nPROCESS AFTER INPUT.\n";
-    auto parts = Handler()->Apply(kKey, desired.Build(), Existing(current), c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"screen 0100"});
-    CHECK(c.engine.runs[0].at(0).payload.find("MODULE status_0100.") != std::string::npos);
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"screen 0100"});
+    CHECK(plan.Value().writes.at(0).op.payload.find("MODULE status_0100.") != std::string::npos);
 }
 
 TEST_CASE("PROG: a title change writes the CUA only", "[workflow][abapgit_prog]") {
@@ -208,10 +235,10 @@ TEST_CASE("PROG: a title change writes the CUA only", "[workflow][abapgit_prog]"
     ProgFiles desired;
     desired.cua = "<CUA><ADM><PFKCODE>000001</PFKCODE></ADM><TIT><RSMPE_TITT><CODE>T0100</CODE>"
                   "<TEXT>Show</TEXT></RSMPE_TITT></TIT></CUA>";
-    auto parts = Handler()->Apply(kKey, desired.Build(), Existing(current), c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"CUA"});
-    CHECK(c.engine.runs[1].at(0).call.find("objects = 'CUAD'") != std::string::npos);
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"CUA"});
+    CHECK(Activation(plan.Value()) == "CUAD");
 }
 
 TEST_CASE("PROG: a source change goes over ADT with lock and unlock",
@@ -224,18 +251,23 @@ TEST_CASE("PROG: a source change goes over ADT with lock and unlock",
     ProgFiles current;
     ProgFiles desired;
     desired.source = "PROGRAM zerpl_t_prog.\n* changed\n";
-    auto parts = Handler()->Apply(kKey, desired.Build(), Existing(current), c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"source"});
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"source"});
+    REQUIRE(p.adt);
+    CHECK(c.session.PutCallCount() == 0);  // only when the workflow runs the ADT phase
+    auto written = p.adt(c.ctx);
+    REQUIRE(written.IsOk());
     REQUIRE(c.session.PutCallCount() == 1);
     CHECK(c.session.PutCalls()[0].path.find(
               "/sap/bc/adt/programs/programs/zerpl_t_prog/source/main") == 0);
     CHECK(c.session.PutCalls()[0].body == "PROGRAM zerpl_t_prog.\n* changed");
     // The attributes are re-applied to the new inactive version, then activated.
-    REQUIRE(c.engine.runs.size() == 2);
-    CHECK(c.engine.runs[0].at(0).call.find("write_progdir = abap_true") != std::string::npos);
-    CHECK(c.engine.runs[0].at(0).call.find("write_cua = abap_false") != std::string::npos);
-    CHECK(c.engine.runs[1].at(0).call.find("objects = 'REPS'") != std::string::npos);
+    REQUIRE(p.writes.size() == 1);
+    CHECK(p.writes[0].op.call.find("write_progdir = abap_true") != std::string::npos);
+    CHECK(p.writes[0].op.call.find("write_cua = abap_false") != std::string::npos);
+    CHECK(Activation(p) == "REPS");
 }
 
 TEST_CASE("PROG: a screen missing from the files is deleted", "[workflow][abapgit_prog]") {
@@ -244,27 +276,12 @@ TEST_CASE("PROG: a screen missing from the files is deleted", "[workflow][abapgi
     ProgFiles desired;
     desired.screens.pop_back();
     desired.flows.erase("0200");
-    auto parts = Handler()->Apply(kKey, desired.Build(), Existing(current), c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"screen 0200 (deleted)"});
-    REQUIRE(c.engine.runs.size() == 1);  // a deletion needs no activation
-    CHECK(c.engine.runs[0].at(0).payload.find("<DELETE_SCREENS><item>0200</item>") !=
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"screen 0200 (deleted)"});
+    CHECK(plan.Value().activate.empty());  // a deletion needs no activation
+    CHECK(plan.Value().writes.at(0).op.payload.find("<DELETE_SCREENS><item>0200</item>") !=
           std::string::npos);
-}
-
-TEST_CASE("PROG: activation errors fail with SAP's text", "[workflow][abapgit_prog]") {
-    Ctx c;
-    EngineOpResult ok;
-    ok.rc = 0;
-    EngineOpResult failed;
-    failed.rc = 8;
-    failed.errors.push_back("Screen ZERPL_T_PROG 0100: Module STATUS_0100 is not defined");
-    c.engine.scripted = {{ok}, {failed}};
-    ProgFiles files;
-    auto parts = Handler()->Apply(kKey, files.Build(), ObjectState{}, c.ctx);
-    REQUIRE(parts.IsErr());
-    CHECK(parts.Error().message.find("Module STATUS_0100 is not defined") != std::string::npos);
-    CHECK(parts.Error().category == ErrorCategory::ActivationError);
 }
 
 TEST_CASE("PROG: unsupported parts are refused by name", "[workflow][abapgit_prog]") {
@@ -272,18 +289,18 @@ TEST_CASE("PROG: unsupported parts are refused by name", "[workflow][abapgit_pro
     SECTION("VARIS") {
         ProgFiles files;
         files.extra = "<VARIS><item><VARIANT>SAP&amp;DEFAULT</VARIANT></item></VARIS>";
-        auto parts = Handler()->Apply(kKey, files.Build(), ObjectState{}, c.ctx);
-        REQUIRE(parts.IsErr());
-        CHECK(parts.Error().message.find("VARIS") != std::string::npos);
+        auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
+        REQUIRE(plan.IsErr());
+        CHECK(plan.Error().message.find("VARIS") != std::string::npos);
     }
     SECTION("native dynpro") {
         ProgFiles files;
         files.screens[0] = "<item><HEADER><SCREEN>0100</SCREEN></HEADER><NAT_HEADER><PROG>X</PROG>"
                            "</NAT_HEADER></item>";
-        auto parts = Handler()->Apply(kKey, files.Build(), ObjectState{}, c.ctx);
-        REQUIRE(parts.IsErr());
-        CHECK(parts.Error().message.find("screen 0100") != std::string::npos);
-        CHECK(parts.Error().message.find("native dynpro") != std::string::npos);
+        auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
+        REQUIRE(plan.IsErr());
+        CHECK(plan.Error().message.find("screen 0100") != std::string::npos);
+        CHECK(plan.Error().message.find("native dynpro") != std::string::npos);
     }
     CHECK(c.engine.runs.empty());
 }
@@ -292,9 +309,9 @@ TEST_CASE("PROG: a flow logic file without its screen is refused", "[workflow][a
     Ctx c;
     ProgFiles files;
     files.flows["0300"] = "PROCESS BEFORE OUTPUT.\n";
-    auto parts = Handler()->Apply(kKey, files.Build(), ObjectState{}, c.ctx);
-    REQUIRE(parts.IsErr());
-    CHECK(parts.Error().message.find("screen_0300") != std::string::npos);
+    auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
+    REQUIRE(plan.IsErr());
+    CHECK(plan.Error().message.find("screen_0300") != std::string::npos);
 }
 
 TEST_CASE("PROG: delete is RS_DELETE_PROGRAM with package and transport",
@@ -312,10 +329,10 @@ TEST_CASE("PROG: inactive leftovers are rewritten and activated", "[workflow][ab
     ProgFiles files;
     auto current = Existing(files);
     current.pending = {"CUAD", "DYNP0100"};
-    auto parts = Handler()->Apply(kKey, files.Build(), current, c.ctx);
-    REQUIRE(parts.IsOk());
-    CHECK(parts.Value() == std::vector<std::string>{"screen 0100", "CUA"});
-    CHECK(c.engine.runs[1].at(0).call.find("objects = 'DYNP0100 CUAD'") != std::string::npos);
+    auto plan = Handler()->Plan(kKey, files.Build(), current, c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"screen 0100", "CUA"});
+    CHECK(Activation(plan.Value()) == "DYNP0100 CUAD");
 }
 
 TEST_CASE("PROG: pending inactive parts come from the engine's PENDING data",

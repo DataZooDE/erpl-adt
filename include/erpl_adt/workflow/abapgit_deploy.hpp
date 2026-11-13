@@ -25,6 +25,21 @@ namespace erpl_adt {
 //   2. compares it with the files (both sides in abapGit's exact format),
 //   3. creates / updates only what differs, in dependency order,
 //   4. reports one outcome per object.
+//
+// Step 3 is batched by phase, so a deploy costs at most three helper-class
+// runs (each ~3 s: write + activate the helper class) whatever the number of
+// objects. Handlers only plan (DeployPlan); the workflow executes the phases
+// of all objects together:
+//   read run       every object's state                       (engine run 1)
+//   DDIC run       domains, data elements: written + activated  (engine run 2)
+//   ADT            function groups, program sources: per object over ADT
+//   write run      screens, GUI status, text pools, transactions, new
+//                  programs - saved inactive - then ONE activation of every
+//                  saved working object (RS_WORKING_OBJECTS_ACTIVATE)  (run 3)
+// DDIC objects are active before anything that uses them is written or
+// generated. Failures stay with their object: every operation carries its
+// owner, an operation of an object whose dependency failed earlier in the run
+// is skipped, and what activation leaves inactive fails the object it belongs to.
 // ---------------------------------------------------------------------------
 
 // File name (e.g. "zerpl_d_so_status.doma.xml") -> file bytes.
@@ -58,6 +73,28 @@ struct TypeContext {
     std::string language;   // master language, e.g. "E"
 };
 
+// One engine operation of a plan, and what its failure is reported as
+// ("Writing domain ZA: <SAP's message>").
+struct PlannedOp {
+    EngineOp op;
+    std::string what;
+};
+
+// What a handler needs done to bring one object to its files, by phase (see
+// the header comment). Empty phases are skipped.
+struct DeployPlan {
+    std::vector<std::string> parts;   // for the report, e.g. "screen 0100"
+    std::vector<PlannedOp> ddic;      // DDIC writes that activate themselves
+    // ADT requests (lock / write / unlock / activate), run in object order
+    // between the DDIC run and the write run. Returns the parts it wrote
+    // (appended to `parts`).
+    std::function<Result<std::vector<std::string>, Error>(TypeContext&)> adt;
+    std::vector<PlannedOp> writes;    // engine writes, saved inactive
+    // Working objects to activate after the writes (owner is set by the
+    // workflow), e.g. {"", "REPS", "ZFOO"}.
+    std::vector<WorkingObject> activate;
+};
+
 class IClassicTypeHandler {
 public:
     virtual ~IClassicTypeHandler() = default;
@@ -71,11 +108,12 @@ public:
         const AbapGitObjectKey& key, const std::vector<EngineOpResult>& results,
         TypeContext& ctx) const = 0;
 
-    // Bring the system to `desired`. Returns the parts that were written
-    // (e.g. "DD01V", "screen 0100", "CUA") for the report.
-    [[nodiscard]] virtual Result<std::vector<std::string>, Error> Apply(
-        const AbapGitObjectKey& key, const ObjectFileSet& desired, const ObjectState& current,
-        TypeContext& ctx) const = 0;
+    // What it takes to bring the system to `desired`. Writes nothing: the
+    // workflow runs the plans of all objects phase by phase.
+    [[nodiscard]] virtual Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key,
+                                                        const ObjectFileSet& desired,
+                                                        const ObjectState& current,
+                                                        const TypeContext& ctx) const = 0;
 
     [[nodiscard]] virtual Result<void, Error> Delete(const AbapGitObjectKey& key,
                                                      TypeContext& ctx) const = 0;

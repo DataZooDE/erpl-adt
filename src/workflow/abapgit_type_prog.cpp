@@ -16,8 +16,9 @@
 //   * attributes: UPDATE_PROGDIR on the inactive version;
 //   * screens: RPY_DYNPRO_INSERT / RS_SCRP_DELETE; CUA: RS_CUA_INTERNAL_WRITE;
 //     text pool: INSERT TEXTPOOL ... STATE 'I';
-//   * activation: RS_WORKING_OBJECTS_ACTIVATE in a separate engine run (ADT
-//     activation of the program does not activate CUAD / REPT).
+//   * activation: RS_WORKING_OBJECTS_ACTIVATE at the end of the deploy's
+//     write run, for all programs at once (ADT activation of the program does
+//     not activate CUAD / REPT).
 
 #include "abapgit_types.hpp"
 
@@ -73,13 +74,6 @@ EngineOp ProgPutOp(const std::string& name, const TypeContext& ctx, const PutFla
                 " write_cua = " + AbapBool(flags.write_cua) +
                 " write_tpool = " + AbapBool(flags.write_tpool) + " ).",
             asx_xml};
-}
-
-// `objects`: space separated REPS / DYNPnnnn / CUAD / REPT.
-EngineOp ProgActivateOp(const std::string& name, const std::string& objects) {
-    return {"prog_activate( name = " + AbapQuote(name) + " objects = " + AbapQuote(objects) +
-                " ).",
-            ""};
 }
 
 EngineOp ProgDeleteOp(const std::string& name, const std::string& devclass,
@@ -318,44 +312,24 @@ public:
         return Result<void, Error>::Ok();
     }
 
-    PartsResult Apply(const AbapGitObjectKey& key, const ObjectFileSet& desired,
-                      const ObjectState& current, TypeContext& ctx) const override {
+    // ADT phase: the source of an existing program (lock + PUT + unlock, as
+    // SE38 / Eclipse). Write run: everything else in one prog_put, saved
+    // inactive; then REPS / DYNPnnnn / CUAD / REPT are activated with the
+    // other programs of the deploy (ADT activation of a program does not
+    // activate CUAD / REPT).
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState& current,
+                                   const TypeContext& ctx) const override {
+        using R = Result<DeployPlan, Error>;
         auto valid = Validate(key, desired, current, ctx.language);
         if (valid.IsErr()) {
-            return PartsResult::Err(valid.Error());
+            return R::Err(valid.Error());
         }
         const std::string xml_name = FileName(key, "xml");
         const std::string abap_name = FileName(key, "abap");
-        auto xml_it = desired.find(xml_name);
-        if (xml_it == desired.end()) {
-            return PartsResult::Err(ProgError("Missing file " + xml_name, ErrorCategory::Internal));
-        }
-        auto want = SplitProgXml(xml_it->second, xml_name);
+        auto want = SplitProgXml(desired.at(xml_name), xml_name);
         if (want.IsErr()) {
-            return PartsResult::Err(want.Error());
-        }
-        if (desired.find(abap_name) == desired.end()) {
-            return PartsResult::Err(
-                ProgError("Missing file " + abap_name + " (program source)", ErrorCategory::Internal));
-        }
-        // Every flow logic file needs its screen and vice versa.
-        const std::string flow_prefix = FileName(key, "screen_");
-        for (const auto& [name, bytes] : desired) {
-            if (name.rfind(flow_prefix, 0) == 0) {
-                const std::string screen = name.substr(flow_prefix.size(), 4);
-                if (want.Value().screens.count(screen) == 0) {
-                    return PartsResult::Err(ProgError(
-                        name + " has no screen " + screen + " in DYNPROS of " + xml_name,
-                        ErrorCategory::Internal));
-                }
-            }
-        }
-        for (const auto& [screen, item] : want.Value().screens) {
-            if (desired.find(FlowFileName(key, screen)) == desired.end()) {
-                return PartsResult::Err(ProgError("Missing file " + FlowFileName(key, screen) +
-                                                      " (flow logic of screen " + screen + ")",
-                                                  ErrorCategory::Internal));
-            }
+            return R::Err(want.Error());
         }
 
         ProgParts have;
@@ -363,7 +337,7 @@ public:
         if (cur_xml != current.files.end()) {
             auto split = SplitProgXml(cur_xml->second, xml_name + " (system)");
             if (split.IsErr()) {
-                return PartsResult::Err(split.Error());
+                return R::Err(split.Error());
             }
             have = split.Value();
         }
@@ -388,14 +362,7 @@ public:
                 screens_to_delete.push_back(screen);
             }
         }
-        const bool cua_changed = w.cua != have.cua;
-        if (cua_changed && w.cua.empty()) {
-            return PartsResult::Err(ProgError(
-                "PROG " + key.name +
-                    ": the file has no CUA but the system has a GUI status / title set; removing "
-                    "it is not supported (abapGit does not remove it either) — delete it in SE41",
-                ErrorCategory::Internal));
-        }
+        const bool cua_changed = w.cua != have.cua;  // removal: refused by Validate
         bool tpool_changed = w.tpool != have.tpool;
 
         // Parts with an inactive version (a previous deploy failed to
@@ -424,19 +391,25 @@ public:
         }
         std::sort(screens_to_write.begin(), screens_to_write.end());
 
-        // Source of an existing program: over ADT, before the engine run, so
+        DeployPlan plan;
+        // Source of an existing program: over ADT, before the write run, so
         // the inactive version exists when UPDATE_PROGDIR runs.
         const bool write_source = !create && (source_changed || progdir_changed || source_pending);
         if (write_source) {
-            auto written = WriteSourceWithAutoLock(
-                ctx.session, ProgramSourceUri(key.name),
-                SourceForAdt(FileOrEmpty(desired, abap_name)),
-                ctx.transport.empty() ? std::nullopt : std::optional<std::string>(ctx.transport));
-            if (written.IsErr()) {
-                auto err = written.Error();
-                err.message = "Writing the source of program " + key.name + ": " + err.message;
-                return PartsResult::Err(err);
-            }
+            const std::string name = key.name;
+            const std::string source = SourceForAdt(FileOrEmpty(desired, abap_name));
+            plan.adt = [name, source](TypeContext& adt_ctx) -> PartsResult {
+                auto written = WriteSourceWithAutoLock(
+                    adt_ctx.session, ProgramSourceUri(name), source,
+                    adt_ctx.transport.empty() ? std::nullopt
+                                              : std::optional<std::string>(adt_ctx.transport));
+                if (written.IsErr()) {
+                    auto err = written.Error();
+                    err.message = "Writing the source of program " + name + ": " + err.message;
+                    return PartsResult::Err(err);
+                }
+                return PartsResult::Ok({});
+            };
         }
 
         PutFlags flags;
@@ -453,10 +426,9 @@ public:
             }
         }
 
-        std::vector<std::string> parts;
-        std::string activate;
-        auto add_object = [&activate](const std::string& object) {
-            activate += (activate.empty() ? "" : " ") + object;
+        std::vector<std::string>& parts = plan.parts;
+        auto add_object = [&plan](const std::string& object, const std::string& obj_name) {
+            plan.activate.push_back({"", object, obj_name});
         };
         if (create || source_changed || source_pending) {
             parts.push_back("source");
@@ -465,24 +437,24 @@ public:
             parts.push_back("PROGDIR");
         }
         if (create || write_source) {
-            add_object("REPS");
+            add_object("REPS", key.name);
         }
         for (const auto& screen : screens_to_write) {
             parts.push_back("screen " + screen);
-            add_object("DYNP" + screen);
+            add_object("DYNP", DynproWorkingName(key.name, screen));
         }
         for (const auto& screen : screens_to_delete) {
             parts.push_back("screen " + screen + " (deleted)");
         }
         if (flags.write_cua) {
             parts.push_back("CUA");
-            add_object("CUAD");
+            add_object("CUAD", key.name);
         }
         if (flags.write_tpool) {
             if (!(create && w.tpool.empty())) {
                 parts.push_back("TPOOL");
             }
-            add_object("REPT");
+            add_object("REPT", key.name);
         }
 
         const bool engine_write = create || flags.write_progdir || !screens_to_write.empty() ||
@@ -519,23 +491,12 @@ public:
             if (create) {
                 values += "<SOURCE>" + EscapeXmlText(FileOrEmpty(desired, abap_name)) + "</SOURCE>";
             }
-            auto run = RunChecked(ctx.engine, {ProgPutOp(key.name, ctx, flags, WrapAsxValues(values))},
-                                  (create ? "Creating program " : "Writing program ") + key.name);
-            if (run.IsErr()) {
-                return PartsResult::Err(run.Error());
-            }
+            PlannedOp put;
+            put.op = ProgPutOp(key.name, ctx, flags, WrapAsxValues(values));
+            put.what = (create ? "Creating program " : "Writing program ") + key.name;
+            plan.writes.push_back(std::move(put));
         }
-
-        // Activation in its own engine run: the writes above must be committed
-        // before RS_WORKING_OBJECTS_ACTIVATE sees them.
-        if (!activate.empty()) {
-            auto run = RunChecked(ctx.engine, {ProgActivateOp(key.name, activate)},
-                                  "Activating program " + key.name);
-            if (run.IsErr()) {
-                return PartsResult::Err(run.Error());
-            }
-        }
-        return PartsResult::Ok(std::move(parts));
+        return R::Ok(std::move(plan));
     }
 
     Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {

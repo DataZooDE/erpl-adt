@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,18 @@ class _AdtReader:
 @pytest.fixture(scope="module")
 def adt(sap_config):
     return _AdtReader(sap_config)
+
+
+def _engine_runs(result):
+    """Helper-class runs of one CLI call, counted in its -v log (each run is
+    one POST to ADT classrun; writing and activating the helper costs ~3 s)."""
+    return result.stderr.count("POST /sap/bc/adt/oo/classrun/")
+
+
+def _git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=erpl-adt test",
+                    "-c", "user.email=test@erpl.invalid", *args],
+                   check=True, capture_output=True)
 
 
 def _helper_classes(cli):
@@ -366,13 +379,47 @@ class TestRepositoryRoundTrip:
         # history, which a deploy rightly refuses to overwrite.
         cli.run("abapgit", "delete", str(FIXTURES), "--package", PACKAGE, "--force",
                 timeout=1800)
-        data = cli.run_ok("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,
-                          timeout=1800)
+        result = cli.run("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,
+                         timeout=1800, extra_flags=["-v"])
+        assert result.returncode == 0, result.stdout + result.stderr[-3000:]
+        data = json.loads(result.stdout)
 
         order = [o["type"] for o in data["objects"]]
         rank = {"DOMA": 0, "DTEL": 1, "FUGR": 2, "PROG": 3, "TRAN": 4}
         assert order == sorted(order, key=rank.get), order
         assert not [o for o in data["objects"] if o["action"] in ("failed", "refused")]
+        # Batched per phase, whatever the object count: one read run, one
+        # DDIC run (domain + data element, activated before anything uses
+        # them), one run that writes screens / GUI status / text pools /
+        # transactions and activates them. The function group goes over ADT.
+        assert _engine_runs(result) <= 3, _engine_runs(result)
+
+    def test_one_changed_screen_costs_two_engine_runs(self, cli, tmp_path):
+        # A redeploy in a real work tree: the fixture is committed, one
+        # screen's flow logic changes. Read run + one write-and-activate run.
+        repo = tmp_path / "repo"
+        shutil.copytree(FIXTURES, repo)
+        _git(repo, "init", "-q")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-qm", "fixture")
+        flow = repo / "src" / "zerpl_so_display.prog.screen_0100.abap"
+        original = flow.read_bytes()
+        flow.write_bytes(original.replace(b"PROCESS BEFORE OUTPUT.\n",
+                                          b"PROCESS BEFORE OUTPUT.\n* order number entry\n", 1))
+
+        result = cli.run("abapgit", "deploy", str(repo), "--package", PACKAGE,
+                         timeout=1800, extra_flags=["-v"])
+
+        assert result.returncode == 0, result.stdout + result.stderr[-3000:]
+        data = json.loads(result.stdout)
+        changed = [o for o in data["objects"] if o["action"] != "unchanged"]
+        assert [(o["name"], o["action"], o["parts"]) for o in changed] == \
+               [("ZERPL_SO_DISPLAY", "updated", ["screen 0100"])]
+        assert _engine_runs(result) <= 2, _engine_runs(result)
+        # Back to the fixture.
+        _git(repo, "commit", "-qam", "comment")
+        flow.write_bytes(original)
+        cli.run_ok("abapgit", "deploy", str(repo), "--package", PACKAGE, timeout=1800)
 
     def test_redeploy_whole_repository_changes_nothing(self, cli):
         data = cli.run_ok("abapgit", "deploy", str(FIXTURES), "--package", PACKAGE,

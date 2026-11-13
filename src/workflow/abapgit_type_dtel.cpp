@@ -71,23 +71,22 @@ public:
         return Result<void, Error>::Ok();
     }
 
-    Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
-                                                  const ObjectFileSet& desired,
-                                                  const ObjectState& /*current*/,
-                                                  TypeContext& ctx) const override {
-        using R = Result<std::vector<std::string>, Error>;
+    // DDIC phase: put + activate in one operation, so data elements and
+    // programs written later in the deploy find the data element active.
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState& /*current*/,
+                                   const TypeContext& ctx) const override {
         auto payload = EnginePayload(desired, FileName(key, "xml"));
         if (payload.IsErr()) {
-            return R::Err(payload.Error());
+            return Result<DeployPlan, Error>::Err(payload.Error());
         }
-        auto run = RunChecked(
-            ctx.engine,
-            {DtelPutOp(key.name, ctx.language, ctx.package, ctx.transport, payload.Value())},
-            "Writing data element " + key.name);
-        if (run.IsErr()) {
-            return R::Err(run.Error());
-        }
-        return R::Ok({"DD04V"});
+        DeployPlan plan;
+        plan.parts = {"DD04V"};
+        PlannedOp put;
+        put.op = DtelPutOp(key.name, ctx.language, ctx.package, ctx.transport, payload.Value());
+        put.what = "Writing data element " + key.name;
+        plan.ddic.push_back(std::move(put));
+        return Result<DeployPlan, Error>::Ok(std::move(plan));
     }
 
     Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {

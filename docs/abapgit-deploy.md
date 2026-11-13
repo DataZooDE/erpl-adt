@@ -87,6 +87,23 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
 6. **Activate** through the standard workbench activation; activation errors
    are reported per object.
 
+Steps 4–6 are batched by phase, so a deploy runs at most **three** helper-class
+runs whatever the number of objects:
+
+| Phase | What | How |
+|---|---|---|
+| read | every object's state, system facts | engine run 1 |
+| DDIC | domains, data elements: written and activated | engine run 2 (only if any changed) |
+| ADT | function groups, source of existing programs | ADT requests, per object |
+| write + activate | new programs, screens, GUI status, text pools, transactions; then one `RS_WORKING_OBJECTS_ACTIVATE` of everything saved | engine run 3 (only if any changed) |
+
+DDIC objects are active before anything that uses them is written or
+generated, and programs are activated before the transactions that call them
+are written. Failures stay with their object: every operation carries its
+owner, an object whose dependency failed earlier in the same run is reported
+`skipped: dependency X failed`, and whatever the activation leaves inactive
+fails the object it belongs to (with SAP's messages that name it).
+
 Dependency order: `DOMA → DTEL → FUGR (function modules) → PROG (source,
 text pool, dynpros, GUI status) → TRAN`.
 
@@ -201,10 +218,15 @@ problems in the code being deployed.
   parameters and `RS_CORR_INSERT`, but it has not been verified live: the
   A4H trial's client settings were left unchanged, so no transportable
   package with a request was available for tests.
-* Each engine run compiles and runs a temporary helper class: about 6 s on
-  the A4H trial (create 0.3 s, write 1.8 s, activate 0.9 s, run 0.1 s, delete
-  2.9 s). A program change costs two runs (write, then activate). Runs are not
-  batched across objects yet.
+* Each engine run rewrites, activates and runs the temporary helper class
+  (created once per command, deleted at the end - about 3 s together). A
+  deploy needs at most three runs (see *What a deploy does*). Measured on the
+  A4H trial (demo repository, 8 objects, two runs each): from scratch 10 runs
+  / 20.7-23.6 s before batching, 3 runs / 14.4-15.4 s after; a redeploy with
+  one changed screen 3 runs / 9.2-11.9 s before, 2 runs / 8.9-10.4 s after.
+  Beyond the first run the helper costs about 0.5-1 s per run; the rest is
+  SAP's own work (writes, screen generation, activation), which batching
+  does not change.
 * abapGit's MIXED folder logic is not supported (PREFIX and FULL are).
 * A screen whose flow logic SAP rejects (e.g. a `FIELD` that is not on the
   screen) is still saved: `RPY_DYNPRO_INSERT` saves before it generates, as

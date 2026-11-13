@@ -322,9 +322,9 @@ TEST_CASE("FUGR handler: RFC modules are refused before anything is written",
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
-    auto applied = handler.Apply(key, desired, ObjectState{}, ctx);
-    REQUIRE(applied.IsErr());
-    CHECK(applied.Error().message.find("RFC") != std::string::npos);
+    auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
+    REQUIRE(plan.IsErr());
+    CHECK(plan.Error().message.find("RFC") != std::string::npos);
     CHECK(session.PostCallCount() == 0);
     CHECK(session.PutCallCount() == 0);
 }
@@ -343,14 +343,17 @@ TEST_CASE("DTEL handler: reads and writes through the DDIF function modules",
     TypeContext ctx{session, engine, "$TMP", "", "E"};
     ObjectFileSet desired{{"zerpl_e_so_status.dtel.xml",
                            ReadBytes(kErplDemo / "zerpl_e_so_status.dtel.xml")}};
-    auto applied = handler.Apply(key, desired, ObjectState{}, ctx);
-    REQUIRE(applied.IsOk());
-    CHECK(applied.Value() == std::vector<std::string>{"DD04V"});
-    REQUIRE(engine.runs.size() == 1);
-    CHECK(engine.runs[0][0].call ==
+    auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"DD04V"});
+    // DDIC phase: written and activated before the programs that use it.
+    CHECK(plan.Value().writes.empty());
+    REQUIRE(plan.Value().ddic.size() == 1);
+    const auto& put = plan.Value().ddic[0].op;
+    CHECK(put.call ==
           "dtel_put( name = 'ZERPL_E_SO_STATUS' language = 'E' devclass = '$TMP' trkorr = '' ).");
-    CHECK(engine.runs[0][0].payload.find("<ROLLNAME>ZERPL_E_SO_STATUS</ROLLNAME>") !=
-          std::string::npos);
+    CHECK(put.payload.find("<ROLLNAME>ZERPL_E_SO_STATUS</ROLLNAME>") != std::string::npos);
+    CHECK(engine.runs.empty());
 }
 
 TEST_CASE("ActivateObjects: one request holds every object reference", "[workflow][abapgit_fugr]") {

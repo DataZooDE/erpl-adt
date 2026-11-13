@@ -212,10 +212,37 @@ public:
         return R::Ok();
     }
 
-    Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
+    // Everything goes over ADT (create, write, delete, activate), in the ADT
+    // phase - after the DDIC run, so the data elements its signatures use
+    // are active.
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState& current,
+                                   const TypeContext& ctx) const override {
+        auto valid = Validate(key, desired, current, ctx.language);
+        if (valid.IsErr()) {
+            return Result<DeployPlan, Error>::Err(valid.Error());
+        }
+        DeployPlan plan;
+        plan.adt = [this, key, desired, current](TypeContext& adt_ctx) {
+            return Write(key, desired, current, adt_ctx);
+        };
+        return Result<DeployPlan, Error>::Ok(std::move(plan));
+    }
+
+    Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {
+        auto uri = MakeUri(FunctionGroupUri(key.name));
+        if (uri.IsErr()) {
+            return Result<void, Error>::Err(uri.Error());
+        }
+        return DeleteObjectWithAutoLock(ctx.session, uri.Value(), Transport(ctx));
+    }
+
+private:
+    // The ADT requests; returns the parts written.
+    Result<std::vector<std::string>, Error> Write(const AbapGitObjectKey& key,
                                                   const ObjectFileSet& desired,
                                                   const ObjectState& current,
-                                                  TypeContext& ctx) const override {
+                                                  TypeContext& ctx) const {
         using R = Result<std::vector<std::string>, Error>;
         const std::string main_file = FileName(key, "xml");
         auto want = ParseMain(desired, main_file);
@@ -378,15 +405,6 @@ public:
         return R::Ok(parts);
     }
 
-    Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {
-        auto uri = MakeUri(FunctionGroupUri(key.name));
-        if (uri.IsErr()) {
-            return Result<void, Error>::Err(uri.Error());
-        }
-        return DeleteObjectWithAutoLock(ctx.session, uri.Value(), Transport(ctx));
-    }
-
-private:
     static std::string MainProgram(const FugrDefinition& def, const std::string& group) {
         // SAPL<group>, or /NS/SAPL<group> for namespaced groups.
         const auto upper = Upper(group);

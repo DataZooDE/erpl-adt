@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 namespace erpl_adt {
@@ -245,6 +246,233 @@ std::string Capture(const std::string& command) {
     const int status = pclose(pipe);
 #endif
     return status == 0 ? out : "";
+}
+
+// --- phased execution of the handlers' plans ---------------------------------
+
+// One object being written: its plan and where its outcome is reported.
+struct Work {
+    size_t outcome = 0;        // index into AbapGitRunReport::objects
+    AbapGitObjectKey key;
+    std::string package;
+    std::string owner;         // "PROG ZFOO": the engine ops' owner
+    std::vector<size_t> deps;  // earlier works this object mentions
+    DeployPlan plan;
+    bool broken = false;       // failed or skipped
+};
+
+constexpr size_t kNoOwner = static_cast<size_t>(-1);
+
+void FailWork(Work& w, AbapGitRunReport& report, const Error& error) {
+    auto& o = report.objects[w.outcome];
+    o.action = ObjectAction::Failed;
+    o.message = error.message;
+    o.error = error;
+    w.broken = true;
+}
+
+void SkipWork(Work& w, AbapGitRunReport& report, const std::string& dependency) {
+    auto& o = report.objects[w.outcome];
+    o.action = ObjectAction::Skipped;
+    o.parts.clear();
+    o.message = "dependency " + dependency + " failed";
+    w.broken = true;
+}
+
+// Skips `w` when an object it depends on failed (or was skipped).
+void SkipIfDependencyBroken(std::vector<Work>& works, Work& w, AbapGitRunReport& report) {
+    if (w.broken) {
+        return;
+    }
+    for (const auto d : w.deps) {
+        if (works[d].broken) {
+            SkipWork(w, report, works[d].owner);
+            return;
+        }
+    }
+}
+
+std::string Upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return s;
+}
+
+// The activation result as far as it concerns `w`: SAP's messages and log
+// lines that name the object, or all of them when none does.
+EngineOpResult ActivationResultFor(const EngineOpResult& r, const Work& w) {
+    const std::string name = Upper(w.key.name);
+    EngineOpResult own = r;
+    own.errors.clear();
+    own.messages.clear();
+    for (const auto& e : r.errors) {
+        if (Upper(e).find(name) != std::string::npos) {
+            own.errors.push_back(e);
+        }
+    }
+    for (const auto& m : r.messages) {
+        if (Upper(m.text).find(name) != std::string::npos) {
+            own.messages.push_back(m);
+        }
+    }
+    if (own.errors.empty() && own.messages.empty()) {
+        own.errors = r.errors;
+        own.messages = r.messages;
+    }
+    return own;
+}
+
+// Maps the result of activate_objects back to the objects it activated:
+// whatever is left inactive fails the object it belongs to. A failed call
+// that leaves nothing inactive fails the objects its messages name (all of
+// them when it names none).
+void AttributeActivation(const EngineOpResult& r, std::vector<Work>& works,
+                         const std::vector<size_t>& members, AbapGitRunReport& report) {
+    std::set<std::string> inactive;
+    auto it = r.values.find("INACTIVE");
+    if (it != r.values.end()) {
+        for (const auto& line : it->second) {
+            inactive.insert(line.substr(0, line.find('\t')));
+        }
+    }
+    std::vector<size_t> named;
+    if (inactive.empty() && r.rc != 0) {
+        for (const auto i : members) {
+            const std::string name = Upper(works[i].key.name);
+            bool mentioned = false;
+            for (const auto& e : r.errors) {
+                mentioned = mentioned || Upper(e).find(name) != std::string::npos;
+            }
+            for (const auto& m : r.messages) {
+                mentioned = mentioned || Upper(m.text).find(name) != std::string::npos;
+            }
+            if (mentioned) {
+                named.push_back(i);
+            }
+        }
+        if (named.empty()) {
+            named = members;
+        }
+    }
+    for (const auto i : members) {
+        auto& w = works[i];
+        if (w.broken) {
+            continue;  // its write failed: it was not activated
+        }
+        const bool failed = inactive.count(w.owner) != 0 ||
+                            std::find(named.begin(), named.end(), i) != named.end();
+        if (failed) {
+            FailWork(w, report,
+                     EngineFailure("Activating " + w.owner, ActivationResultFor(r, w)));
+        }
+    }
+}
+
+// One engine run with the DDIC ops (`ddic`) or the write ops of every
+// unbroken work, in object order. The write run activates the working
+// objects of all works right after the last work that has any, so what comes
+// after (transactions) finds its programs active.
+void RunBatch(IEngineRunner& engine, std::vector<Work>& works, AbapGitRunReport& report,
+              bool ddic) {
+    for (auto& w : works) {
+        SkipIfDependencyBroken(works, w, report);
+    }
+    size_t last_activating = kNoOwner;
+    if (!ddic) {
+        for (size_t i = 0; i < works.size(); ++i) {
+            if (!works[i].broken && !works[i].plan.activate.empty()) {
+                last_activating = i;
+            }
+        }
+    }
+    std::vector<EngineOp> ops;
+    std::vector<size_t> owner_of;
+    std::vector<std::string> what;
+    std::vector<WorkingObject> activation;
+    std::vector<size_t> activated;  // works with entries in `activation`
+    for (size_t i = 0; i < works.size(); ++i) {
+        auto& w = works[i];
+        if (w.broken) {
+            continue;
+        }
+        std::vector<std::string> required;
+        for (const auto d : w.deps) {
+            required.push_back(works[d].owner);
+        }
+        for (const auto& planned : ddic ? w.plan.ddic : w.plan.writes) {
+            ops.push_back(GuardedOp(planned.op, w.owner, required));
+            owner_of.push_back(i);
+            what.push_back(planned.what);
+        }
+        if (!ddic && !w.plan.activate.empty()) {
+            for (const auto& entry : w.plan.activate) {
+                activation.push_back({w.owner, entry.object, entry.obj_name});
+            }
+            activated.push_back(i);
+        }
+        if (i == last_activating) {
+            ops.push_back(ActivateObjectsOp(activation));
+            owner_of.push_back(kNoOwner);
+            what.emplace_back();
+        }
+    }
+    if (ops.empty()) {
+        return;
+    }
+    auto run = engine.Run(ops);
+    if (run.IsErr()) {
+        for (size_t k = 0; k < ops.size(); ++k) {
+            if (owner_of[k] != kNoOwner && !works[owner_of[k]].broken) {
+                FailWork(works[owner_of[k]], report, run.Error());
+            }
+        }
+        for (const auto i : activated) {
+            if (!works[i].broken) {
+                FailWork(works[i], report, run.Error());
+            }
+        }
+        return;
+    }
+    const auto& results = run.Value();
+    for (size_t k = 0; k < ops.size() && k < results.size(); ++k) {
+        if (owner_of[k] == kNoOwner) {
+            AttributeActivation(results[k], works, activated, report);
+            continue;
+        }
+        auto& w = works[owner_of[k]];
+        if (w.broken) {
+            continue;
+        }
+        const auto& r = results[k];
+        auto skip = r.values.find("SKIP");
+        if (skip != r.values.end() && !skip->second.empty()) {
+            SkipWork(w, report, skip->second.front());
+        } else if (r.rc != 0) {
+            FailWork(w, report, EngineFailure(what[k], r));
+        }
+    }
+}
+
+// Runs the plans phase by phase: DDIC run, ADT requests in object order,
+// write run with the activation.
+void RunPlans(IAdtSession& session, IEngineRunner& engine, std::vector<Work>& works,
+              AbapGitRunReport& report, const AbapGitRunOptions& options) {
+    RunBatch(engine, works, report, true);
+    for (auto& w : works) {
+        SkipIfDependencyBroken(works, w, report);
+        if (w.broken || !w.plan.adt) {
+            continue;
+        }
+        TypeContext ctx{session, engine, w.package, options.transport, options.language};
+        auto done = w.plan.adt(ctx);
+        if (done.IsErr()) {
+            FailWork(w, report, done.Error());
+            continue;
+        }
+        auto& parts = report.objects[w.outcome].parts;
+        parts.insert(parts.end(), done.Value().begin(), done.Value().end());
+    }
+    RunBatch(engine, works, report, false);
 }
 
 }  // namespace
@@ -640,9 +868,10 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
     }
     auto states = ReadStates(keys, options);
 
-    // Objects that failed (or were skipped) in this run; later objects that
-    // depend on them are not attempted.
+    // Objects that failed (or were skipped) before anything was written;
+    // later objects that depend on them are not attempted.
     std::vector<AbapGitObjectKey> broken;
+    std::vector<Work> works;  // what gets written, run phase by phase below
     auto failed_dependency = [&](size_t i) -> std::optional<AbapGitObjectKey> {
         for (const auto& key : broken) {
             if (Mentions(desired[i], key.name)) {
@@ -708,24 +937,38 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             broken.push_back(object.key);
             continue;
         }
+        TypeContext ctx{session_, engine_, object.package, options.transport, options.language};
+        auto plan = Handler(object.key.type)->Plan(object.key, desired[i], current, ctx);
+        if (plan.IsErr()) {
+            report.objects.push_back(FailedOutcome(object.key, object.package,
+                                                   ObjectAction::Failed, plan.Error()));
+            broken.push_back(object.key);
+            continue;
+        }
         const std::string verb = current.exists ? "updating " : "creating ";
         LogInfo(kComponent, verb + object.key.type + " " + object.key.name);
         if (options.progress) {
             options.progress("[" + std::to_string(i + 1) + "/" + std::to_string(eligible.size()) +
                              "] " + verb + object.key.type + " " + object.key.name);
         }
-        TypeContext ctx{session_, engine_, object.package, options.transport, options.language};
-        auto applied = Handler(object.key.type)->Apply(object.key, desired[i], current, ctx);
-        if (applied.IsErr()) {
-            report.objects.push_back(FailedOutcome(object.key, object.package,
-                                                   ObjectAction::Failed, applied.Error()));
-            broken.push_back(object.key);
-            continue;
-        }
+        // Reported as planned; RunPlans turns it into failed / skipped.
         auto outcome = Outcome(object.key, object.package, action);
-        outcome.parts = applied.Value();
+        outcome.parts = plan.Value().parts;
         report.objects.push_back(std::move(outcome));
+        Work work;
+        work.outcome = report.objects.size() - 1;
+        work.key = object.key;
+        work.package = object.package;
+        work.owner = object.key.type + " " + object.key.name;
+        for (size_t j = 0; j < works.size(); ++j) {
+            if (Mentions(desired[i], works[j].key.name)) {
+                work.deps.push_back(j);
+            }
+        }
+        work.plan = std::move(plan).Value();
+        works.push_back(std::move(work));
     }
+    RunPlans(session_, engine_, works, report, options);
     return report;
 }
 

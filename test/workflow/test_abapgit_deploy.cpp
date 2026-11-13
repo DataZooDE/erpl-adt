@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <set>
+#include <sstream>
 
 using namespace erpl_adt;
 using namespace erpl_adt::testing;
@@ -15,6 +18,20 @@ namespace {
 
 // Hand-written fakes (repo convention: no mocking framework).
 
+std::string Between(const std::string& s, const std::string& from, const std::string& to) {
+    auto a = s.find(from);
+    if (a == std::string::npos) {
+        return "";
+    }
+    a += from.size();
+    auto b = s.find(to, a);
+    return b == std::string::npos ? "" : s.substr(a, b - a);
+}
+
+// The engine as the workflow sees it, with the batching semantics of the ABAP
+// base class: a guarded op is skipped when an op of a required owner failed
+// earlier in the run, a failed op marks its owner failed, activate_objects
+// leaves what `fail_activation_for` names inactive.
 class FakeEngine final : public IEngineRunner {
 public:
     std::vector<std::vector<EngineOp>> runs;
@@ -22,30 +39,96 @@ public:
     std::vector<std::string> namespaces;  // changeable in the "system" (SE03)
     // Object name -> TADIR package and its parents ("ZROOT_SUB ZROOT").
     std::map<std::string, std::string> package_chains;
+    // Executes a (non-read) operation's inner call, e.g. "fake_put( 'DOMA' 'ZA' ).".
+    std::function<EngineOpResult(const EngineOp&)> execute;
+    std::set<std::string> fail_activation_for;           // owners ("PROG ZA")
+    std::vector<std::vector<WorkingObject>> activations;  // per activate_objects op
+    std::optional<Error> fail_run;                        // the whole run fails
+    size_t fail_run_at = 0;                               // ... this run (0-based)
 
     Result<std::vector<EngineOpResult>, Error> Run(const std::vector<EngineOp>& ops) override {
         runs.push_back(ops);
+        if (fail_run && runs.size() - 1 == fail_run_at) {
+            return Result<std::vector<EngineOpResult>, Error>::Err(*fail_run);
+        }
         if (!scripted.empty()) {
             auto next = scripted.front();
             scripted.erase(scripted.begin());
             return Result<std::vector<EngineOpResult>, Error>::Ok(next);
         }
-        std::vector<EngineOpResult> ok(ops.size());
+        std::set<std::string> failed;
+        std::vector<EngineOpResult> out(ops.size());
         for (size_t i = 0; i < ops.size(); ++i) {
-            ok[i].rc = 0;
-            if (ops[i].call == "system_info( ).") {
-                ok[i].changed_by = "DEVELOPER";
-                ok[i].values["NS"] = namespaces;
+            auto& r = out[i];
+            r.rc = 0;
+            EngineOp op = ops[i];
+            std::string owner;
+            if (op.call.rfind("IF op_guard(", 0) == 0) {
+                owner = Between(op.call, "op_owner = '", "'");
+                std::string required = Between(op.call, "requires = '", "'");
+                std::string blocked;
+                size_t start = 0;
+                while (start <= required.size() && blocked.empty()) {
+                    auto comma = required.find(',', start);
+                    auto one = required.substr(start, comma == std::string::npos
+                                                          ? std::string::npos
+                                                          : comma - start);
+                    if (!one.empty() && failed.count(one) != 0) {
+                        blocked = one;
+                    }
+                    if (comma == std::string::npos) {
+                        break;
+                    }
+                    start = comma + 1;
+                }
+                if (!blocked.empty()) {
+                    r.rc = 1;
+                    r.values["SKIP"] = {blocked};
+                    failed.insert(owner);
+                    continue;
+                }
+                op.call = Between(op.call, "abap_true.\n      ", "\n    ENDIF.");
             }
-            if (ops[i].call.rfind("tadir_package(", 0) == 0) {
+            if (op.call == "system_info( ).") {
+                r.changed_by = "DEVELOPER";
+                r.values["NS"] = namespaces;
+            } else if (op.call.rfind("tadir_package(", 0) == 0) {
                 for (const auto& [name, chain] : package_chains) {
-                    if (ops[i].call.find("'" + name + "'") != std::string::npos) {
-                        ok[i].values["PACKAGE"] = {chain};
+                    if (op.call.find("'" + name + "'") != std::string::npos) {
+                        r.values["PACKAGE"] = {chain};
                     }
                 }
+            } else if (op.call == "activate_objects( ).") {
+                std::vector<WorkingObject> entries;
+                std::istringstream lines(op.payload);
+                std::string line;
+                while (std::getline(lines, line)) {
+                    auto t1 = line.find('\t');
+                    auto t2 = line.find('\t', t1 + 1);
+                    WorkingObject w{line.substr(0, t1), line.substr(t1 + 1, t2 - t1 - 1),
+                                    line.substr(t2 + 1)};
+                    if (failed.count(w.owner) != 0) {
+                        continue;
+                    }
+                    if (fail_activation_for.count(w.owner) != 0) {
+                        r.values["INACTIVE"].push_back(w.owner + "\t" + w.object + " " +
+                                                       w.obj_name);
+                        r.errors.push_back("Program " + w.owner.substr(5) +
+                                           ": Field \"GV_MISSING\" is unknown.");
+                        failed.insert(w.owner);
+                        r.rc = 8;
+                    }
+                    entries.push_back(w);
+                }
+                activations.push_back(entries);
+            } else if (execute && op.call.rfind("fake_get(", 0) != 0) {
+                r = execute(op);
+            }
+            if (!owner.empty() && r.rc != 0) {
+                failed.insert(owner);
             }
         }
-        return Result<std::vector<EngineOpResult>, Error>::Ok(ok);
+        return Result<std::vector<EngineOpResult>, Error>::Ok(out);
     }
 };
 
@@ -59,13 +142,19 @@ public:
 };
 
 // A handler whose "system" is an in-memory map, so the workflow's decisions
-// can be checked without SAP.
+// can be checked without SAP. Its plan writes in `phase`: "ddic" (an op that
+// activates itself), "adt" (an ADT request), "write" (an op saved inactive
+// plus a REPS working object to activate) or "write-only" (an op that needs
+// no activation, like a transaction).
 class FakeHandler final : public IClassicTypeHandler {
 public:
-    explicit FakeHandler(std::string type) : type_(std::move(type)) {}
+    explicit FakeHandler(std::string type, std::string phase = "write")
+        : type_(std::move(type)), phase_(std::move(phase)) {}
     std::map<std::string, ObjectFileSet>* system = nullptr;
+    std::vector<std::string>* log = nullptr;  // shared order of writes, "ADT ZA" / "ENGINE ZA"
     mutable std::vector<std::string> applied;
     mutable std::vector<std::string> deleted;
+    mutable std::map<std::string, ObjectFileSet> planned;
     std::string fail_apply_for;
     std::string invalid_for;  // Validate() refuses this object
     std::string changed_by = "DEVELOPER";
@@ -92,19 +181,54 @@ public:
         }
         return Result<ObjectState, Error>::Ok(state);
     }
-    Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
-                                                  const ObjectFileSet& desired,
-                                                  const ObjectState&,
-                                                  TypeContext&) const override {
-        if (key.name == fail_apply_for) {
-            Error err;
-            err.message = "Object DOMA " + key.name + " is locked in request A4HK900012";
-            err.category = ErrorCategory::LockConflict;
-            return Result<std::vector<std::string>, Error>::Err(err);
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState&, const TypeContext&) const override {
+        planned[key.name] = desired;
+        DeployPlan plan;
+        plan.parts = {"DD01V"};
+        const EngineOp put{"fake_put( '" + type_ + "' '" + key.name + "' ).", ""};
+        if (phase_ == "ddic") {
+            plan.ddic.push_back({put, "Writing " + key.name});
+        } else if (phase_ == "write" || phase_ == "write-only") {
+            plan.writes.push_back({put, "Writing " + key.name});
+            if (phase_ == "write") {
+                plan.activate.push_back({"", "REPS", key.name});
+            }
+        } else {
+            const std::string name = key.name;
+            plan.parts.clear();
+            plan.adt = [this, name](TypeContext&) -> Result<std::vector<std::string>, Error> {
+                auto r = Execute(name);
+                if (r.rc != 0) {
+                    Error err;
+                    err.message = "Writing " + name + ": " + r.messages.at(0).text;
+                    err.category = ErrorCategory::LockConflict;
+                    return Result<std::vector<std::string>, Error>::Err(err);
+                }
+                return Result<std::vector<std::string>, Error>::Ok({"function group"});
+            };
         }
-        applied.push_back(key.name);
-        (*system)[key.name] = desired;
-        return Result<std::vector<std::string>, Error>::Ok({"DD01V"});
+        return Result<DeployPlan, Error>::Ok(plan);
+    }
+    // Writes one object into the fake system (an engine op or an ADT request).
+    EngineOpResult Execute(const std::string& name) const {
+        EngineOpResult r;
+        r.rc = 0;
+        if (log != nullptr) {
+            log->push_back((phase_ == "adt" ? "ADT " : "ENGINE ") + name);
+        }
+        if (name == fail_apply_for) {
+            r.rc = 4;
+            EngineMessage m;
+            m.type = "E";
+            m.text = "Object " + type_ + " " + name + " is locked in request A4HK900012";
+            r.messages.push_back(m);
+            r.values["KIND"] = {"LOCK"};
+            return r;
+        }
+        applied.push_back(name);
+        (*system)[name] = planned[name];
+        return r;
     }
     Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet&,
                                  const ObjectState&, const std::string&) const override {
@@ -124,6 +248,7 @@ public:
 
 private:
     std::string type_;
+    std::string phase_;
 };
 
 struct TempRepo {
@@ -160,18 +285,73 @@ struct Fixture {
     MockAdtSession session;
     FakeEngine engine;
     std::map<std::string, ObjectFileSet> system;
+    std::vector<std::string> log;
     std::shared_ptr<FakeHandler> handler = std::make_shared<FakeHandler>("DOMA");
+    std::map<std::string, std::shared_ptr<FakeHandler>> handlers{{"DOMA", handler}};
     FakeHistory history;
     TempRepo repo;
-    Fixture() { handler->system = &system; }
+    Fixture() {
+        handler->system = &system;
+        engine.execute = [this](const EngineOp& op) {
+            // fake_put( 'TYPE' 'NAME' ).
+            const auto type = Between(op.call, "fake_put( '", "'");
+            const auto name = Between(op.call, "' '", "'");
+            return handlers.at(type)->Execute(name);
+        };
+    }
+    // An additional handler (e.g. a "ddic" DOMA and a "write" PROG).
+    std::shared_ptr<FakeHandler> Add(const std::string& type, const std::string& phase) {
+        auto h = std::make_shared<FakeHandler>(type, phase);
+        h->system = &system;
+        h->log = &log;
+        handlers[type] = h;
+        if (type == "DOMA") {
+            handler = h;
+        }
+        return h;
+    }
     AbapGitWorkflow Workflow() {
-        return AbapGitWorkflow(session, engine, {{"DOMA", handler}}, history);
+        std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> all;
+        for (const auto& [type, h] : handlers) {
+            all[type] = h;
+        }
+        return AbapGitWorkflow(session, engine, all, history);
     }
     AbapGitRunOptions Options() {
         AbapGitRunOptions o;
         o.root_package = "$TMP";
         o.user = "DEVELOPER";
         return o;
+    }
+};
+
+// DOMA in the DDIC phase, FUGR over ADT, PROG and TRAN in the write run.
+struct BatchFixture : Fixture {
+    std::shared_ptr<FakeHandler> doma = Add("DOMA", "ddic");
+    std::shared_ptr<FakeHandler> fugr = Add("FUGR", "adt");
+    std::shared_ptr<FakeHandler> prog = Add("PROG", "write");
+    std::shared_ptr<FakeHandler> tran = Add("TRAN", "write-only");
+
+    AbapGitObjectFiles Object(const std::string& type, const std::string& name,
+                              const std::string& text) {
+        auto o = repo.Doma(name, text);
+        o.key = {type, name};
+        return o;
+    }
+    std::vector<AbapGitObjectFiles> Demo() {
+        return {Object("DOMA", "ZD_A", "A"), Object("DOMA", "ZD_B", "B"),
+                Object("FUGR", "ZFG", "uses ZD_A"), Object("PROG", "ZP_A", "uses ZD_B"),
+                Object("PROG", "ZP_B", "B"), Object("TRAN", "ZT_A", "calls ZP_A")};
+    }
+    // The run's operations without the guard (just the inner calls).
+    static std::vector<std::string> Calls(const std::vector<EngineOp>& ops) {
+        std::vector<std::string> out;
+        for (const auto& op : ops) {
+            out.push_back(op.call.rfind("IF op_guard(", 0) == 0
+                              ? Between(op.call, "abap_true.\n      ", "\n    ENDIF.")
+                              : op.call);
+        }
+        return out;
     }
 };
 
@@ -245,7 +425,7 @@ TEST_CASE("abapGit deploy: all states are read in one engine run", "[workflow][a
     Fixture f;
     auto report = f.Workflow().Deploy(
         {f.repo.Doma("zerpl_d_a", "A"), f.repo.Doma("zerpl_d_b", "B")}, f.Options());
-    REQUIRE(f.engine.runs.size() == 1);
+    REQUIRE(f.engine.runs.size() == 2);   // the read run, then one write run
     CHECK(f.engine.runs[0].size() == 3);  // system info + one read per object
     CHECK(report.objects.size() == 2);
 }
@@ -786,6 +966,124 @@ TEST_CASE("abapGit deploy: progress is reported per object before it is written"
     REQUIRE(lines.size() == 2);
     CHECK(lines[0] == "[1/2] creating DOMA ZERPL_D_A");
     CHECK(lines[1] == "[2/2] creating DOMA ZERPL_D_B");
+}
+
+// ---------------------------------------------------------------------------
+// Batching: at most three engine runs per deploy, failures stay with their
+// object.
+// ---------------------------------------------------------------------------
+
+
+TEST_CASE("abapGit batching: read, DDIC and write+activate runs, whatever the object count",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    REQUIRE(report.objects.size() == 6);
+    for (const auto& o : report.objects) {
+        CHECK(o.action == ObjectAction::Created);
+    }
+    REQUIRE(f.engine.runs.size() == 3);
+    CHECK(f.engine.runs[0].size() == 7);  // system info + 6 reads
+    CHECK(BatchFixture::Calls(f.engine.runs[1]) ==
+          std::vector<std::string>{"fake_put( 'DOMA' 'ZD_A' ).", "fake_put( 'DOMA' 'ZD_B' )."});
+    // Programs written, then one activation of all of them, then the
+    // transaction (it needs its program active).
+    CHECK(BatchFixture::Calls(f.engine.runs[2]) ==
+          std::vector<std::string>{"fake_put( 'PROG' 'ZP_A' ).", "fake_put( 'PROG' 'ZP_B' ).",
+                                   "activate_objects( ).", "fake_put( 'TRAN' 'ZT_A' )."});
+    // The ADT work runs after the DDIC run and before the write run.
+    CHECK(f.log == std::vector<std::string>{"ENGINE ZD_A", "ENGINE ZD_B", "ADT ZFG",
+                                            "ENGINE ZP_A", "ENGINE ZP_B", "ENGINE ZT_A"});
+    REQUIRE(f.engine.activations.size() == 1);
+    REQUIRE(f.engine.activations[0].size() == 2);
+    CHECK(f.engine.activations[0][0].owner == "PROG ZP_A");
+    CHECK(f.engine.activations[0][0].object == "REPS");
+    CHECK(f.engine.activations[0][1].owner == "PROG ZP_B");
+}
+
+TEST_CASE("abapGit batching: nothing to write costs only the read run",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy(f.Demo(), f.Options()).Failed());
+    f.engine.runs.clear();
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(f.engine.runs.size() == 1);
+    CHECK_FALSE(report.Failed());
+}
+
+TEST_CASE("abapGit batching: a failed DDIC op fails its object and skips its dependents",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    f.doma->fail_apply_for = "ZD_A";
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Failed);
+    CHECK(report.objects[0].message.find("locked in request A4HK900012") != std::string::npos);
+    CHECK(report.objects[0].error->category == ErrorCategory::LockConflict);
+    CHECK(report.objects[1].action == ObjectAction::Created);
+    CHECK(report.objects[2].action == ObjectAction::Skipped);  // ZFG uses ZD_A
+    CHECK(report.objects[2].message == "dependency DOMA ZD_A failed");
+    CHECK(report.objects[3].action == ObjectAction::Created);
+    CHECK(f.fugr->applied.empty());
+}
+
+TEST_CASE("abapGit batching: a failed write skips the dependents in the same run",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    f.prog->fail_apply_for = "ZP_A";
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(report.objects[3].action == ObjectAction::Failed);
+    CHECK(report.objects[4].action == ObjectAction::Created);
+    CHECK(report.objects[5].action == ObjectAction::Skipped);
+    CHECK(report.objects[5].message == "dependency PROG ZP_A failed");
+    CHECK(f.tran->applied.empty());
+    // ZP_A's working objects are not activated.
+    REQUIRE(f.engine.activations.size() == 1);
+    for (const auto& w : f.engine.activations[0]) {
+        CHECK(w.owner != "PROG ZP_A");
+    }
+}
+
+TEST_CASE("abapGit batching: what activation leaves inactive fails its own object only",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    f.engine.fail_activation_for = {"PROG ZP_A"};
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(report.objects[3].action == ObjectAction::Failed);
+    CHECK(report.objects[3].error->category == ErrorCategory::ActivationError);
+    CHECK(report.objects[3].message.find("GV_MISSING") != std::string::npos);
+    CHECK(report.objects[4].action == ObjectAction::Created);
+    CHECK(report.objects[4].message.empty());
+    CHECK(report.objects[5].action == ObjectAction::Skipped);  // its program is not active
+    CHECK(report.ExitCode() == 5);
+}
+
+TEST_CASE("abapGit batching: a run that fails as a whole fails every object in it",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    Error down;
+    down.message = "The SAP helper class did not finish (no @END marker)";
+    down.category = ErrorCategory::Internal;
+    f.engine.fail_run = down;
+    f.engine.fail_run_at = 2;  // the write run
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(report.objects[0].action == ObjectAction::Created);
+    CHECK(report.objects[2].action == ObjectAction::Created);
+    for (size_t i = 3; i < 6; ++i) {
+        CHECK(report.objects[i].action == ObjectAction::Failed);
+        CHECK(report.objects[i].message.find("no @END marker") != std::string::npos);
+    }
 }
 
 // ---------------------------------------------------------------------------

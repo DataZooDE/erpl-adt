@@ -123,6 +123,33 @@ EngineOp SystemInfoOp() {
     return {"system_info( ).", ""};
 }
 
+EngineOp GuardedOp(const EngineOp& op, const std::string& owner,
+                   const std::vector<std::string>& required) {
+    std::string needed;
+    for (const auto& r : required) {
+        needed += (needed.empty() ? "" : ",") + r;
+    }
+    return {"IF op_guard( op_owner = " + AbapQuote(owner) + " requires = " + AbapQuote(needed) +
+                " ) = abap_true.\n      " + op.call + "\n    ENDIF.",
+            op.payload};
+}
+
+std::string DynproWorkingName(const std::string& program, const std::string& screen) {
+    std::string name = program;
+    if (name.size() < 40) {
+        name.append(40 - name.size(), ' ');
+    }
+    return name + screen;
+}
+
+EngineOp ActivateObjectsOp(const std::vector<WorkingObject>& objects) {
+    std::string lines;
+    for (const auto& o : objects) {
+        lines += o.owner + "\t" + o.object + "\t" + o.obj_name + "\n";
+    }
+    return {"activate_objects( ).", lines};
+}
+
 std::string BuildEngineSource(const std::string& class_name, const std::vector<EngineOp>& ops) {
     std::ostringstream body;
     for (size_t i = 0; i < ops.size(); ++i) {
@@ -134,7 +161,14 @@ std::string BuildEngineSource(const std::string& class_name, const std::vector<E
                 body << "    APPEND `" << b64.substr(off, kChunk) << "` TO chunks.\n";
             }
         }
-        body << "    " << ops[i].call << "\n    ";
+        // Each operation in its own TRY: an exception fails it, not the run.
+        body << "    TRY.\n"
+             << "    " << ops[i].call << "\n"
+             << "      CATCH cx_root INTO op_exc.\n"
+             << "        emit( kind = 'ERR' text = op_exc->get_text( ) ).\n"
+             << "        emit_rc( 99 ).\n"
+             << "    ENDTRY.\n"
+             << "    op_done( ).\n    ";
     }
 
     std::string source = EngineTemplate();

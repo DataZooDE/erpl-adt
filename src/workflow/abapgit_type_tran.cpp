@@ -238,11 +238,12 @@ public:
         return Result<void, Error>::Ok();
     }
 
-    Result<std::vector<std::string>, Error> Apply(const AbapGitObjectKey& key,
-                                                  const ObjectFileSet& desired,
-                                                  const ObjectState& current,
-                                                  TypeContext& ctx) const override {
-        using R = Result<std::vector<std::string>, Error>;
+    // Write phase: one tran_put, after the programs are activated (a dialog
+    // transaction's program and screen must exist).
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState& current,
+                                   const TypeContext& ctx) const override {
+        using R = Result<DeployPlan, Error>;
         const std::string file = FileName(key, "xml");
         auto it = desired.find(file);
         if (it == desired.end()) {
@@ -277,13 +278,12 @@ public:
             payload.emplace_back(part, found != by_name.end() ? found->second : "<" + part + "/>");
         }
 
-        auto run = RunChecked(ctx.engine,
-                              {TranPutOp(key.name, ctx.language, ctx.package, ctx.transport,
-                                         WrapAsxValues(JoinAsxValues(payload)))},
-                              "Writing transaction " + key.name);
-        if (run.IsErr()) {
-            return R::Err(run.Error());
-        }
+        DeployPlan plan;
+        PlannedOp put;
+        put.op = TranPutOp(key.name, ctx.language, ctx.package, ctx.transport,
+                           WrapAsxValues(JoinAsxValues(payload)));
+        put.what = "Writing transaction " + key.name;
+        plan.writes.push_back(std::move(put));
 
         // Report only the parts that differ (the whole transaction is
         // re-inserted either way: there is no partial update).
@@ -304,7 +304,8 @@ public:
                 changed.push_back(part);  // e.g. AUTHORIZATIONS removed by the re-insert
             }
         }
-        return R::Ok(changed);
+        plan.parts = std::move(changed);
+        return R::Ok(std::move(plan));
     }
 
     Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {

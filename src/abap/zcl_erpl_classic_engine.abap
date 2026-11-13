@@ -20,8 +20,15 @@
 *   @<op> ERR <text>                     (activation / check log lines)
 *   @<op> KIND LOCK|CTS|AUTH|CHECK       (failure class from the FM exception)
 *   @<op> RC <n>                         (last line of every operation)
+*   @<op> SKIP <owner>                   (not run: an op of <owner> failed)
+*   @<op> INACTIVE <owner><TAB><object> <obj_name> (left inactive by activation)
 *   @<op> EXC <text>                     (unexpected exception)
 *   @END
+* 
+* Batched runs: every operation runs in its own TRY block (an exception fails
+* that operation with RC 99, not the run). An operation can name its owner
+* (the deployed object, "PROG ZFOO") and the owners it requires: it is
+* skipped when an operation of a required owner failed earlier in the run.
 CLASS zcl_erpl_classic_engine DEFINITION PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
     INTERFACES if_oo_adt_classrun.
@@ -30,6 +37,12 @@ CLASS zcl_erpl_classic_engine DEFINITION PUBLIC FINAL CREATE PUBLIC.
     DATA out    TYPE REF TO if_oo_adt_classrun_out.
     DATA op     TYPE string.
     DATA chunks TYPE string_table.
+    " Batching: owner of the running op, its last RC, and the owners whose
+    " ops failed in this run (their dependents are skipped).
+    DATA owner   TYPE string.
+    DATA last_rc TYPE i.
+    DATA failed  TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line.
+    DATA op_exc  TYPE REF TO cx_root.
 
     METHODS run_ops
       RAISING cx_static_check cx_dynamic_check.
@@ -38,6 +51,14 @@ CLASS zcl_erpl_classic_engine DEFINITION PUBLIC FINAL CREATE PUBLIC.
                 text TYPE string OPTIONAL.
     METHODS emit_rc
       IMPORTING rc TYPE i.
+    "! Sets the running op's owner; abap_false (after SKIP + RC 1) when an op
+    "! of one of the comma-separated `requires` owners failed in this run.
+    METHODS op_guard
+      IMPORTING op_owner  TYPE string
+                requires  TYPE string
+      RETURNING VALUE(ok) TYPE abap_bool.
+    "! After every op: a failed op marks its owner failed.
+    METHODS op_done.
     METHODS emit_symsg.
     METHODS emit_data
       IMPORTING tag TYPE string
@@ -88,7 +109,30 @@ CLASS zcl_erpl_classic_engine IMPLEMENTATION.
 
 
   METHOD emit_rc.
+    last_rc = rc.
     emit( kind = 'RC' text = |{ rc }| ).
+  ENDMETHOD.
+
+
+  METHOD op_guard.
+    owner = op_owner.
+    SPLIT requires AT ',' INTO TABLE DATA(needed).
+    LOOP AT needed INTO DATA(needed_owner) WHERE table_line IS NOT INITIAL.
+      IF line_exists( failed[ table_line = needed_owner ] ).
+        emit( kind = 'SKIP' text = needed_owner ).
+        emit_rc( 1 ).
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    ok = abap_true.
+  ENDMETHOD.
+
+
+  METHOD op_done.
+    IF owner IS NOT INITIAL AND last_rc <> 0.
+      INSERT owner INTO TABLE failed.
+    ENDIF.
+    CLEAR: owner, last_rc.
   ENDMETHOD.
 
 
