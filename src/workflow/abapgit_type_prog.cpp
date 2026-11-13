@@ -431,8 +431,8 @@ private:
         }
         auto cur_xml = current.files.find(xml_name);
         if (cur_xml != current.files.end() && want.Value().cua.empty()) {
-            auto have = SplitProgXml(cur_xml->second, xml_name + " (system)");
-            if (have.IsOk() && !have.Value().cua.empty()) {
+            auto system_parts = SplitProgXml(cur_xml->second, xml_name + " (system)");
+            if (system_parts.IsOk() && !system_parts.Value().cua.empty()) {
                 return Result<void, Error>::Err(ProgError(
                     "PROG " + key.name +
                         ": the file has no CUA but the system has a GUI status / title set; "
