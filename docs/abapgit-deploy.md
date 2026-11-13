@@ -173,8 +173,11 @@ a run in progress.
   authorization (`S_DEVELOP`) as for a deploy. Without `--transport`, objects
   in transportable packages get a note ("the deploy needs --transport")
   instead of a refusal; `--strict` makes it a refusal (exit 9). `status`
-  returns non-zero if a deploy would fail or refuse something (drift,
-  unsupported parts, missing files). `--json` gives one entry per object with
+  exits 0 when it could run: drift, a missing `--transport`, namespace
+  refusals and parts a deploy could not write are reported (text and JSON),
+  not fatal. With `--strict` any refusal or failure exits with the most
+  severe code (e.g. 6 for drift) — use that to block a merge. A system that
+  cannot be read (connection, helper class) always exits non-zero. `--json` gives one entry per object with
   `action` (`created`, `updated`, `unchanged`, `deleted`, `missing`,
   `exported`, `failed`, `refused`, `skipped`), the written `parts`, SAP's
   `message`, `notes`, and for failures `category` and `exit_code`; the

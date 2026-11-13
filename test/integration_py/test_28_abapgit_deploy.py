@@ -194,6 +194,34 @@ class TestGuardRails:
         assert result.returncode == 1, result.stderr
         assert _entry(json.loads(result.stdout), "DOMA", "XFELD")["action"] == "refused"
 
+    def test_status_reports_drift_but_exits_0_unless_strict(self, cli, colleague_cli, tmp_path):
+        # A colleague changed the domain in the system; it is in no git
+        # history. status is a report: it shows the refusal and exits 0 (it
+        # could run); --strict turns any refusal into its exit code (6).
+        cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
+        theirs = tmp_path / self.FILE.name
+        theirs.write_bytes(self.FILE.read_bytes().replace(b"<DDTEXT>Cancelled</DDTEXT>",
+                                                          b"<DDTEXT>Withdrawn</DDTEXT>"))
+        colleague_cli.run_ok("abapgit", "deploy", str(theirs), "--package", PACKAGE, "--force")
+        try:
+            status = cli.run("abapgit", "status", str(self.FILE), "--package", PACKAGE)
+            assert status.returncode == 0, status.stdout + status.stderr
+            data = json.loads(status.stdout)
+            entry = _entry(data, "DOMA", "ZERPL_D_SO_STATUS")
+            assert entry["action"] == "refused"
+            assert "BWDEVELOPER" in entry["message"]
+            assert data["exit_code"] == 0
+            text = cli.run_no_json("abapgit", "status", str(self.FILE), "--package", PACKAGE)
+            assert text.returncode == 0
+            assert "refused  DOMA ZERPL_D_SO_STATUS" in text.stdout
+
+            strict = cli.run("abapgit", "status", str(self.FILE), "--package", PACKAGE,
+                             "--strict")
+            assert strict.returncode == 6, strict.stdout + strict.stderr
+            assert json.loads(strict.stdout)["exit_code"] == 6
+        finally:
+            cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
+
     def test_status_reports_without_writing(self, cli, adt):
         cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
 

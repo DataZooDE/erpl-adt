@@ -267,6 +267,14 @@ struct AbapGitRunReport {
     [[nodiscard]] std::optional<Error> MostSevereError() const;
     // MostSevereError()'s exit code; 0 when nothing failed.
     [[nodiscard]] int ExitCode() const;
+    // The first error reading the system's state: the run could not
+    // compare everything (connection, helper class, ...).
+    std::optional<Error> read_error;
+    // Exit code of `status` (a dry run): 0 when it could run - drift, a
+    // missing --transport or a namespace refusal are reported, not fatal -
+    // unless `strict`, where any refusal or failure exits with the most
+    // severe code. A failed system read always exits with its code.
+    [[nodiscard]] int StatusExitCode(bool strict) const;
 };
 
 // Where an export writes: the repository root and its layout (.abapgit.xml).

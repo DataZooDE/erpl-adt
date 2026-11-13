@@ -1661,6 +1661,11 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
     for (const auto& o : report.objects) {
         ++summary[ToString(o.action)];
     }
+    // status (= deploy --dry-run) reports refusals without failing, unless
+    // --strict; see AbapGitRunReport::StatusExitCode.
+    const int exit_code = options.dry_run && command == "deploy"
+                              ? report.StatusExitCode(options.strict)
+                              : report.ExitCode();
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["command"] = command;
@@ -1688,7 +1693,7 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
         }
         j["skipped"] = report.skipped;
         j["summary"] = summary;
-        j["exit_code"] = report.ExitCode();
+        j["exit_code"] = exit_code;
         fmt.PrintJson(j.dump());
     } else {
         std::ostringstream out;
@@ -1725,7 +1730,7 @@ int PrintAbapGitReport(OutputFormatter& fmt, const std::string& command,
         std::cout << out.str() << std::endl;
     }
     // The most severe object decides (see AbapGitRunReport::MostSevereError).
-    return report.ExitCode();
+    return exit_code;
 }
 
 template <typename Body>
@@ -8262,7 +8267,7 @@ void RegisterAllCommands(CommandRouter& router) {
                 "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
             help.flags = common;
             help.flags.push_back({"dry-run", "", "Only report what would change (same as 'status')", false});
-            help.flags.push_back({"strict", "", "With --dry-run: a missing --transport is a refusal, not a note", false});
+            help.flags.push_back({"strict", "", "With --dry-run: exit with the code of any refusal (a missing --transport is one)", false});
             help.flags.push_back({"force", "", "Overwrite objects changed in the system outside git", false});
             help.long_description =
                 "Creates or updates every object in dependency order (DOMA, DTEL, FUGR, PROG "
@@ -8291,9 +8296,11 @@ void RegisterAllCommands(CommandRouter& router) {
                 "git, parts the deploy cannot write). Changes no object, but it reads through "
                 "SAP's function modules from a temporary helper class in $TMP (created and "
                 "deleted again), so it needs the same development authorization (S_DEVELOP) "
-                "as a deploy. Use it in pull-request checks: without --transport, transportable "
-                "packages only get a note (--strict makes that a refusal).";
-            help.flags.push_back({"strict", "", "Treat a missing --transport as a refusal (exit 9), not a note", false});
+                "as a deploy. Exits 0 when it could run - refusals are reported, not fatal; "
+                "--strict makes any refusal exit with its code (6 drift, 9 missing transport). "
+                "Use it in pull-request checks: without --transport, transportable packages "
+                "only get a note (--strict makes that a refusal).";
+            help.flags.push_back({"strict", "", "Exit with the most severe code of any refusal (drift 6, missing --transport 9)", false});
             help.flags.push_back({"force", "", "Report drifted objects as they would be overwritten with --force", false});
             help.examples = {"erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO"};
             router.Register("abapgit", "status", "Show what a deploy would change (no writes)",

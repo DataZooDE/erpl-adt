@@ -1099,6 +1099,46 @@ TEST_CASE("abapGit deploy: progress is reported per object before it is written"
     CHECK(lines[1] == "[2/2] creating DOMA ZERPL_D_B");
 }
 
+TEST_CASE("abapGit status: refusals are reported with exit 0, --strict makes them fatal",
+          "[workflow][abapgit_deploy][status]") {
+    Fixture f;
+    REQUIRE_FALSE(f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, f.Options()).Failed());
+    f.handler->changed_by = "COLLEAGUE";
+    f.record.objects.clear();
+    f.system["ZERPL_D_A"].begin()->second = "<changed by a colleague/>";
+    auto options = f.Options();
+    options.dry_run = true;
+
+    auto drift = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Order status")}, options);
+
+    REQUIRE(drift.objects[0].action == ObjectAction::Refused);
+    CHECK(drift.StatusExitCode(false) == 0);
+    CHECK(drift.StatusExitCode(true) == 6);
+
+    // A missing --transport: an annotation, but with --strict a refusal (9).
+    auto transportable = f.repo.Doma("zerpl_d_b", "B");
+    transportable.package = "ZERPL_DEMO";
+    options.root_package = "ZERPL_DEMO";
+    CHECK(f.Workflow().Deploy({transportable}, options).StatusExitCode(false) == 0);
+    options.strict = true;
+    CHECK(f.Workflow().Deploy({transportable}, options).StatusExitCode(true) == 9);
+}
+
+TEST_CASE("abapGit status: a system that cannot be read is not a green status",
+          "[workflow][abapgit_deploy][status]") {
+    Fixture f;
+    Error down;
+    down.message = "Connection refused";
+    down.category = ErrorCategory::Connection;
+    f.engine.fail_run = down;
+    auto options = f.Options();
+    options.dry_run = true;
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Status")}, options);
+
+    CHECK(report.StatusExitCode(false) == 1);
+}
+
 // ---------------------------------------------------------------------------
 // Batching: at most three engine runs per deploy, failures stay with their
 // object.
