@@ -305,7 +305,10 @@ class TestTransactionTranslations:
     carries it, as abapGit's does) deploys unchanged."""
 
     def test_translation_only_in_the_system_is_not_dropped_silently(self, cli, clean,
-                                                                     tmp_path):
+                                                                     tmp_path,
+                                                                     tmp_path_factory):
+        # From scratch (earlier tests left ZERPL_T4_OK with English texts).
+        _cleanup(cli, tmp_path_factory)
         # Created from a German repository: TSTCT holds only language D.
         german = _repo(tmp_path / "de", {
             OK: _prog(OK, "Valid report", OK_SOURCE),
