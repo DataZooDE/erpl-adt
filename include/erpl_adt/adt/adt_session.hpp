@@ -112,6 +112,9 @@ public:
 
 private:
     struct Impl;
+    // Logs off on the server (ends the logon and any stateful context).
+    void EndServerSession();
+
     std::unique_ptr<Impl> impl_;
 };
 

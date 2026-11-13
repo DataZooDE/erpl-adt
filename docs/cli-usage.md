@@ -39,6 +39,30 @@ A saved `.adt.creds` in the working directory still wins over nothing at all, bu
 loses to the environment — so an exported `ERPL_ADT_HOST` is never silently
 ignored in favour of a stale cache.
 
+### Unknown flags
+
+Every command checks its flags against the flags in its `--help` plus the
+global flags above. A misspelled flag is reported on stderr, with a suggestion
+when a known flag is close, and the command still runs:
+
+```bash
+$ erpl-adt source write ZCL_MY_CLASS --file src.abap --activte
+warning: unknown flag --activte for 'source write' (did you mean --activate?)
+```
+
+Commands that delete, release or execute something, or whose safety switch a
+typo would turn off, refuse instead — exit code 99, nothing is done:
+
+```bash
+$ erpl-adt object delete /sap/bc/adt/oo/classes/zcl_old --transprt A4HK900042
+Error: Unknown flag --transprt for 'object delete' (did you mean --transport?). Nothing was done; see 'erpl-adt object delete --help'.
+```
+
+Strict commands: every `abapgit` command, `object delete`, `transport release`,
+`screen delete`, `source edit` (`--no-write`), `bw delete`, `bw activate`
+(`--simulate`, `--validate`), `bw transport` (`--simulate`), `bw locks`,
+`bw job` and `bw favorites`.
+
 ## Command Groups
 
 ### search -- Search for ABAP objects
@@ -315,6 +339,70 @@ is why this is an allowlist and not a heuristic.
 
 Authentication is off unless a token is configured. Binding beyond loopback without one
 warns on stderr; `/healthz` never requires the token so liveness probes keep working.
+
+### abapgit -- Classic GUI objects from abapGit files
+
+```bash
+# Show what a deploy would change (no writes). Exit 0 when it could run - refusals
+# are reported, not fatal - unless --strict; a file that cannot be loaded or a
+# system that cannot be read always exits non-zero
+erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --strict   # PR check: refusals fail
+
+# Deploy a whole repository (folder with .abapgit.xml) or a single object file
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit deploy ./erpl-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'
+
+# Overwrite objects that were changed in the system outside git
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146 --force
+
+# Export: refresh the objects already in <dir>, or name them explicitly
+erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03
+
+# Delete what the files describe (reverse dependency order)
+erpl-adt abapgit delete ./erpl-demo --package '$TMP'
+
+# Remove your own helper classes left by interrupted runs (default: older than 60 min)
+erpl-adt abapgit cleanup --older-than 10
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--package <pkg>` | Target (root) package; sub-folders map to sub-packages like in abapGit |
+| `--transport <request>` | Workbench request; required for transportable packages |
+| `--dry-run` | `deploy`/`delete`: report only (same as `status` for deploy) |
+| `--force` | `deploy`/`delete`: overwrite / delete objects changed in the system outside git (delete: also translations or documentation the files lack); `status`: preview a `deploy --force` |
+| `--strict` | `status`, `deploy --dry-run`: exit with the most severe code of any refusal (6 drift, 9 missing `--transport`, ...) |
+| `--object TYPE:NAME,...` | `export`: objects to export |
+| `--master-language <lang>` | `export` into a new repository: master language (default `E`) |
+| `--helper-package <pkg>` | Local package for the temporary helper class (default `$TMP`) |
+| `--keep-helper` | Keep the temporary helper class (debugging; remove it with `abapgit cleanup`) |
+| `--older-than <minutes>` | `cleanup`: only helpers last changed at least this long ago (default 60) |
+
+JSON output (`--json`) has `command` (`deploy`, `status`, `export`, `delete`),
+`dry_run`, and one entry per object with `type`, `name`, `package`, `action`
+(`created`, `updated`, `unchanged`, `deleted`, `missing`, `exported`, `failed`,
+`refused`, `skipped` - not attempted because a prerequisite failed), the written
+(or, for `status`, planned) `parts`, SAP's `message`, `notes`, and for failures
+`category` and `exit_code`; the top-level `exit_code` is the command's exit code
+(and `error` names a local problem no object carries, e.g. an unwritable
+`.abapgit.xml`). See
+[abapgit-deploy.md](abapgit-deploy.md) for how it works, team/transport behaviour
+and limitations.
+
+### screen -- Disposable classic Dynpro screens
+
+```bash
+erpl-adt screen create --program ZJR66_HOST --screen 9001 --package '$TMP' \
+    --fields HEADERNAME:Header:5:3:30,VALUE:Value:7:3:30
+erpl-adt screen read --program ZJR66_HOST --screen 9001 --package '$TMP'
+erpl-adt screen delete --program ZJR66_HOST --screen 9001 --package '$TMP'
+```
+
+Quick, throwaway screens with plain input fields (e.g. for tests). For complete
+screens with flow logic, tabstrips, table controls and GUI status, use
+`erpl-adt abapgit deploy`. The helper class always lives in a local package.
 
 ### deploy -- Legacy deploy workflow
 

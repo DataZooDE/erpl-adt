@@ -22,6 +22,24 @@ void PrintJsonError(const std::string& message, std::ostream& out) {
     out << "\n";
 }
 
+// Levenshtein distance, for "did you mean" hints on mistyped flags.
+size_t EditDistance(const std::string& a, const std::string& b) {
+    std::vector<size_t> prev(b.size() + 1);
+    std::vector<size_t> cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); ++j) {
+        prev[j] = j;
+    }
+    for (size_t i = 1; i <= a.size(); ++i) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); ++j) {
+            const size_t subst = prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, subst});
+        }
+        std::swap(prev, cur);
+    }
+    return prev[b.size()];
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -49,7 +67,7 @@ bool CommandRouter::IsBooleanFlag(std::string_view arg) {
            arg == "--optimistic" || arg == "--no-resolve-types" ||
            arg == "--no-telemetry" || arg == "--embed" || arg == "--resume" ||
            arg == "--resolve-ddic-types" || arg == "--include-raw-source" ||
-           arg == "--keep-lock";
+           arg == "--keep-lock" || arg == "--dry-run" || arg == "--keep-helper";
 }
 
 void CommandRouter::Register(const std::string& group,
@@ -93,6 +111,27 @@ void CommandRouter::SetGroupExamples(const std::string& group,
 void CommandRouter::SetDefaultAction(const std::string& group,
                                       const std::string& action) {
     default_actions_[group] = action;
+}
+
+void CommandRouter::SetStrictFlags(const std::string& group) {
+    strict_flag_groups_.insert(group);
+}
+
+void CommandRouter::SetStrictFlags(const std::string& group, const std::string& action) {
+    strict_flag_commands_.insert(group + ":" + action);
+}
+
+bool CommandRouter::IsStrictFlags(const std::string& group, const std::string& action) const {
+    return strict_flag_groups_.count(group) > 0 ||
+           strict_flag_commands_.count(group + ":" + action) > 0;
+}
+
+const std::vector<std::string>& CommandRouter::GlobalFlagNames() {
+    static const std::vector<std::string> names = {
+        "host", "port", "user", "password", "password-env", "client", "language",
+        "https", "insecure", "json", "timeout", "session-file", "color", "no-color",
+        "no-telemetry", "config", "help", "quiet", "no-banner"};
+    return names;
 }
 
 int CommandRouter::Dispatch(int argc, const char* const* argv) const {
@@ -227,6 +266,42 @@ int CommandRouter::Dispatch(int argc, const char* const* argv) const {
             }
         }
         return 1;
+    }
+
+    std::vector<std::string> known = GlobalFlagNames();
+    if (it->second.help.has_value()) {
+        for (const auto& f : it->second.help->flags) {
+            known.push_back(f.name);
+        }
+    }
+    const bool strict = IsStrictFlags(args.group, args.action);
+    for (const auto& [flag, value] : args.flags) {
+        if (std::find(known.begin(), known.end(), flag) != known.end()) {
+            continue;
+        }
+        std::string hint;
+        size_t best_distance = 3;  // suggest only close matches
+        for (const auto& k : known) {
+            const size_t d = EditDistance(flag, k);
+            if (d < best_distance) {
+                best_distance = d;
+                hint = " (did you mean --" + k + "?)";
+            }
+        }
+        const std::string command = "'" + args.group + " " + args.action + "'";
+        if (!strict) {
+            std::cerr << "warning: unknown flag --" << flag << " for " << command << hint << "\n";
+            continue;
+        }
+        const std::string message = "Unknown flag --" + flag + " for " + command + hint +
+                                    ". Nothing was done; see 'erpl-adt " + args.group + " " +
+                                    args.action + " --help'.";
+        if (json_mode) {
+            PrintJsonError(message, std::cerr);
+        } else {
+            std::cerr << "Error: " << message << "\n";
+        }
+        return 99;
     }
 
     return it->second.handler(args);

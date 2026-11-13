@@ -3,6 +3,8 @@
 
 #include <tinyxml2.h>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -15,7 +17,7 @@ const char* kActivationContentType = "application/vnd.sap.adt.activation.v1+xml"
 const char* kActivateObjectPath = "/sap/bc/adt/activation?method=activate&preauditRequested=true";
 constexpr const char* kNsAdtCore = "http://www.sap.com/adt/core";
 
-std::string BuildActivationRequestXml(const ActivateObjectParams& params) {
+std::string BuildActivationRequestXml(const std::vector<ActivateObjectParams>& objects) {
     tinyxml2::XMLDocument doc;
     doc.InsertFirstChild(doc.NewDeclaration());
 
@@ -23,18 +25,20 @@ std::string BuildActivationRequestXml(const ActivateObjectParams& params) {
     root->SetAttribute("xmlns:adtcore", kNsAdtCore);
     doc.InsertEndChild(root);
 
-    auto* ref = doc.NewElement("adtcore:objectReference");
-    ref->SetAttribute("adtcore:uri", params.uri.c_str());
-    if (!params.type.empty()) {
-        ref->SetAttribute("adtcore:type", params.type.c_str());
+    for (const auto& params : objects) {
+        auto* ref = doc.NewElement("adtcore:objectReference");
+        ref->SetAttribute("adtcore:uri", params.uri.c_str());
+        if (!params.type.empty()) {
+            ref->SetAttribute("adtcore:type", params.type.c_str());
+        }
+        if (!params.name.empty()) {
+            ref->SetAttribute("adtcore:name", params.name.c_str());
+        }
+        if (!params.parent_uri.empty()) {
+            ref->SetAttribute("adtcore:parentUri", params.parent_uri.c_str());
+        }
+        root->InsertEndChild(ref);
     }
-    if (!params.name.empty()) {
-        ref->SetAttribute("adtcore:name", params.name.c_str());
-    }
-    if (!params.parent_uri.empty()) {
-        ref->SetAttribute("adtcore:parentUri", params.parent_uri.c_str());
-    }
-    root->InsertEndChild(ref);
 
     tinyxml2::XMLPrinter printer;
     doc.Print(&printer);
@@ -198,8 +202,17 @@ Result<ActivationResult, Error> ActivateObject(
     IAdtSession& session,
     const ActivateObjectParams& params,
     std::chrono::seconds timeout) {
+    return ActivateObjects(session, {params}, timeout);
+}
 
-    if (params.uri.empty()) {
+Result<ActivationResult, Error> ActivateObjects(
+    IAdtSession& session,
+    const std::vector<ActivateObjectParams>& objects,
+    std::chrono::seconds timeout) {
+
+    if (objects.empty() ||
+        std::any_of(objects.begin(), objects.end(),
+                    [](const ActivateObjectParams& p) { return p.uri.empty(); })) {
         return Result<ActivationResult, Error>::Err(Error{
             "ActivateObject", "", std::nullopt,
             "URI is required for activation", std::nullopt});
@@ -210,7 +223,7 @@ Result<ActivationResult, Error> ActivateObject(
         return Result<ActivationResult, Error>::Err(std::move(csrf).Error());
     }
 
-    auto xml = BuildActivationRequestXml(params);
+    auto xml = BuildActivationRequestXml(objects);
 
     HttpHeaders headers = {{"x-csrf-token", csrf.Value()}};
     auto response = session.Post(kActivateObjectPath, xml, kActivationContentType, headers);
@@ -248,6 +261,86 @@ Result<ActivationResult, Error> ActivateObject(
 
     return Result<ActivationResult, Error>::Err(
         Error::FromHttpStatus("ActivateObject", kActivateObjectPath, http.status_code, http.body));
+}
+
+namespace {
+
+struct UriTypeMapping {
+    const char* path_segment;  // after "/sap/bc/adt/"
+    const char* type;
+};
+
+// Longer (more specific) prefixes first: the parts of a function group
+// must win over the group.
+constexpr UriTypeMapping kUriTypeMap[] = {
+    {"programs/programs/", "PROG/P"},
+    {"programs/includes/", "PROG/I"},
+    {"oo/classes/", "CLAS/OC"},
+    {"oo/interfaces/", "INTF/OI"},
+    {"functions/groups/", "FUGR/F"},
+    {"packages/", "DEVC/K"},
+    {"ddic/ddl/sources/", "DDLS/DF"},
+    {"ddic/tables/", "TABL/DT"},
+    {"ddic/dataelements/", "DTEL/DE"},
+    {"messageclass/", "MSAG/N"},
+};
+
+// One URI segment as an ABAP name: "%2fdmo%2ffm" -> "/DMO/FM".
+std::string SegmentToName(const std::string& segment) {
+    std::string out;
+    for (size_t i = 0; i < segment.size(); ++i) {
+        if (i + 2 < segment.size() &&
+            (segment.compare(i, 3, "%2f") == 0 || segment.compare(i, 3, "%2F") == 0)) {
+            out += '/';
+            i += 2;
+        } else {
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(segment[i])));
+        }
+    }
+    return out;
+}
+
+std::string FirstSegment(const std::string& path) {
+    return path.substr(0, path.find('/'));
+}
+
+}  // namespace
+
+ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri) {
+    ActivateObjectParams params;
+    params.uri = object_uri;
+
+    const std::string base = "/sap/bc/adt/";
+    if (object_uri.compare(0, base.size(), base) != 0) {
+        return params;
+    }
+    const std::string tail = object_uri.substr(base.size());
+
+    for (const auto& m : kUriTypeMap) {
+        const std::string seg(m.path_segment);
+        if (tail.size() <= seg.size() || tail.compare(0, seg.size(), seg) != 0) {
+            continue;
+        }
+        const std::string rest = tail.substr(seg.size());  // "<name>[/...]"
+        const std::string first = FirstSegment(rest);
+        params.type = m.type;
+        params.name = SegmentToName(first);
+
+        if (params.type == "FUGR/F" && first.size() < rest.size()) {
+            // ".../groups/<g>/fmodules/<fm>" or ".../groups/<g>/includes/<incl>"
+            const std::string below = rest.substr(first.size() + 1);
+            const std::string kind = FirstSegment(below);
+            const std::string part =
+                kind.size() < below.size() ? FirstSegment(below.substr(kind.size() + 1)) : "";
+            if (!part.empty() && (kind == "fmodules" || kind == "includes")) {
+                params.type = kind == "fmodules" ? "FUGR/FF" : "FUGR/I";
+                params.name = SegmentToName(part);
+                params.parent_uri = base + seg + first;
+            }
+        }
+        break;
+    }
+    return params;
 }
 
 } // namespace erpl_adt

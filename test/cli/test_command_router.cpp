@@ -2,6 +2,7 @@
 
 #include <erpl_adt/cli/command_router.hpp>
 
+#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -562,4 +563,97 @@ TEST_CASE("CommandRouter: --json unknown action in known group outputs JSON erro
     const char* argv[] = {"erpl-adt", "--json", "search", "nonexistent"};
     int exit_code = router.Dispatch(4, argv);
     CHECK(exit_code == 1);
+}
+
+// ===========================================================================
+// Unknown flags: warn by default, refuse for strict commands
+// ===========================================================================
+
+namespace {
+
+struct Captured {
+    int code;
+    std::string err;
+};
+
+Captured DispatchCapturingStderr(const CommandRouter& router, int argc, const char* const* argv) {
+    std::ostringstream err;
+    auto* old = std::cerr.rdbuf(err.rdbuf());
+    const int code = router.Dispatch(argc, argv);
+    std::cerr.rdbuf(old);
+    return Captured{code, err.str()};
+}
+
+CommandHelp HelpWithActivate() {
+    CommandHelp help;
+    help.usage = "erpl-adt g a";
+    help.flags = {{"activate", "", "Activate", false}, {"file", "<path>", "File", false}};
+    return help;
+}
+
+}  // namespace
+
+TEST_CASE("CommandRouter: unknown flag warns and still runs the command",
+          "[cli][router][flags]") {
+    CommandRouter router;
+    bool called = false;
+    router.Register("g", "a", "desc", [&](const CommandArgs&) { called = true; return 0; },
+                    HelpWithActivate());
+    const char* argv[] = {"erpl-adt", "g", "a", "--activte"};
+    auto r = DispatchCapturingStderr(router, 4, argv);
+    CHECK(called);
+    CHECK(r.code == 0);
+    CHECK(r.err.find("warning: unknown flag --activte for 'g a' (did you mean --activate?)") !=
+          std::string::npos);
+}
+
+TEST_CASE("CommandRouter: known and global flags do not warn", "[cli][router][flags]") {
+    CommandRouter router;
+    router.Register("g", "a", "desc", [](const CommandArgs&) { return 0; }, HelpWithActivate());
+    const char* argv[] = {"erpl-adt", "--host", "h", "--json", "g", "a", "--activate",
+                          "--file", "x", "--quiet"};
+    auto r = DispatchCapturingStderr(router, 10, argv);
+    CHECK(r.code == 0);
+    CHECK(r.err.empty());
+}
+
+TEST_CASE("CommandRouter: unknown flag without a close match warns without a hint",
+          "[cli][router][flags]") {
+    CommandRouter router;
+    router.Register("g", "a", "desc", [](const CommandArgs&) { return 0; }, HelpWithActivate());
+    const char* argv[] = {"erpl-adt", "g", "a", "--completely-different"};
+    auto r = DispatchCapturingStderr(router, 4, argv);
+    CHECK(r.code == 0);
+    CHECK(r.err.find("warning: unknown flag --completely-different for 'g a'") !=
+          std::string::npos);
+    CHECK(r.err.find("did you mean") == std::string::npos);
+}
+
+TEST_CASE("CommandRouter: a strict command refuses an unknown flag without running",
+          "[cli][router][flags]") {
+    CommandRouter router;
+    bool called = false;
+    router.Register("g", "a", "desc", [&](const CommandArgs&) { called = true; return 0; },
+                    HelpWithActivate());
+    router.Register("g", "b", "desc", [](const CommandArgs&) { return 0; }, HelpWithActivate());
+    router.SetStrictFlags("g", "a");
+    const char* argv[] = {"erpl-adt", "g", "a", "--activte"};
+    auto r = DispatchCapturingStderr(router, 4, argv);
+    CHECK_FALSE(called);
+    CHECK(r.code == 99);
+    CHECK(r.err.find("did you mean --activate?") != std::string::npos);
+    CHECK(r.err.find("Nothing was done") != std::string::npos);
+    // Only that command is strict.
+    const char* argv_b[] = {"erpl-adt", "g", "b", "--activte"};
+    CHECK(DispatchCapturingStderr(router, 4, argv_b).code == 0);
+}
+
+TEST_CASE("CommandRouter: IsStrictFlags reports group and command strictness",
+          "[cli][router][flags]") {
+    CommandRouter router;
+    router.SetStrictFlags("grp");
+    router.SetStrictFlags("g", "a");
+    CHECK(router.IsStrictFlags("grp", "anything"));
+    CHECK(router.IsStrictFlags("g", "a"));
+    CHECK_FALSE(router.IsStrictFlags("g", "b"));
 }

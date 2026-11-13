@@ -212,6 +212,23 @@ Configure it in your MCP client (e.g., Claude Desktop, Claude Code):
 }
 ```
 
+The `abapgit_status` (read-only), `abapgit_deploy`, `abapgit_export` and
+`abapgit_delete` (destructive) tools are the [`abapgit` commands](#classic-gui-objects-from-git-abapgit-files)
+with the same arguments (`path`, `package`, `transport`, `dry_run`, `force`,
+`strict`, `objects`) and the same JSON report. They only read and write
+repository files below one folder, `--abapgit-root <dir>` (YAML
+`mcp.abapgit_root`, default: the server's working directory): relative paths
+resolve against it, absolute paths are accepted only inside it, and `..`,
+symlinks or a `.abapgit.xml` `STARTING_FOLDER` leading outside it are refused.
+The record of what the server last deployed stays in the repository's `.git`
+only when that git directory is inside the root; otherwise (a `.git` pointer
+file leading out, no git work tree) the server keeps it in its own cache
+directory, one per repository - never in a place the repository chooses:
+
+```bash
+erpl-adt mcp --host sap.example.com --abapgit-root ~/src/erpl-demo-repos
+```
+
 ## Catalog
 
 A unified, cross-domain (ABAP + DDIC + CDS + BW) metadata catalog, persisted in a single DuckDB file so search/lineage/where-used run in milliseconds instead of round-tripping SAP. Covers full-text + semantic (Gemini embeddings) hybrid search, end-to-end lineage stitching, a business-glossary overlay (definitions/owner/line-of-business/confidentiality) layered on top of the technical metadata, and incremental sync.
@@ -296,6 +313,33 @@ in a `--config` file). See [docs/cli-usage.md](docs/cli-usage.md#http-transport-
 The web UI ([`flutter/erpl_catalog_kit`](flutter/erpl_catalog_kit), compiled and embedded straight into the `erpl-adt` binary — see [Building from source](#building-from-source)) is **read-only against the cache except for curation**: Search, Browse, Entity Detail, Lineage, and Driver Tree all query the same fast `catalog_*` MCP tools the CLI and AI agents use; the Curate screen is the only one that writes, via `catalog_annotate`. There's no build/sync button — `catalog webui` doesn't hold a live SAP connection, so building, exporting, and syncing stay CLI-only operations. The Sync Status screen shows past sync runs and cache health, and Feed Export surfaces the exact `erpl-adt catalog build --format ...` command to run for each format, rather than re-implementing either client-side.
 
 ![catalog explorer](docs/demos/catalog-explorer.png)
+
+## Classic GUI objects from git (abapGit files)
+
+Dynpros, GUI status and titles, transaction codes, domains, data elements, text
+pools and function modules have no ADT REST endpoint. `erpl-adt abapgit` deploys
+them from **abapGit-format files** and exports them back byte-for-byte, so a
+classic dialog application can live in git, be linted with abaplint and be
+deployed headless from CI:
+
+```bash
+erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # what would change
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # create/update + activate
+erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO                          # pull SE51/SE41 changes into git
+```
+
+Deploys are idempotent (unchanged objects are left alone), run in dependency
+order (an object whose prerequisite failed is skipped), record changes on the
+given transport, respect GUI locks, refuse to overwrite objects someone changed
+in the system outside git (unless `--force`), and only touch customer objects.
+`status` previews the same parts and refusals a deploy would hit and fails on
+a file it cannot load, so it can gate pull requests (`--strict` makes every
+refusal fatal). Under the hood erpl-adt calls the workbench
+function modules SE51/SE41/SE93/SE11 use from a temporary console class in
+`$TMP`. Details, the API table and limitations: [docs/abapgit-deploy.md](docs/abapgit-deploy.md).
+
+This is unrelated to the `deploy` command below, which drives the abapGit
+*backend installed inside SAP*.
 
 ## Deploy workflow
 
