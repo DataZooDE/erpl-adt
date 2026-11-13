@@ -222,9 +222,22 @@ public:
         if (valid.IsErr()) {
             return Result<DeployPlan, Error>::Err(valid.Error());
         }
+        // What differs is decided here, so status reports the same parts a
+        // deploy writes; the ADT phase only executes the selection.
+        auto selected = Select(key, desired, current);
+        if (selected.IsErr()) {
+            return Result<DeployPlan, Error>::Err(selected.Error());
+        }
         DeployPlan plan;
-        plan.adt = [this, key, desired, current](TypeContext& adt_ctx) {
-            return Write(key, desired, current, adt_ctx);
+        plan.parts = selected.Value().parts;
+        plan.adt = [this, key, desired, current,
+                    changes = selected.Value()](TypeContext& adt_ctx)
+            -> Result<std::vector<std::string>, Error> {
+            auto written = Write(key, desired, current, changes, adt_ctx);
+            if (written.IsErr()) {
+                return Result<std::vector<std::string>, Error>::Err(written.Error());
+            }
+            return Result<std::vector<std::string>, Error>::Ok({});  // parts: in the plan
         };
         return Result<DeployPlan, Error>::Ok(std::move(plan));
     }
@@ -238,12 +251,87 @@ public:
     }
 
 private:
-    // The ADT requests; returns the parts written.
-    Result<std::vector<std::string>, Error> Write(const AbapGitObjectKey& key,
-                                                  const ObjectFileSet& desired,
-                                                  const ObjectState& current,
-                                                  TypeContext& ctx) const {
-        using R = Result<std::vector<std::string>, Error>;
+    // What a deploy writes: the includes and function modules that differ,
+    // and the function modules no longer in the files.
+    struct Changes {
+        std::set<std::string> includes;
+        std::set<std::string> functions;
+        std::vector<std::string> parts;  // for the report, in write order
+    };
+
+    Result<Changes, Error> Select(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                  const ObjectState& current) const {
+        using R = Result<Changes, Error>;
+        const std::string main_file = FileName(key, "xml");
+        auto want = ParseMain(desired, main_file);
+        if (want.IsErr()) {
+            return R::Err(want.Error());
+        }
+        const auto& def = want.Value();
+        FugrDefinition have;
+        if (current.exists) {
+            auto parsed = ParseMain(current.files, main_file);
+            if (parsed.IsErr()) {
+                return R::Err(parsed.Error());
+            }
+            have = parsed.Value();
+        }
+        Changes c;
+        if (!current.exists) {
+            c.parts.push_back("function group");
+        }
+        for (const auto& include : def.includes) {
+            const auto file = PartFile(key, include, ".abap");
+            if (desired.count(file) == 0) {
+                continue;
+            }
+            if (current.exists && current.files.count(file) != 0 &&
+                Find(current.files, file) == Find(desired, file)) {
+                continue;
+            }
+            c.includes.insert(include);
+            c.parts.push_back("include " + include);
+        }
+        std::map<std::string, const FmInterface*> have_fms;
+        for (const auto& fm : have.functions) {
+            have_fms[fm.name] = &fm;
+        }
+        for (const auto& fm : def.functions) {
+            const auto file = PartFile(key, fm.name, ".abap");
+            auto it = have_fms.find(fm.name);
+            if (it != have_fms.end() && it->second->item_xml == fm.item_xml &&
+                Find(current.files, file) == Find(desired, file)) {
+                continue;
+            }
+            c.functions.insert(fm.name);
+            c.parts.push_back("function module " + fm.name);
+        }
+        for (const auto& fm : have.functions) {
+            const bool wanted =
+                std::any_of(def.functions.begin(), def.functions.end(),
+                            [&fm](const FmInterface& d) { return d.name == fm.name; });
+            if (!wanted) {
+                c.parts.push_back("deleted function module " + fm.name);
+            }
+        }
+        // Include attributes (PROGDIR, text pool) are created by SAP; report
+        // differences instead of silently claiming them deployed.
+        for (const auto& [name, bytes] : desired) {
+            const bool include_xml = name != main_file && name.size() > 4 &&
+                                     name.compare(name.size() - 4, 4, ".xml") == 0;
+            if (include_xml && current.exists && current.files.count(name) != 0 &&
+                current.files.at(name) != bytes) {
+                c.parts.push_back(name + " (include attributes differ; not deployable, unchanged)");
+            }
+        }
+        return R::Ok(std::move(c));
+    }
+
+    // The ADT requests for the selected changes.
+    Result<void, Error> Write(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                              const ObjectState& current, const Changes& changes,
+                              TypeContext& ctx) const {
+        using R = Result<void, Error>;
         const std::string main_file = FileName(key, "xml");
         auto want = ParseMain(desired, main_file);
         if (want.IsErr()) {
@@ -266,7 +354,6 @@ private:
             return R::Err(valid.Error());
         }
 
-        std::vector<std::string> parts;
         std::vector<ActivateObjectParams> activate;
 
         if (!current.exists) {
@@ -280,7 +367,6 @@ private:
             if (created.IsErr()) {
                 return R::Err(created.Error());
             }
-            parts.push_back("function group");
         }
 
         // Includes (TOP, user includes). The main program SAPL<fg> is generated
@@ -290,11 +376,7 @@ private:
         for (const auto& include : def.includes) {
             const auto file = PartFile(key, include, ".abap");
             const auto source = Find(desired, file);
-            if (desired.count(file) == 0) {
-                continue;
-            }
-            if (current.exists && Find(current.files, file) == source &&
-                current.files.count(file) != 0) {
+            if (changes.includes.count(include) == 0) {
                 continue;
             }
             std::string uri;
@@ -320,7 +402,6 @@ private:
                                              include == main_program ? key.name : include,
                                              include == main_program ? ""
                                                                      : FunctionGroupUri(key.name)));
-            parts.push_back("include " + include);
         }
 
         // Function modules.
@@ -331,11 +412,10 @@ private:
         for (const auto& fm : def.functions) {
             const auto file = PartFile(key, fm.name, ".abap");
             const auto source = Find(desired, file);
-            auto it = have_fms.find(fm.name);
-            if (it != have_fms.end() && it->second->item_xml == fm.item_xml &&
-                Find(current.files, file) == source) {
+            if (changes.functions.count(fm.name) == 0) {
                 continue;
             }
+            auto it = have_fms.find(fm.name);
             if (it == have_fms.end()) {
                 auto created = CreateFunctionModule(ctx.session, key.name, fm.name, fm.short_text,
                                                     Transport(ctx));
@@ -353,7 +433,6 @@ private:
                 return R::Err(written.Error());
             }
             activate.push_back(ActivationRef(uri, "FUGR/FF", fm.name, FunctionGroupUri(key.name)));
-            parts.push_back("function module " + fm.name);
         }
 
         // Function modules that are no longer in the files.
@@ -372,7 +451,6 @@ private:
             if (deleted.IsErr()) {
                 return R::Err(deleted.Error());
             }
-            parts.push_back("deleted function module " + fm.name);
         }
 
         if (!activate.empty()) {
@@ -392,17 +470,7 @@ private:
             }
         }
 
-        // Include attributes (PROGDIR, text pool) are created by SAP; report
-        // differences instead of silently claiming them deployed.
-        for (const auto& [name, bytes] : desired) {
-            const bool include_xml = name != main_file && name.size() > 4 &&
-                                     name.compare(name.size() - 4, 4, ".xml") == 0;
-            if (include_xml && current.exists && current.files.count(name) != 0 &&
-                current.files.at(name) != bytes) {
-                parts.push_back(name + " (include attributes differ; not deployable, unchanged)");
-            }
-        }
-        return R::Ok(parts);
+        return R::Ok();
     }
 
     static std::string MainProgram(const FugrDefinition& def, const std::string& group) {

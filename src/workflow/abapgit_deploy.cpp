@@ -183,27 +183,37 @@ bool IsNameChar(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '/';
 }
 
-// Whether `files` mention `name` as a whole word (case-insensitive): a DTEL
-// names its DOMNAME, a TRAN its PGMNA, a program the types it uses.
-bool Mentions(const ObjectFileSet& files, const std::string& name) {
-    std::string upper_name = name;
-    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+std::string Upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    for (const auto& [file, bytes] : files) {
-        std::string text = bytes;
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        for (auto at = text.find(upper_name); at != std::string::npos;
-             at = text.find(upper_name, at + 1)) {
-            const bool starts = at == 0 || !IsNameChar(text[at - 1]);
-            const size_t end = at + upper_name.size();
-            const bool ends = end >= text.size() || !IsNameChar(text[end]);
-            if (starts && ends) {
-                return true;
-            }
+    return s;
+}
+
+// Whether `text` names `name` as a whole word (case-insensitive): ZFOO in
+// "ZFOO: error", not in "ZFOO_TOP".
+bool NamesWord(const std::string& text, const std::string& name) {
+    const std::string upper_name = Upper(name);
+    const std::string upper = Upper(text);
+    if (upper_name.empty()) {
+        return false;
+    }
+    for (auto at = upper.find(upper_name); at != std::string::npos;
+         at = upper.find(upper_name, at + 1)) {
+        const bool starts = at == 0 || !IsNameChar(upper[at - 1]);
+        const size_t end = at + upper_name.size();
+        const bool ends = end >= upper.size() || !IsNameChar(upper[end]);
+        if (starts && ends) {
+            return true;
         }
     }
     return false;
+}
+
+// Whether `files` mention `name` as a whole word: a DTEL names its DOMNAME,
+// a TRAN its PGMNA, a program the types it uses.
+bool Mentions(const ObjectFileSet& files, const std::string& name) {
+    return std::any_of(files.begin(), files.end(),
+                       [&](const auto& file) { return NamesWord(file.second, name); });
 }
 
 // Path characters that may go into the popen command line (inside double
@@ -295,26 +305,19 @@ void SkipIfDependencyBroken(std::vector<Work>& works, Work& w, AbapGitRunReport&
     }
 }
 
-std::string Upper(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return s;
-}
-
 // The activation result as far as it concerns `w`: SAP's messages and log
 // lines that name the object, or all of them when none does.
 EngineOpResult ActivationResultFor(const EngineOpResult& r, const Work& w) {
-    const std::string name = Upper(w.key.name);
     EngineOpResult own = r;
     own.errors.clear();
     own.messages.clear();
     for (const auto& e : r.errors) {
-        if (Upper(e).find(name) != std::string::npos) {
+        if (NamesWord(e, w.key.name)) {
             own.errors.push_back(e);
         }
     }
     for (const auto& m : r.messages) {
-        if (Upper(m.text).find(name) != std::string::npos) {
+        if (NamesWord(m.text, w.key.name)) {
             own.messages.push_back(m);
         }
     }
@@ -341,13 +344,13 @@ void AttributeActivation(const EngineOpResult& r, std::vector<Work>& works,
     std::vector<size_t> named;
     if (inactive.empty() && r.rc != 0) {
         for (const auto i : members) {
-            const std::string name = Upper(works[i].key.name);
+            const std::string& name = works[i].key.name;
             bool mentioned = false;
             for (const auto& e : r.errors) {
-                mentioned = mentioned || Upper(e).find(name) != std::string::npos;
+                mentioned = mentioned || NamesWord(e, name);
             }
             for (const auto& m : r.messages) {
-                mentioned = mentioned || Upper(m.text).find(name) != std::string::npos;
+                mentioned = mentioned || NamesWord(m.text, name);
             }
             if (mentioned) {
                 named.push_back(i);
@@ -739,7 +742,10 @@ std::optional<Error> AbapGitRunReport::MostSevereError() const {
 
 int AbapGitRunReport::ExitCode() const {
     auto worst = MostSevereError();
-    return worst ? worst->ExitCode() : 0;
+    if (worst) {
+        return worst->ExitCode();
+    }
+    return local_error ? local_error->ExitCode() : 0;
 }
 
 int AbapGitRunReport::StatusExitCode(bool strict) const {
@@ -989,6 +995,15 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
     AbapGitRunReport report;
     std::vector<const AbapGitObjectFiles*> eligible;
     std::vector<ObjectFileSet> desired;
+    // Objects that failed, were refused or skipped - at any stage, before or
+    // while writing; later objects (in dependency order) that mention one of
+    // them are not attempted: they would be written against the old (or a
+    // missing) prerequisite.
+    std::vector<AbapGitObjectKey> broken;
+    std::map<std::string, size_t> position;  // "TYPE NAME" -> index in `objects`
+    for (size_t k = 0; k < objects.size(); ++k) {
+        position.emplace(objects[k].key.type + " " + objects[k].key.name, k);
+    }
 
     for (const auto& object : objects) {
         if (object.key.type == "DEVC") {
@@ -1008,6 +1023,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
                 CheckGuardRails(object.key, object.package, transport_fatal, options)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
+            broken.push_back(object.key);
             continue;
         }
         auto files = LoadObjectFiles(object);
@@ -1017,6 +1033,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             if (!report.local_error) {
                 report.local_error = files.Error();
             }
+            broken.push_back(object.key);
             continue;
         }
         eligible.push_back(&object);
@@ -1032,13 +1049,13 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
     }
     auto states = ReadStates(keys, options);
 
-    // Objects that failed (or were skipped) before anything was written;
-    // later objects that depend on them are not attempted.
-    std::vector<AbapGitObjectKey> broken;
     std::vector<Work> works;  // what gets written, run phase by phase below
+    auto pos = [&](const AbapGitObjectKey& key) {
+        return position.at(key.type + " " + key.name);
+    };
     auto failed_dependency = [&](size_t i) -> std::optional<AbapGitObjectKey> {
         for (const auto& key : broken) {
-            if (Mentions(desired[i], key.name)) {
+            if (pos(key) < pos(eligible[i]->key) && Mentions(desired[i], key.name)) {
                 return key;
             }
         }
@@ -1054,6 +1071,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             if (!report.read_error) {
                 report.read_error = state.Error();
             }
+            broken.push_back(object.key);
             continue;
         }
         // Translations and documentation languages the files do not carry
@@ -1064,6 +1082,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
+            broken.push_back(object.key);
             continue;
         }
         if (current.exists && current.files == desired[i] && current.pending.empty()) {
@@ -1077,9 +1096,7 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         if (valid.IsErr()) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Failed, valid.Error()));
-            if (!current.exists) {
-                broken.push_back(object.key);
-            }
+            broken.push_back(object.key);
             continue;
         }
         if (current.exists && !options.force) {
@@ -1087,19 +1104,9 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             if (auto drift = DetectDrift(object, desired[i], current, user, options.repo_root)) {
                 report.objects.push_back(
                     FailedOutcome(object.key, object.package, ObjectAction::Refused, *drift));
+                broken.push_back(object.key);
                 continue;
             }
-        }
-        const auto action = current.exists ? ObjectAction::Updated : ObjectAction::Created;
-        if (options.dry_run) {
-            auto outcome = Outcome(object.key, object.package, action);
-            if (!IsLocalPackage(object.package) && options.transport.empty()) {
-                outcome.notes.push_back("package " + object.package +
-                                        " is transportable: the deploy needs --transport "
-                                        "<request>");
-            }
-            report.objects.push_back(std::move(outcome));
-            continue;
         }
         if (auto dependency = failed_dependency(i)) {
             auto skipped = Outcome(object.key, object.package, ObjectAction::Skipped);
@@ -1108,12 +1115,26 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             broken.push_back(object.key);
             continue;
         }
+        const auto action = current.exists ? ObjectAction::Updated : ObjectAction::Created;
+        // Planning writes nothing: status (a dry run) shows the parts and
+        // the planning errors a deploy would hit.
         TypeContext ctx{session_, engine_, object.package, options.transport, options.language};
         auto plan = Handler(object.key.type)->Plan(object.key, desired[i], current, ctx);
         if (plan.IsErr()) {
             report.objects.push_back(FailedOutcome(object.key, object.package,
                                                    ObjectAction::Failed, plan.Error()));
             broken.push_back(object.key);
+            continue;
+        }
+        if (options.dry_run) {
+            auto outcome = Outcome(object.key, object.package, action);
+            outcome.parts = plan.Value().parts;
+            if (!IsLocalPackage(object.package) && options.transport.empty()) {
+                outcome.notes.push_back("package " + object.package +
+                                        " is transportable: the deploy needs --transport "
+                                        "<request>");
+            }
+            report.objects.push_back(std::move(outcome));
             continue;
         }
         const std::string verb = current.exists ? "updating " : "creating ";

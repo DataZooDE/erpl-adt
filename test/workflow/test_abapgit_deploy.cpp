@@ -45,6 +45,9 @@ public:
     std::function<EngineOpResult(const EngineOp&)> execute;
     std::set<std::string> fail_activation_for;           // owners ("PROG ZA")
     std::vector<std::vector<WorkingObject>> activations;  // per activate_objects op
+    // activate_objects fails (rc 8) with these messages but leaves nothing
+    // in DWINACTIV - the case where only the messages name the object.
+    std::vector<std::string> activation_errors;
     std::optional<Error> fail_run;                        // the whole run fails
     size_t fail_run_at = 0;                               // ... this run (0-based)
 
@@ -121,6 +124,10 @@ public:
                         r.rc = 8;
                     }
                     entries.push_back(w);
+                }
+                if (!activation_errors.empty()) {
+                    r.errors = activation_errors;
+                    r.rc = 8;
                 }
                 activations.push_back(entries);
             } else if (execute && op.call.rfind("fake_get(", 0) != 0) {
@@ -1479,4 +1486,126 @@ TEST_CASE("abapGit status: a file that cannot be loaded is a local error",
     CHECK(report.local_error->message.find("zerpl_d_b.doma.xml") != std::string::npos);
     CHECK(report.StatusExitCode(false) != 0);
     CHECK_FALSE(report.read_error.has_value());
+}
+
+namespace {
+
+const ObjectOutcome& OutcomeOf(const AbapGitRunReport& report, const std::string& name) {
+    for (const auto& o : report.objects) {
+        if (o.key.name == name) {
+            return o;
+        }
+    }
+    FAIL("no outcome for " + name);
+    return report.objects.front();
+}
+
+}  // namespace
+
+TEST_CASE("abapGit deploy: a prerequisite refused before writing skips its dependents",
+          "[workflow][abapgit_deploy][deps]") {
+    // The domain update is refused for drift: the data element that names it
+    // must not be written against the old domain.
+    Fixture f;
+    auto dtel = f.Add("DTEL", "ddic");
+    auto doma = f.Add("DOMA", "ddic");
+    auto a = f.repo.Doma("zerpl_d_a", "A");
+    auto e = f.repo.Doma("zerpl_e_a", "uses ZERPL_D_A");
+    e.key = {"DTEL", "ZERPL_E_A"};
+    REQUIRE_FALSE(f.Workflow().Deploy({a, e}, f.Options()).Failed());
+    f.system["ZERPL_D_A"].begin()->second = "<edited in SE11/>";
+    doma->changed_by = "COLLEAGUE";
+    auto a2 = f.repo.Doma("zerpl_d_a", "A2");
+    auto e2 = f.repo.Doma("zerpl_e_a", "uses ZERPL_D_A, changed");
+    e2.key = {"DTEL", "ZERPL_E_A"};
+    dtel->applied.clear();
+
+    auto report = f.Workflow().Deploy({a2, e2}, f.Options());
+
+    CHECK(OutcomeOf(report, "ZERPL_D_A").action == ObjectAction::Refused);
+    CHECK(OutcomeOf(report, "ZERPL_E_A").action == ObjectAction::Skipped);
+    CHECK(OutcomeOf(report, "ZERPL_E_A").message == "dependency DOMA ZERPL_D_A failed");
+    CHECK(dtel->applied.empty());
+
+    // status shows the same.
+    auto status = f.Options();
+    status.dry_run = true;
+    auto preview = f.Workflow().Deploy({a2, e2}, status);
+    CHECK(OutcomeOf(preview, "ZERPL_E_A").action == ObjectAction::Skipped);
+}
+
+TEST_CASE("abapGit deploy: a prerequisite whose file cannot be loaded skips its dependents",
+          "[workflow][abapgit_deploy][deps]") {
+    Fixture f;
+    auto dtel = f.Add("DTEL", "ddic");
+    f.Add("DOMA", "ddic");
+    auto a = f.repo.Doma("zerpl_d_a", "A");
+    std::ofstream(a.files["xml"], std::ios::binary | std::ios::trunc) << "<broken";
+    auto e = f.repo.Doma("zerpl_e_a", "uses ZERPL_D_A");
+    e.key = {"DTEL", "ZERPL_E_A"};
+
+    auto report = f.Workflow().Deploy({a, e}, f.Options());
+
+    CHECK(OutcomeOf(report, "ZERPL_D_A").action == ObjectAction::Failed);
+    CHECK(OutcomeOf(report, "ZERPL_E_A").action == ObjectAction::Skipped);
+    CHECK(dtel->applied.empty());
+}
+
+TEST_CASE("abapGit deploy: a later object's failure does not skip an earlier one",
+          "[workflow][abapgit_deploy][deps]") {
+    // Only prerequisites (earlier in dependency order) count: a program that
+    // names a transaction is not skipped because the transaction failed.
+    Fixture f;
+    auto prog = f.Add("PROG", "write");
+    f.Add("TRAN", "write-only");
+    auto p = f.repo.Doma("zerpl_p", "CALL TRANSACTION 'ZERPL_T'");
+    p.key = {"PROG", "ZERPL_P"};
+    auto t = f.repo.Doma("zerpl_t", "T");
+    t.key = {"TRAN", "ZERPL_T"};
+    t.package = "ZNOT_LOCAL";  // transportable, no --transport: refused up front
+
+    auto report = f.Workflow().Deploy({p, t}, f.Options());
+
+    CHECK(OutcomeOf(report, "ZERPL_T").action == ObjectAction::Refused);
+    CHECK(OutcomeOf(report, "ZERPL_P").action == ObjectAction::Created);
+}
+
+TEST_CASE("abapGit batching: activation messages are matched by whole object name",
+          "[workflow][abapgit_deploy][batch]") {
+    // Nothing left inactive, but the activation failed: its messages name
+    // ZERPL_P_TOP only - that must not fail ZERPL_P too.
+    Fixture f;
+    f.Add("PROG", "write");
+    auto a = f.repo.Doma("zerpl_p", "A");
+    a.key = {"PROG", "ZERPL_P"};
+    auto b = f.repo.Doma("zerpl_p_top", "B");
+    b.key = {"PROG", "ZERPL_P_TOP"};
+    f.engine.activation_errors = {"Program ZERPL_P_TOP: syntax error in line 3"};
+
+    auto report = f.Workflow().Deploy({a, b}, f.Options());
+
+    CHECK(OutcomeOf(report, "ZERPL_P_TOP").action == ObjectAction::Failed);
+    CHECK(OutcomeOf(report, "ZERPL_P").action == ObjectAction::Created);
+    CHECK(OutcomeOf(report, "ZERPL_P").message.empty());
+}
+
+TEST_CASE("abapGit status: previews the parts a deploy writes, and planning errors",
+          "[workflow][abapgit_deploy]") {
+    BatchFixture f;
+    auto status = f.Options();
+    status.dry_run = true;
+
+    auto preview = f.Workflow().Deploy(f.Demo(), status);
+    CHECK(f.engine.runs.size() == 1);  // the read run: nothing written
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    REQUIRE(preview.objects.size() == report.objects.size());
+    for (size_t i = 0; i < report.objects.size(); ++i) {
+        CHECK(preview.objects[i].key.name == report.objects[i].key.name);
+        CHECK(preview.objects[i].action == report.objects[i].action);
+        if (report.objects[i].key.type != "FUGR") {  // the fake's ADT parts come at run time
+            CHECK(preview.objects[i].parts == report.objects[i].parts);
+        }
+    }
+    CHECK(preview.objects[0].parts == std::vector<std::string>{"DD01V"});
 }

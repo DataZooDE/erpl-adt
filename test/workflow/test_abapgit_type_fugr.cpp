@@ -442,3 +442,36 @@ TEST_CASE("EngineFailure: an explicit KIND line from the engine wins",
     r.values["KIND"] = {"LOCK"};
     CHECK(EngineFailure("Writing", r).category == ErrorCategory::LockConflict);
 }
+
+TEST_CASE("FUGR: the plan names the parts before anything is written",
+          "[workflow][abapgit_fugr]") {
+    auto handlers = DefaultTypeHandlers();
+    const auto& handler = *handlers.at("FUGR");
+    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitXml xml;
+    xml.serializer = "LCL_OBJECT_FUGR";
+    xml.serializer_version = "v1.0.0";
+    xml.values_xml =
+        "<AREAT>demo</AREAT><INCLUDES><SOBJ_NAME>LZERPL_FGTOP</SOBJ_NAME></INCLUDES>"
+        "<FUNCTIONS><item><FUNCNAME>Z_ERPL_A</FUNCNAME><SHORT_TEXT>A</SHORT_TEXT></item>"
+        "</FUNCTIONS>";
+    ObjectFileSet desired{{"zerpl_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fg.fugr.lzerpl_fgtop.abap", "FUNCTION-POOL zerpl_fg.\n"},
+                          {"zerpl_fg.fugr.z_erpl_a.abap", "FUNCTION z_erpl_a.\nENDFUNCTION.\n"}};
+    MockAdtSession session;
+    FakeEngine engine;
+    TypeContext ctx{session, engine, "$TMP", "", "E"};
+    auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"function group", "include LZERPL_FGTOP",
+                                                         "function module Z_ERPL_A"});
+    CHECK(session.PostCallCount() == 0);
+
+    // Unchanged files: nothing to write.
+    ObjectState current;
+    current.exists = true;
+    current.files = desired;
+    auto same = handler.Plan(key, desired, current, ctx);
+    REQUIRE(same.IsOk());
+    CHECK(same.Value().parts.empty());
+}

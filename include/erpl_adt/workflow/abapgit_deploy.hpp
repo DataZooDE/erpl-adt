@@ -278,7 +278,7 @@ struct AbapGitRunReport {
     // trusted), then problems that need a human (CTS, someone else's lock or
     // change), then problems in the code being deployed.
     [[nodiscard]] std::optional<Error> MostSevereError() const;
-    // MostSevereError()'s exit code; 0 when nothing failed.
+    // MostSevereError()'s exit code (else local_error's); 0 when nothing failed.
     [[nodiscard]] int ExitCode() const;
     // The first error reading the system's state: the run could not
     // compare everything (connection, helper class, ...).
