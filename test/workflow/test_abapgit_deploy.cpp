@@ -131,9 +131,9 @@ public:
                     r.errors = activation_errors;
                     r.rc = 8;
                 }
-                for (const auto& line : activation_inactive) {
-                    r.values["INACTIVE"].push_back(line);
-                    failed.insert(line.substr(0, line.find('\t')));
+                for (const auto& inactive : activation_inactive) {
+                    r.values["INACTIVE"].push_back(inactive);
+                    failed.insert(inactive.substr(0, inactive.find('\t')));
                 }
                 activations.push_back(entries);
             } else if (execute && op.call.rfind("fake_get(", 0) != 0) {
