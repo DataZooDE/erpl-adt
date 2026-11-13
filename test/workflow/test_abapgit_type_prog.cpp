@@ -113,10 +113,14 @@ struct Ctx {
 
 }  // namespace
 
-TEST_CASE("PROG: read is one prog_get operation", "[workflow][abapgit_prog]") {
+TEST_CASE("PROG: read is prog_get plus the text pool translations and documentation",
+          "[workflow][abapgit_prog]") {
     auto ops = Handler()->ReadOps(kKey, "E");
-    REQUIRE(ops.size() == 1);
+    REQUIRE(ops.size() == 3);
     CHECK(ops[0].call == "prog_get( name = 'ZERPL_T_PROG' language = 'E' ).");
+    CHECK(ops[1].call == "i18n_tpool_get( name = 'ZERPL_T_PROG' language = 'E' ).");
+    CHECK(ops[2].call ==
+          "i18n_docu_get( id = 'RE' object = 'ZERPL_T_PROG' section = 'LONGTEXTS' ).");
 }
 
 TEST_CASE("PROG: state holds xml, source and one file per screen", "[workflow][abapgit_prog]") {

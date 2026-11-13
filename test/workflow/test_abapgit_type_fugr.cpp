@@ -335,7 +335,7 @@ TEST_CASE("DTEL handler: reads and writes through the DDIF function modules",
     const auto& handler = *handlers.at("DTEL");
     AbapGitObjectKey key{"DTEL", "ZERPL_E_SO_STATUS"};
     auto ops = handler.ReadOps(key, "E");
-    REQUIRE(ops.size() == 1);
+    REQUIRE(ops.size() == 4);  // + translations, documentation, supplement
     CHECK(ops[0].call == "dtel_get( name = 'ZERPL_E_SO_STATUS' language = 'E' ).");
 
     MockAdtSession session;
@@ -345,10 +345,12 @@ TEST_CASE("DTEL handler: reads and writes through the DDIF function modules",
                            ReadBytes(kErplDemo / "zerpl_e_so_status.dtel.xml")}};
     auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
     REQUIRE(plan.IsOk());
-    CHECK(plan.Value().parts == std::vector<std::string>{"DD04V"});
+    // The fixture carries German labels and documentation (E and D).
+    CHECK(plan.Value().parts ==
+          std::vector<std::string>{"DD04V", "DD04_TEXTS", "LONGTEXTS"});
     // DDIC phase: written and activated before the programs that use it.
     CHECK(plan.Value().writes.empty());
-    REQUIRE(plan.Value().ddic.size() == 1);
+    REQUIRE(plan.Value().ddic.size() == 3);
     const auto& put = plan.Value().ddic[0].op;
     CHECK(put.call ==
           "dtel_put( name = 'ZERPL_E_SO_STATUS' language = 'E' devclass = '$TMP' trkorr = '' ).");
