@@ -11,6 +11,7 @@ import pytest
 from adt_proxy import Sap740Proxy
 from bw_activation import ensure_bw_activated
 from cli_runner import CliRunner
+from hana_oracle import oracle as hana_oracle
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,12 @@ def sap_config():
         "password": password,
         "client": os.getenv("SAP_CLIENT", "001"),
     }
+
+
+@pytest.fixture(scope="session")
+def hana():
+    """Read-only HANA cross-checks of the local trial (see hana_oracle.py)."""
+    return hana_oracle()
 
 
 # ---------------------------------------------------------------------------

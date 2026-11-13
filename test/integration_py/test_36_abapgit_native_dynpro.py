@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from hana_oracle import oracle as hana_oracle
+
 SRC = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_native"
 PACKAGE = "$TMP"
 PROG = "ZERPL_SO_SPLIT"
@@ -47,18 +49,8 @@ def _files():
 
 
 def _hana(sql):
-    """Read-only SELECT in the A4H container's HANA (independent of erpl-adt)."""
-    if shutil.which("docker") is None:
-        pytest.skip("docker not available for the HANA cross-check")
-    proc = subprocess.run(
-        ["docker", "exec", "-u", "a4hadm", "-e", "HOME=/home/a4hadm", "a4h",
-         "/usr/sap/A4H/hdbclient/hdbsql", "-U", "DEFAULT", "-a", "-x", sql],
-        capture_output=True, text=True, timeout=120,
-    )
-    if proc.returncode != 0:
-        pytest.skip(f"HANA not reachable: {proc.stderr[:200]}")
-    return [[c.strip('"') for c in line.split(",")]
-            for line in proc.stdout.strip().splitlines() if line]
+    """Read-only SELECT in the SAP system's HANA (independent of erpl-adt)."""
+    return hana_oracle().query(sql.replace("SAPA4H.", hana_oracle().schema + "."))
 
 
 def _screens():
