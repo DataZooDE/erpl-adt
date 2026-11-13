@@ -176,6 +176,7 @@ TEST_CASE("TRAN handler: parts only reachable by table writes are refused, not d
         auto r = f.handler->Plan(f.key, desired, ObjectState{}, ctx);
         REQUIRE(r.IsErr());
         CHECK(r.Error().message.find("AUTHORIZATIONS") != std::string::npos);
+        CHECK(r.Error().message.find("no workbench API writes it") != std::string::npos);
     }
     SECTION("report transaction with variant (CINFO x'90')") {
         auto desired = f.Files(f.ReplaceText("<DYPNO>0100</DYPNO>",

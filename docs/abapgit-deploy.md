@@ -277,6 +277,15 @@ problems in the code being deployed.
   written in the master language only.
 * Native dynpros (splitter screens stored as `NAT_HEADER`) are reported as
   unsupported parts.
+* Transaction authorization-object checks (`AUTHORIZATIONS`, table `TSTCA`
+  with the `CINFO` bit x'04') are refused (exit 8). `RPY_TRANSACTION_INSERT`
+  has no parameter for them; classic SE93 (form in `LSEUKF01`) and abapGit's
+  `SAVE_AUTHORIZATIONS` both `DELETE`/`INSERT TSTCA` and `UPDATE TSTC`
+  directly, and the only class that writes them (`CL_TRAN_WBI_P`, the
+  persistence of the new transaction editor, which SAP enables only in SAP's
+  own development systems) does the same, without lock or transport. Maintain
+  the check in SE93. The same holds for report transactions with a variant
+  (`CINFO` x'10') and translated short texts.
 * The drift check needs `git` on the PATH to consult file history (the last
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.

@@ -92,7 +92,15 @@ std::vector<std::string> UnsupportedParts(const AbapGitObjectKey& key,
     std::vector<std::string> problems;
     for (const auto& [part, section] : sections) {
         if (part == "AUTHORIZATIONS") {
-            problems.push_back("AUTHORIZATIONS (authorization-object check, table TSTCA)");
+            // Evidence (read on the A4H trial): RPY_TRANSACTION_INSERT has no
+            // parameter for it; classic SE93 (LSEUKF01) and abapGit's
+            // SAVE_AUTHORIZATIONS write TSTCA and the CINFO bit x'04' with
+            // DELETE/INSERT/UPDATE; the only class that does it (CL_TRAN_WBI_P,
+            // behind the new SAP-internal transaction editor) writes the same
+            // tables directly, without lock or transport.
+            problems.push_back(
+                "AUTHORIZATIONS (authorization-object check, table TSTCA: no workbench API "
+                "writes it - SE93 and abapGit update TSTCA/TSTC directly; maintain it in SE93)");
             continue;
         }
         if (part == "I18N_TPOOL") {
