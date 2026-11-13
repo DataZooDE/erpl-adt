@@ -229,5 +229,8 @@ class TestReportVariants:
 
         entry = _entry(result, "PROG", PROG)
         assert entry["action"] == "created"
-        assert entry["parts"] == ["source", "PROGDIR", f"variant {VARIANT}", "TPOOL"]
+        parts = entry["parts"]
+        # The fixture also carries the German texts and the documentation.
+        assert set(parts) == {"source", "PROGDIR", f"variant {VARIANT}", "TPOOL",
+                              "I18N_TPOOL", "LONGTEXTS"}, parts
         assert _variants()[VARIANT] == ("A", "Purchase orders in progress")

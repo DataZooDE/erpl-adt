@@ -144,7 +144,8 @@ class TestModulePool:
         entry = _entry(result, "PROG", self.PROG)
         assert entry["action"] == "created"
         assert entry["parts"] == ["source", "PROGDIR", "screen 0100", "screen 0200",
-                                  "screen 0210", "screen 0220", "screen 0300", "CUA", "TPOOL"]
+                                  "screen 0210", "screen 0220", "screen 0300", "CUA", "TPOOL",
+                                  "I18N_TPOOL"]  # German title and texts (test_37)
         status, source = adt.source(self.PROG)
         assert status == 200, source[:500]
         assert source.rstrip("\n") == (SRC / f"{self.STEM}.prog.abap").read_text().rstrip("\n")
@@ -455,7 +456,8 @@ class TestReport:
 
         entry = _entry(result, "PROG", self.PROG)
         assert entry["action"] == "created"
-        assert entry["parts"] == ["source", "PROGDIR", "TPOOL"]
+        # Plus the German selection texts and the program documentation.
+        assert entry["parts"] == ["source", "PROGDIR", "TPOOL", "I18N_TPOOL", "LONGTEXTS"]
         selections = adt.text_elements(self.PROG, "selections")
         assert "S_BP_ID =Supplier" in selections
         # P_STATUS refers to the data element: its text comes from the DDIC.
