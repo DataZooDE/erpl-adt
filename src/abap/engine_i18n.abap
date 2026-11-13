@@ -87,9 +87,12 @@
       IMPORTING id      TYPE dokil-id
                 object  TYPE dokil-object
                 section TYPE string.
-    "! Writes the documentation of the payload (DOCU_UPDATE per language).
+    "! Writes the documentation of the payload (DOCU_UPDATE per language) as
+    "! documentation <id> of <object>: the identity in the file is ignored.
     METHODS i18n_docu_put
       IMPORTING section     TYPE string
+                id          TYPE dokil-id
+                object      TYPE dokil-object
                 corr_object TYPE string
                 corr_class  TYPE string
                 devclass    TYPE devclass
@@ -645,8 +648,23 @@
 
     " abapGit ZCL_ABAPGIT_LONGTEXTS=>DESERIALIZE: written active, a
     " translation (no MASTERLANG) without becoming the original language.
+    " The document is the one of this op's object, whatever the file says
+    " (a copied file must not write another object's documentation; the
+    " workflow refuses such files before anything is written, this is the
+    " second line). DOCU_UPDATE keys on HEAD-TDID / TDNAME / TDSPRAS.
     DATA no_masterlang TYPE dokil-masterlang.
     LOOP AT longtexts ASSIGNING FIELD-SYMBOL(<longtext>).
+      IF <longtext>-dokil-typ <> 'E' AND <longtext>-dokil-typ <> 'T'.
+        emit( kind = 'ERR' text = |Documentation { id } { object } has type { <longtext>-dokil-typ }; DOCU_UPDATE writes only E and T.| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+      <longtext>-dokil-id     = id.
+      <longtext>-dokil-object = object.
+      <longtext>-head-tdobject = 'DOKU'.
+      <longtext>-head-tdname   = object.
+      <longtext>-head-tdid     = id.
+      <longtext>-head-tdspras  = <longtext>-dokil-langu.
       no_masterlang = boolc( <longtext>-dokil-masterlang IS INITIAL ).
       CALL FUNCTION 'DOCU_UPDATE'
         EXPORTING
@@ -657,6 +675,17 @@
           no_masterlang = no_masterlang
         TABLES
           line          = <longtext>-lines.
+      " DOCU_UPDATE has no exceptions and no return code: check that the
+      " document is there now (its index entry DOKIL).
+      SELECT SINGLE @abap_true FROM dokil
+        WHERE id = @id AND object = @object AND langu = @<longtext>-dokil-langu
+          AND typ = @<longtext>-dokil-typ
+        INTO @DATA(saved).
+      IF sy-subrc <> 0 OR saved <> abap_true.
+        emit( kind = 'ERR' text = |The { <longtext>-dokil-langu } documentation { id } { object } was not saved (DOCU_UPDATE).| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
     ENDLOOP.
     emit_rc( 0 ).
   ENDMETHOD.

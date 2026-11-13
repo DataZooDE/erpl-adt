@@ -1047,7 +1047,9 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
         }
         // Translations and documentation languages the files do not carry
         // are not compared (and not written): see abapgit_i18n.hpp.
-        const ObjectState current = ScopeTranslations(desired[i], state.Value());
+        const ObjectState current = Handler(object.key.type)->KeepsUnmanagedTranslations()
+                                        ? ScopeTranslations(desired[i], state.Value())
+                                        : state.Value();
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
@@ -1175,7 +1177,10 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
                                                    ObjectAction::Failed, states.states[i].Error()));
             continue;
         }
-        const ObjectState current = ScopeTranslations(files_on_disk[i], states.states[i].Value());
+        // The whole object goes, with every translation and documentation
+        // language: compared unscoped, unlike a deploy (which leaves the
+        // languages the files do not name alone).
+        const ObjectState& current = states.states[i].Value();
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
@@ -1183,6 +1188,23 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
         }
         if (!current.exists) {
             report.objects.push_back(Outcome(object.key, object.package, ObjectAction::Missing));
+            continue;
+        }
+        const auto unmanaged = UnmanagedI18n(files_on_disk[i], current);
+        if (!options.force && !unmanaged.empty()) {
+            std::string list;
+            for (const auto& u : unmanaged) {
+                list += (list.empty() ? "" : "; ") + u;
+            }
+            report.objects.push_back(FailedOutcome(
+                object.key, object.package, ObjectAction::Refused,
+                MakeError(object.key.type + " " + object.key.name +
+                              ": the system holds translations or documentation the files do "
+                              "not have (" + list + "), made in SE63 / SE61 and not in git; "
+                              "deleting the object deletes them too. Pull them into git "
+                              "first: " + ExportHint(object, options.repo_root) +
+                              " - or delete anyway with --force.",
+                          ErrorCategory::LockConflict)));
             continue;
         }
         if (!options.force && current.files != files_on_disk[i]) {

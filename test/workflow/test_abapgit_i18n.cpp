@@ -5,6 +5,9 @@
 
 #include "../../test/mocks/mock_adt_session.hpp"
 
+#include <filesystem>
+#include <fstream>
+
 using namespace erpl_adt;
 using namespace erpl_adt::testing;
 
@@ -306,8 +309,8 @@ TEST_CASE("DTEL: changed documentation writes only the documentation",
     REQUIRE(plan.IsOk());
     CHECK(plan.Value().parts == std::vector<std::string>{"LONGTEXTS"});
     REQUIRE(Calls(plan.Value().ddic) == std::vector<std::string>{"i18n_docu_put"});
-    CHECK(plan.Value().ddic[0].op.call.find("section = 'LONGTEXTS' corr_object = "
-                                            "'DTELZERPL_E_X' corr_class = 'DICT'") !=
+    CHECK(plan.Value().ddic[0].op.call.find("section = 'LONGTEXTS' id = 'DE' object = 'ZERPL_E_X' "
+                                            "corr_object = 'DTELZERPL_E_X' corr_class = 'DICT'") !=
           std::string::npos);
 }
 
@@ -332,7 +335,10 @@ ObjectFileSet ProgFiles(const std::string& extra) {
 
 TEST_CASE("PROG: text pool translations and documentation are deployable",
           "[workflow][abapgit_i18n]") {
-    auto files = ProgFiles(I18nTpool("Bericht") + Longtexts("LONGTEXTS", "E", "Doc"));
+    auto files = ProgFiles(I18nTpool("Bericht") +
+                           "<LONGTEXTS><item><DOKIL><ID>RE</ID><OBJECT>ZERPL_P</OBJECT><LANGU>E"
+                           "</LANGU><TYP>E</TYP></DOKIL><HEAD><TDSPRAS>E</TDSPRAS></HEAD><LINES>"
+                           "<TLINE><TDLINE>Doc</TDLINE></TLINE></LINES></item></LONGTEXTS>");
     auto valid = Handler("PROG")->Validate(kProg, files, ObjectState{}, "E");
     CHECK(valid.IsOk());
 }
@@ -368,4 +374,212 @@ TEST_CASE("PROG: create writes the program, then translations and documentation"
     REQUIRE(p.parts.size() >= 2);
     CHECK(p.parts[p.parts.size() - 2] == "I18N_TPOOL");
     CHECK(p.parts.back() == "LONGTEXTS");
+}
+
+// --- documentation identity (a copied file must not write another object's docu)
+
+namespace {
+
+std::string DocuItem(const std::string& id, const std::string& object, const std::string& head) {
+    return "<item><DOKIL><ID>" + id + "</ID><OBJECT>" + object +
+           "</OBJECT><LANGU>E</LANGU><TYP>E</TYP><VERSION>0001</VERSION></DOKIL><HEAD>" + head +
+           "</HEAD><LINES><TLINE><TDFORMAT>AS</TDFORMAT><TDLINE>Doc</TDLINE></TLINE></LINES>"
+           "</item>";
+}
+
+std::string DocuHead(const std::string& id, const std::string& name) {
+    return "<TDOBJECT>DOKU</TDOBJECT><TDNAME>" + name + "</TDNAME><TDID>" + id +
+           "</TDID><TDSPRAS>E</TDSPRAS>";
+}
+
+}  // namespace
+
+TEST_CASE("DOMA: documentation copied from another domain is refused",
+          "[workflow][abapgit_i18n]") {
+    // zerpl_d_x.doma.xml copied from ZERPL_D_A: the docu still names ZERPL_D_A.
+    auto desired = DomaFiles("<LONGTEXTS>" +
+                             DocuItem("DO", "ZERPL_D_A", DocuHead("DO", "ZERPL_D_A")) +
+                             "</LONGTEXTS>");
+    auto valid = Handler("DOMA")->Validate(kDoma, desired, ObjectState{}, "E");
+    REQUIRE(valid.IsErr());
+    CHECK(valid.Error().category == ErrorCategory::CheckError);
+    CHECK(valid.Error().message.find("ZERPL_D_A") != std::string::npos);
+    CHECK(valid.Error().message.find("ZERPL_D_X") != std::string::npos);
+
+    // Same DOKIL, but a header naming another object.
+    auto head = DomaFiles("<LONGTEXTS>" +
+                          DocuItem("DO", "ZERPL_D_X", DocuHead("DO", "ZERPL_D_A")) +
+                          "</LONGTEXTS>");
+    CHECK(Handler("DOMA")->Validate(kDoma, head, ObjectState{}, "E").IsErr());
+
+    // The correct identity passes.
+    auto own = DomaFiles("<LONGTEXTS>" +
+                         DocuItem("DO", "ZERPL_D_X", DocuHead("DO", "ZERPL_D_X")) +
+                         "</LONGTEXTS>");
+    CHECK(Handler("DOMA")->Validate(kDoma, own, ObjectState{}, "E").IsOk());
+}
+
+TEST_CASE("DTEL: documentation naming SAP's own data element is refused",
+          "[workflow][abapgit_i18n]") {
+    const AbapGitObjectKey key{"DTEL", "ZERPL_E_X"};
+    const std::string dd04v = "<DD04V><ROLLNAME>ZERPL_E_X</ROLLNAME><DDTEXT>X</DDTEXT></DD04V>";
+    ObjectFileSet sap{{"zerpl_e_x.dtel.xml",
+                       File("LCL_OBJECT_DTEL", dd04v + "<LONGTEXTS>" +
+                                                   DocuItem("DE", "MATNR", DocuHead("DE", "MATNR")) +
+                                                   "</LONGTEXTS>")}};
+    auto valid = Handler("DTEL")->Validate(key, sap, ObjectState{}, "E");
+    REQUIRE(valid.IsErr());
+    CHECK(valid.Error().message.find("MATNR") != std::string::npos);
+
+    // Supplementary documentation (DZ) in the DE section: wrong document class.
+    ObjectFileSet wrong_id{{"zerpl_e_x.dtel.xml",
+                            File("LCL_OBJECT_DTEL",
+                                 dd04v + "<LONGTEXTS>" +
+                                     DocuItem("DZ", "ZERPL_E_X", DocuHead("DZ", "ZERPL_E_X")) +
+                                     "</LONGTEXTS>")}};
+    CHECK(Handler("DTEL")->Validate(key, wrong_id, ObjectState{}, "E").IsErr());
+}
+
+TEST_CASE("PROG: documentation of another program is refused", "[workflow][abapgit_i18n]") {
+    auto files = ProgFiles("<LONGTEXTS>" + DocuItem("RE", "RSPARAM", DocuHead("RE", "RSPARAM")) +
+                           "</LONGTEXTS>");
+    auto valid = Handler("PROG")->Validate(kProg, files, ObjectState{}, "E");
+    REQUIRE(valid.IsErr());
+    CHECK(valid.Error().message.find("RSPARAM") != std::string::npos);
+}
+
+TEST_CASE("i18n: the documentation write names its object, not the file's",
+          "[workflow][abapgit_i18n]") {
+    Ctx c;
+    auto desired = DomaFiles(Longtexts("LONGTEXTS", "E", "Doc"));
+    auto plan = Handler("DOMA")->Plan(kDoma, desired, ObjectState{}, c.ctx);
+    REQUIRE(plan.IsOk());
+    REQUIRE(Calls(plan.Value().ddic).back() == "i18n_docu_put");
+    CHECK(plan.Value().ddic.back().op.call.find("id = 'DO' object = 'ZERPL_D_X'") !=
+          std::string::npos);
+}
+
+// --- a failed translation / documentation read is not "no texts" -----------
+
+namespace {
+
+EngineOpResult Failed99(const std::string& text) {
+    EngineOpResult r;
+    r.rc = 99;
+    r.errors.push_back(text);
+    return r;
+}
+
+EngineOpResult MainDoma() {
+    EngineOpResult main;
+    main.rc = 0;
+    main.exists = true;
+    main.data["XML"] = Asx(kDd01v + kDd07v);
+    return main;
+}
+
+EngineOpResult Ok0() {
+    EngineOpResult r;
+    r.rc = 0;
+    return r;
+}
+
+// Answers the read run with `reads` after the system info (op 1).
+class ScriptedEngine final : public IEngineRunner {
+public:
+    std::vector<EngineOpResult> reads;
+    std::vector<std::vector<EngineOp>> runs;
+    Result<std::vector<EngineOpResult>, Error> Run(const std::vector<EngineOp>& ops) override {
+        runs.push_back(ops);
+        std::vector<EngineOpResult> out(ops.size(), Ok0());
+        out[0].changed_by = "DEVELOPER";
+        for (size_t i = 1; i < ops.size() && i - 1 < reads.size(); ++i) {
+            out[i] = reads[i - 1];
+        }
+        return Result<std::vector<EngineOpResult>, Error>::Ok(out);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("DOMA/DTEL/PROG: a failed translation or documentation read fails the state",
+          "[workflow][abapgit_i18n]") {
+    Ctx c;
+    const auto boom = Failed99("CX_SY_OPEN_SQL_DB: view DD07V not readable");
+    auto doma = Handler("DOMA")->BuildState(kDoma, {MainDoma(), Ok0(), boom}, c.ctx);
+    REQUIRE(doma.IsErr());
+    CHECK(doma.Error().message.find("ZERPL_D_X") != std::string::npos);
+    CHECK(doma.Error().message.find("DD07V not readable") != std::string::npos);
+    CHECK(Handler("DOMA")->BuildState(kDoma, {MainDoma(), boom, Ok0()}, c.ctx).IsErr());
+
+    EngineOpResult dtel = Ok0();
+    dtel.exists = true;
+    dtel.data["XML"] = Asx("<DD04V><ROLLNAME>ZERPL_E_X</ROLLNAME></DD04V>");
+    CHECK(Handler("DTEL")
+              ->BuildState({"DTEL", "ZERPL_E_X"}, {dtel, Ok0(), Ok0(), boom}, c.ctx)
+              .IsErr());
+
+    EngineOpResult prog = Ok0();
+    prog.exists = true;
+    prog.data["XML"] = Asx(kProgdir + kTpool);
+    prog.data["SOURCE"] = "REPORT zerpl_p.\n";
+    CHECK(Handler("PROG")->BuildState(kProg, {prog, boom, Ok0()}, c.ctx).IsErr());
+}
+
+TEST_CASE("i18n: export with a failed documentation read writes nothing and fails",
+          "[workflow][abapgit_i18n]") {
+    MockAdtSession session;
+    ScriptedEngine engine;
+    engine.reads = {MainDoma(), Ok0(), Failed99("DOCU_READ dumped"), Ok0()};
+    NoFileHistory history;
+    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers{
+        {"DOMA", Handler("DOMA")}};
+    AbapGitWorkflow workflow(session, engine, handlers, history);
+    const auto dir = std::filesystem::temp_directory_path() / "erpl_i18n_read_failure";
+    std::filesystem::remove_all(dir);
+    AbapGitObjectFiles object;
+    object.key = kDoma;
+    object.package = "$TMP";
+    object.folder = dir;
+    AbapGitExportTarget target;
+    target.repo_root = dir;
+    AbapGitRunOptions options;
+    options.root_package = "$TMP";
+    auto report = workflow.Export({object}, target, options);
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Failed);
+    CHECK(report.ExitCode() != 0);
+    CHECK_FALSE(std::filesystem::exists(dir / kDomaXml));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("i18n: deploy with a failed translation read does not overwrite anything",
+          "[workflow][abapgit_i18n]") {
+    MockAdtSession session;
+    ScriptedEngine engine;
+    engine.reads = {MainDoma(), Failed99("DDIF_DOMA_GET dumped"), Ok0()};
+    NoFileHistory history;
+    std::map<std::string, std::shared_ptr<const IClassicTypeHandler>> handlers{
+        {"DOMA", Handler("DOMA")}};
+    AbapGitWorkflow workflow(session, engine, handlers, history);
+    const auto dir = std::filesystem::temp_directory_path() / "erpl_i18n_read_failure_deploy";
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream(dir / kDomaXml, std::ios::binary)
+            << DomaFiles(Langs("D") + Dd01Texts("D", "Status DE")).at(kDomaXml);
+    }
+    AbapGitObjectFiles object;
+    object.key = kDoma;
+    object.package = "$TMP";
+    object.folder = dir;
+    object.files["xml"] = dir / kDomaXml;
+    AbapGitRunOptions options;
+    options.root_package = "$TMP";
+    options.user = "DEVELOPER";
+    auto report = workflow.Deploy({object}, options);
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Failed);
+    CHECK(report.read_error.has_value());
+    CHECK(engine.runs.size() == 1);  // the read run only: nothing written
+    std::filesystem::remove_all(dir);
 }

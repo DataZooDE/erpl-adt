@@ -126,6 +126,13 @@ public:
     // (missing files, parts it cannot deploy, changes it does not support
     // relative to `current`). Run by both status and deploy before Apply, so
     // a status shows the same refusals a deploy would hit.
+    // Whether an update leaves translations and documentation languages the
+    // files do not name alone (DOMA, DTEL, PROG write per language). A type
+    // whose update replaces the whole object (TRAN: delete + insert) would
+    // drop them, so the workflow compares them too instead of scoping them
+    // away (see abapgit_i18n.hpp).
+    [[nodiscard]] virtual bool KeepsUnmanagedTranslations() const { return true; }
+
     [[nodiscard]] virtual Result<void, Error> Validate(const AbapGitObjectKey& key,
                                                        const ObjectFileSet& desired,
                                                        const ObjectState& current,

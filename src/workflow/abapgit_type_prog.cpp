@@ -240,6 +240,9 @@ std::string ProgramSourceUri(const std::string& name) {
     return "/sap/bc/adt/programs/programs/" + encoded + "/source/main";
 }
 
+// Documentation of a program (abapGit: LONGTEXTS, docu id RE).
+const std::vector<DocuSection> kDocu = {{"RE", "LONGTEXTS"}};
+
 class ProgHandler final : public IClassicTypeHandler {
 public:
     std::string Type() const override { return "PROG"; }
@@ -275,7 +278,11 @@ public:
             // Not there, or only an inactive version: no files to compare.
             return Result<ObjectState, Error>::Ok(state);
         }
-        const auto i18n = CollectI18nReads(results, 1);
+        auto reads = CollectI18nReads(key, results, 1);
+        if (reads.IsErr()) {
+            return Result<ObjectState, Error>::Err(reads.Error());
+        }
+        const auto& i18n = reads.Value();
         auto rendered = RenderWithI18n(xml->second, i18n.asxml, "LCL_OBJECT_PROG");
         if (rendered.IsErr()) {
             return Result<ObjectState, Error>::Err(rendered.Error());
@@ -317,7 +324,11 @@ public:
                                  const std::string& language) const override {
         ObjectState master = current;
         master.files = WithoutI18nSections(current.files);
-        return ValidateMaster(key, WithoutI18nSections(desired), master, language);
+        auto valid = ValidateMaster(key, WithoutI18nSections(desired), master, language);
+        if (valid.IsErr()) {
+            return valid;
+        }
+        return CheckDocuIdentity(key, desired, FileName(key, "xml"), kDocu);
     }
 
     // The program first (PlanMaster), then its translations and documentation.
@@ -339,7 +350,7 @@ public:
             [&](const std::string& texts) {
                 return I18nTpoolPutOp(key.name, ctx.language, ctx.package, ctx.transport, texts);
             },
-            {{"RE", "LONGTEXTS"}}, key.name, "ABAP", ctx);
+            kDocu, key.name, "ABAP", ctx);
         auto out = std::move(plan).Value();
         out.parts.insert(out.parts.end(), i18n.parts.begin(), i18n.parts.end());
         for (auto& op : i18n.ops) {

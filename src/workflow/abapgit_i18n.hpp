@@ -68,6 +68,11 @@ Result<std::string, Error> RenderWithI18n(const std::string& main_asxml,
 // are dropped.
 ObjectState ScopeTranslations(const ObjectFileSet& desired, ObjectState current);
 
+// What ScopeTranslations leaves out: the translation and documentation
+// languages the system holds but the files do not, e.g.
+// "zfoo.doma.xml DD01_TEXTS (D)". A delete takes them with the object.
+std::vector<std::string> UnmanagedI18n(const ObjectFileSet& desired, const ObjectState& current);
+
 // The files with the translation and documentation sections removed from
 // every XML file (what the master-language logic of a handler works on).
 ObjectFileSet WithoutI18nSections(const ObjectFileSet& files);
@@ -90,7 +95,10 @@ EngineOp I18nDocuGetOp(const std::string& id, const std::string& object,
                        const std::string& section);
 // `corr_object` / `corr_class`: the object's RS_CORR_INSERT entry, e.g.
 // "DTELZFOO"/"DICT" or "ZFOO"/"ABAP".
-EngineOp I18nDocuPutOp(const std::string& section, const std::string& corr_object,
+// The documentation's identity (DOKIL-ID/OBJECT, THEAD-TDOBJECT/TDNAME/TDID)
+// is set from `id` / `object` by the engine, never taken from the file.
+EngineOp I18nDocuPutOp(const std::string& section, const std::string& id,
+                       const std::string& object, const std::string& corr_object,
                        const std::string& corr_class, const TypeContext& ctx,
                        const std::string& payload);
 EngineOp I18nDocuDeleteOp(const std::string& id, const std::string& object);
@@ -101,6 +109,14 @@ struct DocuSection {
     std::string section;  // XML section name
 };
 
+// Refuses documentation in `file` that names another object than `key`
+// (DOKIL-ID / DOKIL-OBJECT, THEAD-TDOBJECT / TDNAME / TDID / TDSPRAS), or a
+// document type DOCU_UPDATE does not write (DOKIL-TYP other than E / T) - e.g.
+// a file copied from another object, or one naming SAP's own documentation.
+Result<void, Error> CheckDocuIdentity(const AbapGitObjectKey& key, const ObjectFileSet& files,
+                                      const std::string& file,
+                                      const std::vector<DocuSection>& docu);
+
 // The documentation sections of `object`'s read results, starting at
 // `results[first]`, merged into the rendered state: the asXML of each
 // result (absent results - e.g. a test that scripts fewer ops - count as
@@ -109,7 +125,12 @@ struct I18nReads {
     std::vector<std::string> asxml;
     std::map<std::string, std::string> changed_by;  // section -> user ("" unknown)
 };
-I18nReads CollectI18nReads(const std::vector<EngineOpResult>& results, size_t first);
+// A read that failed (rc != 0, e.g. an exception inside the op) fails the
+// whole state: treating it as "no texts" would export files without them
+// and let a deploy overwrite texts it never compared.
+Result<I18nReads, Error> CollectI18nReads(const AbapGitObjectKey& key,
+                                          const std::vector<EngineOpResult>& results,
+                                          size_t first);
 
 // Plans the translation and documentation writes of one XML file: the
 // changed sections (for the report), and the engine operations. `put_texts`

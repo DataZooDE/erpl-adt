@@ -21,6 +21,7 @@ so a console class reads the German text pool with READ TEXTPOOL.
 `erpl-adt --language DE` reads German too.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -401,6 +402,59 @@ class TestTranslationsAndDocumentation:
 
         assert _entry(result, "DOMA", DOMA)["action"] == "unchanged"
         assert adt.fixed_values(DOMA, "D")["0004"] == "Annulliert"
+
+    def test_copied_documentation_is_refused(self, cli, adt, repo, tmp_path):
+        """A file copied from another object keeps that object's documentation
+        identity (DOKIL-OBJECT, THEAD-TDNAME). Deploying it must not write the
+        original's documentation - nothing is written at all."""
+        copy_name = "ZERPL_I18N_E_COPY"
+        source = (repo / "src" / f"{DTEL.lower()}.dtel.xml").read_bytes()
+        copied = source.replace(f"<ROLLNAME>{DTEL}</ROLLNAME>".encode(),
+                                f"<ROLLNAME>{copy_name}</ROLLNAME>".encode())
+        copied = copied.replace(b"Lebenszyklusstatus eines Kundenauftrags",
+                                b"Kopierter Text, falsches Objekt")
+        assert copied.count(DTEL.encode()) > 0  # the docu still names the original
+        copy = tmp_path / f"{copy_name.lower()}.dtel.xml"
+        copy.write_bytes(copied)
+        try:
+            result = cli.run("abapgit", "deploy", str(copy), "--package", PACKAGE)
+            assert result.returncode == 8, result.stdout + result.stderr
+            entry = _entry(json.loads(result.stdout), "DTEL", copy_name)
+            assert entry["action"] == "failed", entry
+            assert "does not belong to DTEL " + copy_name in entry["message"], entry
+            assert copy_name not in adt.descriptions("ZERPL_I18N*", "en")
+            assert "Lebenszyklusstatus eines Kundenauftrags im EPM-Demomodell." in \
+                adt.documentation("DE", DTEL, "D")
+            assert "Kopierter Text" not in adt.documentation("DE", DTEL, "D")
+        finally:
+            if copy_name in adt.descriptions("ZERPL_I18N*", "en"):
+                cli.run("abapgit", "delete", str(copy), "--package", PACKAGE, "--force")
+
+    def test_delete_refuses_translations_the_files_lack(self, cli, adt, repo, tmp_path):
+        """Delete takes the whole object, every language with it. Files that
+        lack the German texts (or the documentation) would delete a
+        colleague's SE63 / SE61 work unseen: refused (exit 6) unless --force."""
+        plain = tmp_path / "plain" / f"{DOMA.lower()}.doma.xml"
+        plain.parent.mkdir()
+        data = (repo / "src" / plain.name).read_bytes()
+        plain.write_bytes(re.sub(rb"   <I18N_LANGS>.*</DD07_TEXTS>\n", b"", data, flags=re.S))
+        no_docu = tmp_path / "nodocu" / f"{DTEL.lower()}.dtel.xml"
+        no_docu.parent.mkdir()
+        data = (repo / "src" / no_docu.name).read_bytes()
+        no_docu.write_bytes(re.sub(rb"   <LONGTEXTS>.*</LONGTEXTS>\n", b"", data, flags=re.S))
+        assert b"LONGTEXTS" not in no_docu.read_bytes()
+
+        for path, obj_type, name, what in [(plain, "DOMA", DOMA, "DD07_TEXTS (D)"),
+                                           (no_docu, "DTEL", DTEL, "LONGTEXTS (D, E)")]:
+            result = cli.run("abapgit", "delete", str(path), "--package", PACKAGE)
+            assert result.returncode == 6, result.stdout + result.stderr
+            entry = _entry(json.loads(result.stdout), obj_type, name)
+            assert entry["action"] == "refused", entry
+            assert what in entry["message"], entry
+        # Nothing was deleted.
+        assert adt.fixed_values(DOMA, "D")["0004"] == "Annulliert"
+        assert "Kundenauftrag anzeigen (Transaktion ZERPL_VA03)." in \
+            adt.documentation("DE", DTEL, "D")
 
     def test_delete_removes_objects_and_documentation(self, cli, adt, repo):
         result = cli.run_ok("abapgit", "delete", str(repo), "--package", PACKAGE)

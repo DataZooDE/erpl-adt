@@ -32,6 +32,9 @@ EngineOp DomaDeleteOp(const std::string& name, const std::string& trkorr) {
 }
 
 
+// Documentation sections of a domain (abapGit: LONGTEXTS, docu id DO).
+const std::vector<DocuSection> kDocu = {{"DO", "LONGTEXTS"}};
+
 class DomaHandler final : public IClassicTypeHandler {
 public:
     std::string Type() const override { return "DOMA"; }
@@ -57,7 +60,11 @@ public:
         }
         state.changed_by = r.changed_by;
         state.changed_on = r.changed_on;
-        const auto i18n = CollectI18nReads(results, 1);
+        auto reads = CollectI18nReads(key, results, 1);
+        if (reads.IsErr()) {
+            return Result<ObjectState, Error>::Err(reads.Error());
+        }
+        const auto& i18n = reads.Value();
         auto rendered = RenderWithI18n(r.data.count("XML") ? r.data.at("XML") : "", i18n.asxml,
                                        "LCL_OBJECT_DOMA");
         if (rendered.IsErr()) {
@@ -81,7 +88,7 @@ public:
         if (payload.IsErr()) {
             return Result<void, Error>::Err(payload.Error());
         }
-        return Result<void, Error>::Ok();
+        return CheckDocuIdentity(key, desired, FileName(key, "xml"), kDocu);
     }
 
     // DDIC phase: put + activate in one operation, so data elements and
@@ -115,7 +122,7 @@ public:
             [&](const std::string& texts) {
                 return I18nDomaPutOp(key.name, ctx.language, ctx.package, ctx.transport, texts);
             },
-            {{"DO", "LONGTEXTS"}}, "DOMA" + key.name, "DICT", ctx);
+            kDocu, "DOMA" + key.name, "DICT", ctx);
         plan.parts.insert(plan.parts.end(), i18n.parts.begin(), i18n.parts.end());
         for (auto& op : i18n.ops) {
             plan.ddic.push_back(std::move(op));

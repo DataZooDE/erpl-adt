@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <erpl_adt/adt/abapgit_xml.hpp>
 #include <erpl_adt/workflow/abapgit_deploy.hpp>
 
 #include "../../test/mocks/mock_adt_session.hpp"
@@ -179,6 +180,9 @@ public:
     std::map<std::string, std::string> part_changed_by;  // file[#SECTION] -> user
     std::vector<std::string> pending;  // reported as inactive leftovers
     bool after_activation = false;     // also plans a write that needs it active (variants)
+    bool writes_translations = true;   // false: like TRAN, an update drops them
+
+    bool KeepsUnmanagedTranslations() const override { return writes_translations; }
 
     std::string Type() const override { return type_; }
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
@@ -1365,4 +1369,76 @@ TEST_CASE("abapGit deploy: the drift hint is a copy-pasteable export command",
     CHECK(message.find("erpl-adt abapgit export '" + f.repo.root.string() +
                        "' --package '$TMP' --object DOMA:ZERPL_D_A") != std::string::npos);
     CHECK(message.find("<repo>") == std::string::npos);
+}
+
+namespace {
+
+// `file` with extra top-level sections appended (e.g. a translation that
+// someone added in SE63 after the deploy).
+std::string WithSections(const std::string& file, const std::string& extra) {
+    auto parsed = ParseAbapGitXml(file);
+    REQUIRE(parsed.IsOk());
+    AbapGitXml xml = parsed.Value();
+    xml.values_xml += extra;
+    return RenderAbapGitXml(xml);
+}
+
+}  // namespace
+
+TEST_CASE("abapGit delete: translations or documentation the files lack are refused",
+          "[workflow][abapgit_deploy][guard][drift]") {
+    const std::string translation =
+        "<I18N_LANGS><LANGU>D</LANGU></I18N_LANGS><DD01_TEXTS><item><DDLANGUAGE>D</DDLANGUAGE>"
+        "<DDTEXT>Status DE</DDTEXT></item></DD01_TEXTS>";
+    const std::string docu =
+        "<LONGTEXTS><item><DOKIL><ID>DO</ID><OBJECT>ZERPL_D_A</OBJECT><LANGU>D</LANGU>"
+        "<TYP>E</TYP></DOKIL><HEAD><TDSPRAS>D</TDSPRAS></HEAD><LINES><TLINE><TDLINE>Doku"
+        "</TDLINE></TLINE></LINES></item></LONGTEXTS>";
+    for (const auto& extra : {translation, docu}) {
+        Fixture f;
+        auto obj = f.repo.Doma("zerpl_d_a", "Status");
+        REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+        // A colleague translated / documented it in SE63 / SE61 - even as the
+        // same user and with our own deploy on record, delete would take
+        // that work with it.
+        auto& file = f.system["ZERPL_D_A"].begin()->second;
+        file = WithSections(file, extra);
+
+        auto report = f.Workflow().Delete({obj}, f.Options());
+        REQUIRE(report.objects.size() == 1);
+        CHECK(report.objects[0].action == ObjectAction::Refused);
+        CHECK(report.objects[0].message.find("--force") != std::string::npos);
+        CHECK(report.ExitCode() == 6);
+        CHECK(f.handler->deleted.empty());
+
+        auto status = f.Options();
+        status.dry_run = true;
+        CHECK(f.Workflow().Delete({obj}, status).objects[0].action == ObjectAction::Refused);
+
+        auto options = f.Options();
+        options.force = true;
+        CHECK(f.Workflow().Delete({obj}, options).objects[0].action == ObjectAction::Deleted);
+    }
+}
+
+TEST_CASE("abapGit deploy: a type whose update drops translations compares them all",
+          "[workflow][abapgit_deploy][guard][drift]") {
+    // A transaction update is delete + insert (RPY_TRANSACTION_*), which
+    // drops the SE63 translations of its short text. They cannot be in the
+    // files (no workbench API writes them), so they must not be scoped away:
+    // the update is drift until --force.
+    Fixture f;
+    f.handler->writes_translations = false;
+    f.handler->changed_by = "";  // SAP records no changer for a transaction
+    auto obj = f.repo.Doma("zerpl_d_a", "Status");
+    REQUIRE_FALSE(f.Workflow().Deploy({obj}, f.Options()).Failed());
+    auto& file = f.system["ZERPL_D_A"].begin()->second;
+    file = WithSections(file, "<I18N_TPOOL><item><SPRSL>D</SPRSL><TTEXT>Anzeigen</TTEXT>"
+                              "</item></I18N_TPOOL>");
+    f.handler->applied.clear();
+
+    auto report = f.Workflow().Deploy({f.repo.Doma("zerpl_d_a", "Changed")}, f.Options());
+    REQUIRE(report.objects.size() == 1);
+    CHECK(report.objects[0].action == ObjectAction::Refused);
+    CHECK(f.handler->applied.empty());
 }

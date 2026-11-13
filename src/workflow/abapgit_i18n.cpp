@@ -207,6 +207,37 @@ ObjectState ScopeTranslations(const ObjectFileSet& desired, ObjectState current)
     return current;
 }
 
+std::vector<std::string> UnmanagedI18n(const ObjectFileSet& desired, const ObjectState& current) {
+    std::vector<std::string> out;
+    const ObjectState scoped = ScopeTranslations(desired, current);
+    for (const auto& [name, bytes] : current.files) {
+        auto kept = scoped.files.find(name);
+        const auto have = FileSections(bytes);
+        const auto mine = kept == scoped.files.end() ? XmlSections{} : FileSections(kept->second);
+        for (const auto& [section, xml] : have) {
+            if (!IsI18nSection(section) || section == "I18N_LANGS") {
+                continue;  // I18N_LANGS only lists the languages of the texts
+            }
+            const auto* left = Find(mine, section);
+            std::set<std::string> extra = SectionLanguages(section, xml);
+            if (left != nullptr) {
+                for (const auto& l : SectionLanguages(section, *left)) {
+                    extra.erase(l);
+                }
+            }
+            if (extra.empty()) {
+                continue;
+            }
+            std::string langs;
+            for (const auto& l : extra) {
+                langs += (langs.empty() ? "" : ", ") + (l.empty() ? std::string("?") : l);
+            }
+            out.push_back(name + " " + section + " (" + langs + ")");
+        }
+    }
+    return out;
+}
+
 ObjectFileSet WithoutI18nSections(const ObjectFileSet& files) {
     ObjectFileSet out = files;
     for (auto& [name, bytes] : out) {
@@ -271,11 +302,12 @@ EngineOp I18nDocuGetOp(const std::string& id, const std::string& object,
               " section = " + AbapQuote(section) + " ).");
 }
 
-EngineOp I18nDocuPutOp(const std::string& section, const std::string& corr_object,
+EngineOp I18nDocuPutOp(const std::string& section, const std::string& id,
+                       const std::string& object, const std::string& corr_object,
                        const std::string& corr_class, const TypeContext& ctx,
                        const std::string& payload) {
-    return Op("i18n_docu_put( section = " + AbapQuote(section) +
-                  " corr_object = " + AbapQuote(corr_object) +
+    return Op("i18n_docu_put( section = " + AbapQuote(section) + " id = " + AbapQuote(id) +
+                  " object = " + AbapQuote(object) + " corr_object = " + AbapQuote(corr_object) +
                   " corr_class = " + AbapQuote(corr_class) +
                   " devclass = " + AbapQuote(ctx.package) + " trkorr = " + AbapQuote(ctx.transport) +
                   " language = " + AbapQuote(ctx.language) + " ).",
@@ -287,16 +319,77 @@ EngineOp I18nDocuDeleteOp(const std::string& id, const std::string& object) {
               " ).");
 }
 
-I18nReads CollectI18nReads(const std::vector<EngineOpResult>& results, size_t first) {
+Result<void, Error> CheckDocuIdentity(const AbapGitObjectKey& key, const ObjectFileSet& files,
+                                      const std::string& file,
+                                      const std::vector<DocuSection>& docu) {
+    auto it = files.find(file);
+    if (it == files.end()) {
+        return Result<void, Error>::Ok();
+    }
+    const auto sections = FileSections(it->second);
+    std::vector<std::string> problems;
+    for (const auto& d : docu) {
+        const auto* xml = Find(sections, d.section);
+        if (xml == nullptr) {
+            continue;
+        }
+        for (const auto& [unused, entry] : SplitAsxValues(Inner(*xml))) {
+            const std::string dokil = FirstText(entry, "DOKIL");
+            const std::string head = FirstText(entry, "HEAD");
+            const std::string langu = FirstText(dokil, "LANGU");
+            auto expect = [&](const std::string& what, const std::string& have,
+                              const std::string& want, bool required) {
+                if ((required || !have.empty()) && have != want) {
+                    problems.push_back(d.section + " " + what + " " +
+                                       (have.empty() ? std::string("(empty)") : have) +
+                                       " (expected " + want + ")");
+                }
+            };
+            expect("DOKIL-ID", FirstText(dokil, "ID"), d.id, true);
+            expect("DOKIL-OBJECT", FirstText(dokil, "OBJECT"), key.name, true);
+            expect("HEAD-TDOBJECT", FirstText(head, "TDOBJECT"), "DOKU", false);
+            expect("HEAD-TDNAME", FirstText(head, "TDNAME"), key.name, false);
+            expect("HEAD-TDID", FirstText(head, "TDID"), d.id, false);
+            expect("HEAD-TDSPRAS", FirstText(head, "TDSPRAS"), langu, false);
+            const std::string typ = FirstText(dokil, "TYP");
+            if (typ != "E" && typ != "T") {
+                problems.push_back(d.section + " DOKIL-TYP " +
+                                   (typ.empty() ? std::string("(empty)") : typ) +
+                                   " (DOCU_UPDATE writes only E and T)");
+            }
+        }
+    }
+    if (problems.empty()) {
+        return Result<void, Error>::Ok();
+    }
+    Error err;
+    err.operation = "abapGit";
+    err.message = file + ": the documentation does not belong to " + key.type + " " + key.name +
+                  " (copied from another object?); nothing was written: ";
+    for (size_t i = 0; i < problems.size(); ++i) {
+        err.message += (i ? "; " : "") + problems[i];
+    }
+    err.category = ErrorCategory::CheckError;
+    return Result<void, Error>::Err(err);
+}
+
+Result<I18nReads, Error> CollectI18nReads(const AbapGitObjectKey& key,
+                                          const std::vector<EngineOpResult>& results,
+                                          size_t first) {
     I18nReads reads;
     for (size_t i = first; i < results.size(); ++i) {
+        if (results[i].rc != 0) {
+            return Result<I18nReads, Error>::Err(EngineFailure(
+                "Reading the translations and documentation of " + key.type + " " + key.name,
+                results[i]));
+        }
         auto xml = results[i].data.find("XML");
         reads.asxml.push_back(xml == results[i].data.end() ? std::string() : xml->second);
         for (const auto& [part, user] : ChangedParts(results[i])) {
             reads.changed_by[part] = user;
         }
     }
-    return reads;
+    return Result<I18nReads, Error>::Ok(std::move(reads));
 }
 
 I18nPlan PlanI18n(const AbapGitObjectKey& key, const XmlSections& want, const XmlSections& have,
@@ -339,7 +432,7 @@ I18nPlan PlanI18n(const AbapGitObjectKey& key, const XmlSections& want, const Xm
         }
         plan.parts.push_back(d.section);
         PlannedOp op;
-        op.op = I18nDocuPutOp(d.section, corr_object, corr_class, ctx,
+        op.op = I18nDocuPutOp(d.section, d.id, key.name, corr_object, corr_class, ctx,
                               SectionsPayload(want, [&](const std::string& s) {
                                   return s == d.section;
                               }));

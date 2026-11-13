@@ -187,6 +187,10 @@ class TranHandler final : public IClassicTypeHandler {
 public:
     std::string Type() const override { return "TRAN"; }
 
+    // An update is delete + insert: SE63 translations of the short text
+    // (TSTCT in other languages) would go with it.
+    bool KeepsUnmanagedTranslations() const override { return false; }
+
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
                                   const std::string& language) const override {
         return {TranGetOp(key.name, language)};
