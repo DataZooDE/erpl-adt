@@ -349,6 +349,10 @@ problems in the code being deployed.
 
 ## Limitations
 
+* Line endings: abapGit files are compared byte for byte, so a CRLF checkout
+  (Windows with `core.autocrlf=true`) reads as a change on every object and
+  exports differ from the files. Keep the repository's abapGit folder out of
+  line-ending conversion, e.g. with `src/** -text` in `.gitattributes`.
 * Supported types: DOMA, DTEL, FUGR (function modules), PROG, TRAN. Classes,
   interfaces, tables (TABL) and packages (DEVC) are not created by `abapgit
   deploy`; create packages with `erpl-adt object create --type DEVC/K`, and
