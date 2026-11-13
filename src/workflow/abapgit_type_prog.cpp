@@ -26,8 +26,13 @@
 //   * native dynpros (NAT_HEADER / NAT_FIELDS, e.g. a dynpro splitter
 //     control, which the external format cannot hold): RPY_DYNPRO_INSERT_NATIVE,
 //     as abapGit. Their field texts (NAT_TEXTS) are refused: abapGit writes
-//     them into D021T directly, and no workbench API does.
+//     them into D021T directly, and no workbench API does;
+//   * translations of the text pool (I18N_TPOOL) and the documentation
+//     (LONGTEXTS, id RE): abapgit_i18n.hpp, written active after the
+//     program in the same run. Everything else here sees the files without
+//     those sections.
 
+#include "abapgit_i18n.hpp"
 #include "abapgit_types.hpp"
 
 #include <erpl_adt/workflow/lock_workflow.hpp>
@@ -241,7 +246,8 @@ public:
 
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
                                   const std::string& language) const override {
-        return {ProgGetOp(key.name, language)};
+        return {ProgGetOp(key.name, language), I18nTpoolGetOp(key.name, language),
+                I18nDocuGetOp("RE", key.name, "LONGTEXTS")};
     }
 
     Result<ObjectState, Error> BuildState(const AbapGitObjectKey& key,
@@ -269,7 +275,8 @@ public:
             // Not there, or only an inactive version: no files to compare.
             return Result<ObjectState, Error>::Ok(state);
         }
-        auto rendered = RenderFromEngine(xml->second, "LCL_OBJECT_PROG");
+        const auto i18n = CollectI18nReads(results, 1);
+        auto rendered = RenderWithI18n(xml->second, i18n.asxml, "LCL_OBJECT_PROG");
         if (rendered.IsErr()) {
             return Result<ObjectState, Error>::Err(rendered.Error());
         }
@@ -299,12 +306,52 @@ public:
         // System variants: VARID-AENAME / ENAME (the logon user when there
         // are none: nothing to overwrite).
         state.part_changed_by[xml_name + "#VARIS"] = changer("VARIS");
+        state.part_changed_by[xml_name + "#I18N_TPOOL"] = "";
+        state.part_changed_by[xml_name + "#LONGTEXTS"] =
+            i18n.changed_by.count("LONGTEXTS") ? i18n.changed_by.at("LONGTEXTS") : "";
         return Result<ObjectState, Error>::Ok(state);
     }
 
     Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
                                  const ObjectState& current,
-                                 const std::string& /*language*/) const override {
+                                 const std::string& language) const override {
+        ObjectState master = current;
+        master.files = WithoutI18nSections(current.files);
+        return ValidateMaster(key, WithoutI18nSections(desired), master, language);
+    }
+
+    // The program first (PlanMaster), then its translations and documentation.
+    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                   const ObjectState& current,
+                                   const TypeContext& ctx) const override {
+        ObjectState master = current;
+        master.files = WithoutI18nSections(current.files);
+        auto plan = PlanMaster(key, WithoutI18nSections(desired), master, ctx);
+        if (plan.IsErr()) {
+            return plan;
+        }
+        const std::string xml_name = FileName(key, "xml");
+        const auto want = FileSections(desired.at(xml_name));
+        const auto have = current.files.count(xml_name) ? FileSections(current.files.at(xml_name))
+                                                        : XmlSections{};
+        auto i18n = PlanI18n(
+            key, want, have,
+            [&](const std::string& texts) {
+                return I18nTpoolPutOp(key.name, ctx.language, ctx.package, ctx.transport, texts);
+            },
+            {{"RE", "LONGTEXTS"}}, key.name, "ABAP", ctx);
+        auto out = std::move(plan).Value();
+        out.parts.insert(out.parts.end(), i18n.parts.begin(), i18n.parts.end());
+        for (auto& op : i18n.ops) {
+            out.writes.push_back(std::move(op));
+        }
+        return Result<DeployPlan, Error>::Ok(std::move(out));
+    }
+
+private:
+    Result<void, Error> ValidateMaster(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                       const ObjectState& current,
+                                       const std::string& /*language*/) const {
         const std::string xml_name = FileName(key, "xml");
         const std::string abap_name = FileName(key, "abap");
         auto xml_it = desired.find(xml_name);
@@ -391,9 +438,9 @@ public:
     // inactive; then REPS / DYNPnnnn / CUAD / REPT are activated with the
     // other programs of the deploy (ADT activation of a program does not
     // activate CUAD / REPT).
-    Result<DeployPlan, Error> Plan(const AbapGitObjectKey& key, const ObjectFileSet& desired,
-                                   const ObjectState& current,
-                                   const TypeContext& ctx) const override {
+    Result<DeployPlan, Error> PlanMaster(const AbapGitObjectKey& key, const ObjectFileSet& desired,
+                                         const ObjectState& current,
+                                         const TypeContext& ctx) const {
         using R = Result<DeployPlan, Error>;
         auto valid = Validate(key, desired, current, ctx.language);
         if (valid.IsErr()) {
@@ -607,8 +654,12 @@ public:
         return R::Ok(std::move(plan));
     }
 
+public:
     Result<void, Error> Delete(const AbapGitObjectKey& key, TypeContext& ctx) const override {
-        auto run = RunChecked(ctx.engine, {ProgDeleteOp(key.name, ctx.package, ctx.transport)},
+        // abapGit deletes the documentation with the object.
+        auto run = RunChecked(ctx.engine,
+                              {ProgDeleteOp(key.name, ctx.package, ctx.transport),
+                               I18nDocuDeleteOp("RE", key.name)},
                               "Deleting program " + key.name);
         if (run.IsErr()) {
             return Result<void, Error>::Err(run.Error());

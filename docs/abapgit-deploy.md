@@ -138,6 +138,9 @@ SE51/SE41/SE93/SE11:
 | GUI status, titles (CUA) | `RS_CUA_INTERNAL_FETCH` | `RS_CUA_INTERNAL_WRITE` (inactive) | |
 | Text pool | `READ TEXTPOOL` | `INSERT TEXTPOOL … STATE 'I'` | |
 | Report variants (`VARIS`, system variants `SAP&…`/`CUS&…`) | `RS_ALL_VARIANTS_4_1_REPORT`, `RS_VARIANT_VALUES_TECH_DAT_255`, `RS_VARIANT_CONTENTS_255`, `RS_GET_SCREENS_4_1_VARIANT`, `VARIT` (texts) | `RS_VARIANT_DELETE` + `RS_CREATE_VARIANT_255` + `RS_CHANGE_CREATED_VARIANT_255`, after the activation | `RS_VARIANT_DELETE`; with the program by `RS_DELETE_PROGRAM` |
+| Translations: DOMA, DTEL short texts / fixed values / labels | `DDIF_DOMA_GET`, `DDIF_DTEL_GET` per language (languages from `DD01V`/`DD07V`/`DD04V`) | `RS_CORR_INSERT`, `DDIF_*_PUT` per language, `DDIF_*_ACTIVATE` | with the object |
+| Translations: PROG text pool | `READ TEXTPOOL … LANGUAGE` (languages from `D010TINF`) | `RS_CORR_INSERT`, `INSERT TEXTPOOL … LANGUAGE … STATE 'A'` | with the object |
+| Documentation (SE61: DOMA `DO`, DTEL `DE`/`DZ`, PROG `RE`) | `DOKIL`, `DOCU_READ` | `RS_CORR_INSERT`, `DOCU_UPDATE` (state `A`) | `DOCU_DEL` |
 | Activation of dynpros/CUA/text pool | | `RS_WORKING_OBJECTS_ACTIVATE` | |
 | Transaction (TRAN) | `TSTC`, `TSTCC`, `TSTCT`, `TSTCP` | `RPY_TRANSACTION_INSERT` | `RPY_TRANSACTION_DELETE` |
 | System facts | `sy-uname`, `TRNSPACE`, `TADIR`/`TDEVC` (export: package of an object) | | |
@@ -157,6 +160,42 @@ does it on demand. Only genuine helper names (`ZCL_ERPLHLP_` + 8 hex digits)
 owned by the logon user are touched, never a helper young enough to belong to
 a run in progress.
 
+## Translations and documentation
+
+abapGit has two translation formats. By default (no `USE_LXE` in
+`.abapgit.xml`) it writes the translations **into the object's XML file**,
+next to the master language; that is the format `erpl-adt abapgit` reads and
+writes. The newer LXE format (`USE_LXE` + `I18N_LANGUAGES`, separate
+`<object>.i18n.<lang>.po` files) is not supported.
+
+| Type | Translations in the XML | Documentation |
+|---|---|---|
+| DOMA | `I18N_LANGS`, `DD01_TEXTS` (short text), `DD07_TEXTS` (fixed values) | `LONGTEXTS` (`DO`) |
+| DTEL | `I18N_LANGS`, `DD04_TEXTS` (short text, field labels) | `LONGTEXTS` (`DE`), `LONGTEXTS_DZ` (supplement) |
+| PROG | `I18N_TPOOL` (title, text symbols, selection texts, headings) | `LONGTEXTS` (`RE`) |
+
+The engine mirrors abapGit's serializers (`SERIALIZE_TEXTS`,
+`ZCL_ABAPGIT_LONGTEXTS`): the same languages (all except the technical `1Q`
+/ `2Q`), the same field clearing (`DOKSTATE`, the THEAD user/date fields),
+the same sorting, so an export is byte-identical to what abapGit writes. A
+fixed value without a translation is kept with empty texts, as in abapGit.
+
+A deploy **manages exactly the languages its files name**: a translation or
+documentation language that exists only in the system (e.g. added in SE63)
+is neither compared nor written nor removed; abapGit leaves it alone too.
+An object whose files carry no translations therefore deploys exactly as
+before. `export` writes every language the system has, as abapGit does.
+Only what changed is written and reported (`DD07_TEXTS`, `I18N_TPOOL`,
+`LONGTEXTS`, ...). DOMA/DTEL translations are written in the DDIC run (and
+the object re-activated), text pool translations and documentation in the
+write run, active right away as SE63/SE61 save them; no extra engine runs.
+SAP records no last changer for translations, so a changed translation is
+overwritten only when the system version is in the file's commit history or
+was deployed from this clone (see *Own deploys*); a translation the system
+does not have yet is never drift. The documentation's last changer is
+`DOKHL-DOKLUSER`. `delete` removes the documentation with the object (as
+abapGit does); translations go with the object.
+
 ## Working in a team
 
 * **Transports** — pass `--transport <request>` for transportable packages;
@@ -170,7 +209,9 @@ a run in progress.
   standard activation, so SE51/SE41/SE80 version management and where-used
   stay intact, and the objects remain editable in the GUI.
 * **Master language** — texts are written in the repository's
-  `MASTER_LANGUAGE` (from `.abapgit.xml`).
+  `MASTER_LANGUAGE` (from `.abapgit.xml`), translations in the languages
+  the files name (see *Translations and documentation*). The logon language
+  (`--language`) does not change what is deployed or exported.
 * **CI / pull-request checks** — `status` changes no object, but it does run a
   temporary helper class in `$TMP` (created, run, deleted; stale own helpers
   older than two hours are swept), so the CI user needs the same development
@@ -265,8 +306,13 @@ problems in the code being deployed.
   interfaces, tables (TABL) and packages (DEVC) are not created by `abapgit
   deploy`; create packages with `erpl-adt object create --type DEVC/K`, and
   deploy classes with `erpl-adt source write`.
-* Translations (I18N/LXE) and long-text documentation (DOCU) are not
-  deployed; only the master language.
+* Translations: only abapGit's in-XML format, for DOMA, DTEL and PROG text
+  pools. Not supported: the LXE format (`*.i18n.<lang>.po`), TRAN short-text
+  translations (abapGit writes `TSTCT` directly, which erpl-adt does not do;
+  they are refused as before), FUGR text pool translations and function
+  module documentation, dynpro and GUI status translations (abapGit carries
+  those only in the LXE format). Removing a translation language from the
+  files does not remove it from the system (as in abapGit).
 * Report variants: only system variants (`SAP&…`, `CUS&…`; client 000,
   transported with the program) — abapGit's `VARIS` holds no others, and a
   user variant in the file is refused (exit 8). Variants are written after the

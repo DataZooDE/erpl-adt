@@ -3,6 +3,7 @@
 #include <erpl_adt/adt/abapgit_xml.hpp>
 #include <erpl_adt/core/log.hpp>
 
+#include "abapgit_i18n.hpp"
 #include "abapgit_types.hpp"
 
 #include <algorithm>
@@ -924,6 +925,11 @@ std::optional<Error> AbapGitWorkflow::DetectDrift(const AbapGitObjectFiles& obje
                     auto w = want_sections.find(section);
                     const bool same = h != have_sections.end() && w != want_sections.end() &&
                                       h->second == w->second;
+                    // A translation or documentation the system does not
+                    // have yet overwrites nobody's work.
+                    if (h == have_sections.end() && IsI18nSection(section)) {
+                        continue;
+                    }
                     if (!same) {
                         changers.push_back(who(name, section));
                     }
@@ -1039,7 +1045,9 @@ AbapGitRunReport AbapGitWorkflow::Deploy(const std::vector<AbapGitObjectFiles>& 
             }
             continue;
         }
-        const auto& current = state.Value();
+        // Translations and documentation languages the files do not carry
+        // are not compared (and not written): see abapgit_i18n.hpp.
+        const ObjectState current = ScopeTranslations(desired[i], state.Value());
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
@@ -1167,7 +1175,7 @@ AbapGitRunReport AbapGitWorkflow::Delete(const std::vector<AbapGitObjectFiles>& 
                                                    ObjectAction::Failed, states.states[i].Error()));
             continue;
         }
-        const auto& current = states.states[i].Value();
+        const ObjectState current = ScopeTranslations(files_on_disk[i], states.states[i].Value());
         if (auto refused = CheckAgainstSystem(object.key, object.package, states.namespaces)) {
             report.objects.push_back(
                 FailedOutcome(object.key, object.package, ObjectAction::Refused, *refused));
