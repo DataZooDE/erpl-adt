@@ -22,7 +22,11 @@
 //   * system variants (VARIS, SAP&... / CUS&...): after the activation, as
 //     SAP checks a variant against the generated selection screen —
 //     RS_VARIANT_DELETE + RS_CREATE_VARIANT_255 + RS_CHANGE_CREATED_VARIANT_255
-//     (abapGit's DESERIALIZE_VARIS). Variants have no inactive version.
+//     (abapGit's DESERIALIZE_VARIS). Variants have no inactive version;
+//   * native dynpros (NAT_HEADER / NAT_FIELDS, e.g. a dynpro splitter
+//     control, which the external format cannot hold): RPY_DYNPRO_INSERT_NATIVE,
+//     as abapGit. Their field texts (NAT_TEXTS) are refused: abapGit writes
+//     them into D021T directly, and no workbench API does.
 
 #include "abapgit_types.hpp"
 
@@ -163,14 +167,6 @@ Result<ProgParts, Error> SplitProgXml(const std::string& file_content,
                     return R::Err(ProgError(file_name + ": DYNPROS entry without HEADER/SCREEN",
                                             ErrorCategory::Internal));
                 }
-                if (item.find("<NAT_HEADER>") != std::string::npos ||
-                    item.find("<NAT_FIELDS>") != std::string::npos) {
-                    return R::Err(ProgError(
-                        file_name + ": screen " + screen +
-                            " is a native dynpro (NAT_HEADER/NAT_FIELDS, e.g. with a splitter "
-                            "control) — not supported by erpl-adt",
-                        ErrorCategory::Internal));
-                }
                 parts.screens[screen] = item;
             }
         } else if (element == "CUA") {
@@ -205,6 +201,13 @@ Result<ProgParts, Error> SplitProgXml(const std::string& file_content,
         return R::Err(ProgError(file_name + ": PROGDIR is missing", ErrorCategory::Internal));
     }
     return R::Ok(std::move(parts));
+}
+
+// Field texts of a native dynpro (<NAT_TEXTS> with rows).
+bool HasNativeTexts(const std::string& screen_item) {
+    const auto start = screen_item.find("<NAT_TEXTS>");
+    return start != std::string::npos &&
+           screen_item.find("</NAT_TEXTS>", start) != std::string::npos;
 }
 
 std::string FlowFileName(const AbapGitObjectKey& key, const std::string& screen) {
@@ -335,6 +338,27 @@ public:
                     "Missing file " + FlowFileName(key, screen) + " (flow logic of screen " +
                         screen + ")",
                     ErrorCategory::Internal));
+            }
+        }
+        // Native dynpros with field texts: only writable into D021T directly.
+        ProgParts have;
+        if (auto cur = current.files.find(xml_name); cur != current.files.end()) {
+            auto split = SplitProgXml(cur->second, xml_name + " (system)");
+            if (split.IsOk()) {
+                have = split.Value();
+            }
+        }
+        for (const auto& [screen, item] : want.Value().screens) {
+            auto old = have.screens.find(screen);
+            const bool same = old != have.screens.end() && old->second == item;
+            if (!same && (HasNativeTexts(item) ||
+                          (old != have.screens.end() && HasNativeTexts(old->second)))) {
+                return Result<void, Error>::Err(ProgError(
+                    xml_name + ": screen " + screen +
+                        " is a native dynpro with field texts (NAT_TEXTS); RPY_DYNPRO_INSERT_NATIVE "
+                        "does not write them and abapGit inserts them into table D021T directly, "
+                        "which erpl-adt does not do - maintain the texts in SE51",
+                    ErrorCategory::CheckError));
             }
         }
         for (const auto& [variant, item] : want.Value().varis) {

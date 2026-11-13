@@ -185,7 +185,18 @@
       IMPORTING program        TYPE syrepid
                 dynpros        TYPE ty_prog_dynpros
                 flows          TYPE ty_prog_flows
+                trkorr         TYPE trkorr OPTIONAL
       RETURNING VALUE(ok)      TYPE abap_bool.
+    "! abapGit DESERIALIZE_DYNPROS for a native dynpro (NAT_HEADER):
+    "! RPY_DYNPRO_INSERT_NATIVE, which locks the screen, records it on the
+    "! request and registers it inactive. Unlike abapGit it overwrites an
+    "! existing screen (suppress_exist_checks; abapGit's call answers
+    "! ALREADY_EXISTS, which it ignores). Field texts (NAT_TEXTS, D021T) have
+    "! no write API - abapGit inserts them directly - and are refused.
+    METHODS prog_insert_native_dynpro
+      IMPORTING dynpro       TYPE ty_prog_dynpro
+                trkorr       TYPE trkorr
+      RETURNING VALUE(subrc) TYPE sysubrc.
     "! RPY_DYNPRO_INSERT with abapGit's force-off rules; returns sy-subrc.
     METHODS prog_insert_dynpro
       IMPORTING dynpro        TYPE ty_prog_dynpro
@@ -437,16 +448,6 @@
           fieldlist  = fieldlist_int
           fieldtexts = texts.
 
-      IF header-type CA 'IN'.
-        READ TABLE fieldlist_int TRANSPORTING NO FIELDS WITH KEY fill = 'X'.
-        IF sy-subrc = 0.
-          emit( kind = 'ERR' text = |Screen { <d020s>-dnum } of { program } is a native dynpro (e.g. with a splitter control). | &&
-                                    |abapGit stores it as NAT_HEADER/NAT_FIELDS, which erpl-adt does not support.| ).
-          emit_rc( 4 ).
-          RETURN.
-        ENDIF.
-      ENDIF.
-
       LOOP AT fields ASSIGNING FIELD-SYMBOL(<field>).
         " OUTPUTSTYLE is NUMC; '  ' would not survive the XML conversion.
         ASSIGN COMPONENT 'OUTPUTSTYLE' OF STRUCTURE <field> TO FIELD-SYMBOL(<outputstyle>).
@@ -492,7 +493,19 @@
         ENDIF.
       ENDLOOP.
 
-      APPEND VALUE #( header = header containers = containers fields = fields ) TO dynpros.
+      " abapGit: a screen with an element the external format cannot hold
+      " (FILL 'X', e.g. a dynpro splitter control) is kept in SAP's native
+      " format - the D020S row without generation stamp, the field list and
+      " the field texts as RPY_DYNPRO_READ_NATIVE returns them.
+      READ TABLE fieldlist_int TRANSPORTING NO FIELDS WITH KEY fill = 'X'.
+      IF header-type CA 'IN' AND sy-subrc = 0.
+        DATA(nat_header) = <d020s>.
+        CLEAR: nat_header-dgen, nat_header-tgen.
+        APPEND VALUE #( header = header nat_header = nat_header
+                        nat_fields = fieldlist_int nat_texts = texts ) TO dynpros.
+      ELSE.
+        APPEND VALUE #( header = header containers = containers fields = fields ) TO dynpros.
+      ENDIF.
       APPEND VALUE #( screen = header-screen
                       source = prog_lines_to_text( VALUE #( FOR flow IN flow_logic ( CONV #( flow-line ) ) ) ) ) TO flows.
     ENDLOOP.
@@ -658,7 +671,7 @@
       ENDIF.
     ENDIF.
 
-    IF prog_write_dynpros( program = name dynpros = dynpros flows = flows ) = abap_false.
+    IF prog_write_dynpros( program = name dynpros = dynpros flows = flows trkorr = trkorr ) = abap_false.
       RETURN.
     ENDIF.
 
@@ -719,6 +732,24 @@
         dynpro-flow_logic = VALUE #( FOR line IN prog_text_to_lines( <flow>-source ) ( line = line ) ).
       ENDIF.
 
+      IF dynpro-header-type CA 'IN' AND dynpro-nat_header IS NOT INITIAL.
+        IF dynpro-nat_texts IS NOT INITIAL.
+          emit( kind = 'ERR' text = |Screen { dynpro-header-screen } of { program }: NAT_TEXTS (field texts, D021T) cannot be written through a workbench API.| ).
+          emit_rc( 8 ).
+          RETURN.
+        ENDIF.
+        " Nothing to roll back: the native insert does not generate (the
+        " activation does), and it fails before it writes.
+        DATA(native_subrc) = prog_insert_native_dynpro( dynpro = dynpro trkorr = trkorr ).
+        IF native_subrc <> 0.
+          emit_symsg( ).
+          emit( kind = 'ERR' text = |Screen { dynpro-header-screen } of { program } could not be saved (RPY_DYNPRO_INSERT_NATIVE rc { native_subrc }).| ).
+          emit_rc( native_subrc ).
+          RETURN.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+
       " The version to go back to if SAP rejects the new one.
       CLEAR previous.
       CALL FUNCTION 'RPY_DYNPRO_READ'
@@ -765,6 +796,36 @@
       ENDIF.
     ENDLOOP.
     ok = abap_true.
+  ENDMETHOD.
+
+
+  METHOD prog_insert_native_dynpro.
+    DATA(header) = dynpro-nat_header.
+    DATA flow TYPE STANDARD TABLE OF d022s WITH DEFAULT KEY.
+    DATA params TYPE STANDARD TABLE OF d023s WITH DEFAULT KEY.
+    DATA(fields) = dynpro-nat_fields.
+    header-prog = dynpro-header-program.
+    header-dnum = dynpro-header-screen.
+    header-dgen = sy-datum.
+    header-tgen = sy-uzeit.
+    flow = VALUE #( FOR line IN dynpro-flow_logic ( line = line-line ) ).
+    CALL FUNCTION 'RPY_DYNPRO_INSERT_NATIVE'
+      EXPORTING
+        header                = header
+        dynprotext            = dynpro-header-descript
+        corrnum               = trkorr
+        suppress_exist_checks = abap_true
+      TABLES
+        fieldlist             = fields
+        flowlogic             = flow
+        params                = params
+      EXCEPTIONS
+        cancelled             = 1
+        already_exists        = 2
+        program_not_exists    = 3
+        not_executed          = 4
+        OTHERS                = 5.
+    subrc = sy-subrc.
   ENDMETHOD.
 
 

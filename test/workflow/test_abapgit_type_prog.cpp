@@ -284,16 +284,59 @@ TEST_CASE("PROG: a screen missing from the files is deleted", "[workflow][abapgi
           std::string::npos);
 }
 
-TEST_CASE("PROG: unsupported parts are refused by name", "[workflow][abapgit_prog]") {
+std::string NativeScreen(const std::string& texts) {
+    return "<item><HEADER><PROGRAM>ZERPL_T_PROG</PROGRAM><SCREEN>0100</SCREEN><LANGUAGE>E"
+           "</LANGUAGE><DESCRIPT>Cockpit</DESCRIPT><TYPE>N</TYPE></HEADER><NAT_HEADER><PROG>"
+           "ZERPL_T_PROG</PROG><DNUM>0100</DNUM><BZMX>27</BZMX></NAT_HEADER><NAT_FIELDS><D021S>"
+           "<FNAM>SPLITTER</FNAM><FILL>X</FILL><LENG>eA==</LENG></D021S></NAT_FIELDS>" + texts +
+           "</item>";
+}
+
+TEST_CASE("PROG: a native dynpro (NAT_HEADER) is written and activated like any screen",
+          "[workflow][abapgit_prog][native]") {
     Ctx c;
-    SECTION("native dynpro") {
+    ProgFiles current;
+    ProgFiles desired;
+    desired.screens[0] = NativeScreen("");
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"screen 0100"});
+    REQUIRE(p.writes.size() == 1);
+    CHECK(p.writes[0].op.payload.find("<NAT_FIELDS><D021S><FNAM>SPLITTER</FNAM>") !=
+          std::string::npos);
+    CHECK(Activation(p) == "DYNP0100");
+}
+
+TEST_CASE("PROG: field texts of a native dynpro (NAT_TEXTS) are refused",
+          "[workflow][abapgit_prog][native]") {
+    Ctx c;
+    const std::string texts = "<NAT_TEXTS><D021T><PROG>ZERPL_T_PROG</PROG><DYNR>0100</DYNR>"
+                              "<LANG>E</LANG><FLDN>%#AUTOTEXT001</FLDN><DTXT>Orders</DTXT>"
+                              "</D021T></NAT_TEXTS>";
+    SECTION("in the file") {
         ProgFiles files;
-        files.screens[0] = "<item><HEADER><SCREEN>0100</SCREEN></HEADER><NAT_HEADER><PROG>X</PROG>"
-                           "</NAT_HEADER></item>";
+        files.screens[0] = NativeScreen(texts);
         auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
         REQUIRE(plan.IsErr());
+        CHECK(plan.Error().category == ErrorCategory::CheckError);
         CHECK(plan.Error().message.find("screen 0100") != std::string::npos);
-        CHECK(plan.Error().message.find("native dynpro") != std::string::npos);
+        CHECK(plan.Error().message.find("NAT_TEXTS") != std::string::npos);
+        CHECK(plan.Error().message.find("D021T") != std::string::npos);
+    }
+    SECTION("in the system, when the screen would be rewritten") {
+        ProgFiles current;
+        current.screens[0] = NativeScreen(texts);
+        ProgFiles desired;
+        desired.screens[0] = NativeScreen("");
+        CHECK(Handler()->Validate(kKey, desired.Build(), Existing(current), "E").IsErr());
+    }
+    SECTION("unchanged: nothing to write, nothing refused") {
+        ProgFiles files;
+        files.screens[0] = NativeScreen(texts);
+        auto plan = Handler()->Plan(kKey, files.Build(), Existing(files), c.ctx);
+        REQUIRE(plan.IsOk());
+        CHECK(plan.Value().parts.empty());
     }
     CHECK(c.engine.runs.empty());
 }

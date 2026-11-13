@@ -134,6 +134,7 @@ SE51/SE41/SE93/SE11:
 |---|---|---|---|
 | Domain, data element (DOMA, DTEL) | `DDIF_DOMA_GET`, `DDIF_DTEL_GET` | `RS_CORR_INSERT`, `DDIF_*_PUT`, `DDIF_*_ACTIVATE` | `RS_DD_DELETE_OBJ` (request via its `corrnum`) |
 | Dynpro | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ` | `RPY_DYNPRO_INSERT` | `RS_SCRP_DELETE` |
+| Native dynpro (`NAT_HEADER`/`NAT_FIELDS`, e.g. a splitter control) | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ_NATIVE` | `RPY_DYNPRO_INSERT_NATIVE` | `RS_SCRP_DELETE` |
 | GUI status, titles (CUA) | `RS_CUA_INTERNAL_FETCH` | `RS_CUA_INTERNAL_WRITE` (inactive) | |
 | Text pool | `READ TEXTPOOL` | `INSERT TEXTPOOL … STATE 'I'` | |
 | Report variants (`VARIS`, system variants `SAP&…`/`CUS&…`) | `RS_ALL_VARIANTS_4_1_REPORT`, `RS_VARIANT_VALUES_TECH_DAT_255`, `RS_VARIANT_CONTENTS_255`, `RS_GET_SCREENS_4_1_VARIANT`, `VARIT` (texts) | `RS_VARIANT_DELETE` + `RS_CREATE_VARIANT_255` + `RS_CHANGE_CREATED_VARIANT_255`, after the activation | `RS_VARIANT_DELETE`; with the program by `RS_DELETE_PROGRAM` |
@@ -275,8 +276,19 @@ problems in the code being deployed.
   `RS_VARIANT_DELETE`'s `suppress_protected_check`; drift protection has
   refused a variant someone else changed before that. Variant texts are
   written in the master language only.
-* Native dynpros (splitter screens stored as `NAT_HEADER`) are reported as
-  unsupported parts.
+* Native dynpros: a screen holding an element the external dynpro format
+  cannot describe (`D021S-FILL` 'X', e.g. a dynpro splitter control) is kept
+  in SAP's internal format, like abapGit (`NAT_HEADER`, `NAT_FIELDS`). It is
+  written with `RPY_DYNPRO_INSERT_NATIVE` (locks the screen, records it on
+  the request, registers it inactive; the activation generates it). Unlike
+  abapGit, an existing screen is overwritten (`suppress_exist_checks`;
+  abapGit's call answers `ALREADY_EXISTS`, which it ignores, so abapGit only
+  ever creates such screens). The function module writes the screen source
+  directly, so - unlike other screens - there is no previous version to
+  restore: a screen SAP cannot generate stays inactive and the object fails
+  (exit 5). Field texts of a native screen (`NAT_TEXTS`, table `D021T`) are
+  refused (exit 8): abapGit inserts them into `D021T` directly and no
+  workbench API writes them. A plain splitter screen has none.
 * Transaction authorization-object checks (`AUTHORIZATIONS`, table `TSTCA`
   with the `CINFO` bit x'04') are refused (exit 8). `RPY_TRANSACTION_INSERT`
   has no parameter for them; classic SE93 (form in `LSEUKF01`) and abapGit's
