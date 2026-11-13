@@ -297,6 +297,30 @@ The web UI ([`flutter/erpl_catalog_kit`](flutter/erpl_catalog_kit), compiled and
 
 ![catalog explorer](docs/demos/catalog-explorer.png)
 
+## Classic GUI objects from git (abapGit files)
+
+Dynpros, GUI status and titles, transaction codes, domains, data elements, text
+pools and function modules have no ADT REST endpoint. `erpl-adt abapgit` deploys
+them from **abapGit-format files** and exports them back byte-for-byte, so a
+classic dialog application can live in git, be linted with abaplint and be
+deployed headless from CI:
+
+```bash
+erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # what would change
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # create/update + activate
+erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO                          # pull SE51/SE41 changes into git
+```
+
+Deploys are idempotent (unchanged objects are left alone), run in dependency
+order, record changes on the given transport, respect GUI locks, refuse to
+overwrite objects someone changed in the system outside git (unless `--force`),
+and only touch customer objects. Under the hood erpl-adt calls the workbench
+function modules SE51/SE41/SE93/SE11 use from a temporary console class in
+`$TMP`. Details, the API table and limitations: [docs/abapgit-deploy.md](docs/abapgit-deploy.md).
+
+This is unrelated to the `deploy` command below, which drives the abapGit
+*backend installed inside SAP*.
+
 ## Deploy workflow
 
 erpl-adt also includes the original `deploy` workflow for automated abapGit package deployment via YAML configuration:

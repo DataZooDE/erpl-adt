@@ -47,4 +47,13 @@ struct ActivateObjectParams {
     const ActivateObjectParams& params,
     std::chrono::seconds timeout = std::chrono::seconds{600});
 
+// ActivateObjects — activate several objects in one request (one
+// adtcore:objectReference each), so that objects which depend on each other
+// (a function group include and the function modules using it) are checked
+// and activated together, as Eclipse does for "Activate all".
+[[nodiscard]] Result<ActivationResult, Error> ActivateObjects(
+    IAdtSession& session,
+    const std::vector<ActivateObjectParams>& objects,
+    std::chrono::seconds timeout = std::chrono::seconds{600});
+
 } // namespace erpl_adt

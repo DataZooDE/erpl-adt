@@ -3,6 +3,7 @@
 
 #include <tinyxml2.h>
 
+#include <algorithm>
 #include <string>
 
 namespace erpl_adt {
@@ -15,7 +16,7 @@ const char* kActivationContentType = "application/vnd.sap.adt.activation.v1+xml"
 const char* kActivateObjectPath = "/sap/bc/adt/activation?method=activate&preauditRequested=true";
 constexpr const char* kNsAdtCore = "http://www.sap.com/adt/core";
 
-std::string BuildActivationRequestXml(const ActivateObjectParams& params) {
+std::string BuildActivationRequestXml(const std::vector<ActivateObjectParams>& objects) {
     tinyxml2::XMLDocument doc;
     doc.InsertFirstChild(doc.NewDeclaration());
 
@@ -23,18 +24,20 @@ std::string BuildActivationRequestXml(const ActivateObjectParams& params) {
     root->SetAttribute("xmlns:adtcore", kNsAdtCore);
     doc.InsertEndChild(root);
 
-    auto* ref = doc.NewElement("adtcore:objectReference");
-    ref->SetAttribute("adtcore:uri", params.uri.c_str());
-    if (!params.type.empty()) {
-        ref->SetAttribute("adtcore:type", params.type.c_str());
+    for (const auto& params : objects) {
+        auto* ref = doc.NewElement("adtcore:objectReference");
+        ref->SetAttribute("adtcore:uri", params.uri.c_str());
+        if (!params.type.empty()) {
+            ref->SetAttribute("adtcore:type", params.type.c_str());
+        }
+        if (!params.name.empty()) {
+            ref->SetAttribute("adtcore:name", params.name.c_str());
+        }
+        if (!params.parent_uri.empty()) {
+            ref->SetAttribute("adtcore:parentUri", params.parent_uri.c_str());
+        }
+        root->InsertEndChild(ref);
     }
-    if (!params.name.empty()) {
-        ref->SetAttribute("adtcore:name", params.name.c_str());
-    }
-    if (!params.parent_uri.empty()) {
-        ref->SetAttribute("adtcore:parentUri", params.parent_uri.c_str());
-    }
-    root->InsertEndChild(ref);
 
     tinyxml2::XMLPrinter printer;
     doc.Print(&printer);
@@ -198,8 +201,17 @@ Result<ActivationResult, Error> ActivateObject(
     IAdtSession& session,
     const ActivateObjectParams& params,
     std::chrono::seconds timeout) {
+    return ActivateObjects(session, {params}, timeout);
+}
 
-    if (params.uri.empty()) {
+Result<ActivationResult, Error> ActivateObjects(
+    IAdtSession& session,
+    const std::vector<ActivateObjectParams>& objects,
+    std::chrono::seconds timeout) {
+
+    if (objects.empty() ||
+        std::any_of(objects.begin(), objects.end(),
+                    [](const ActivateObjectParams& p) { return p.uri.empty(); })) {
         return Result<ActivationResult, Error>::Err(Error{
             "ActivateObject", "", std::nullopt,
             "URI is required for activation", std::nullopt});
@@ -210,7 +222,7 @@ Result<ActivationResult, Error> ActivateObject(
         return Result<ActivationResult, Error>::Err(std::move(csrf).Error());
     }
 
-    auto xml = BuildActivationRequestXml(params);
+    auto xml = BuildActivationRequestXml(objects);
 
     HttpHeaders headers = {{"x-csrf-token", csrf.Value()}};
     auto response = session.Post(kActivateObjectPath, xml, kActivationContentType, headers);

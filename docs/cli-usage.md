@@ -316,6 +316,57 @@ is why this is an allowlist and not a heuristic.
 Authentication is off unless a token is configured. Binding beyond loopback without one
 warns on stderr; `/healthz` never requires the token so liveness probes keep working.
 
+### abapgit -- Classic GUI objects from abapGit files
+
+```bash
+# Show what a deploy would change (no writes; non-zero exit if something would be refused)
+erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+
+# Deploy a whole repository (folder with .abapgit.xml) or a single object file
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit deploy ./erpl-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'
+
+# Overwrite objects that were changed in the system outside git
+erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146 --force
+
+# Export: refresh the objects already in <dir>, or name them explicitly
+erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03
+
+# Delete what the files describe (reverse dependency order)
+erpl-adt abapgit delete ./erpl-demo --package '$TMP'
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--package <pkg>` | Target (root) package; sub-folders map to sub-packages like in abapGit |
+| `--transport <request>` | Workbench request; required for transportable packages |
+| `--dry-run` | `deploy`/`delete`: report only (same as `status` for deploy) |
+| `--force` | Overwrite objects changed in the system outside git |
+| `--object TYPE:NAME,...` | `export`: objects to export |
+| `--master-language <lang>` | `export` into a new repository: master language (default `E`) |
+| `--helper-package <pkg>` | Local package for the temporary helper class (default `$TMP`) |
+| `--keep-helper` | Keep the temporary helper class (debugging) |
+
+JSON output (`--json`) lists one entry per object with `type`, `name`, `package`,
+`action` (`created`, `updated`, `unchanged`, `deleted`, `missing`, `exported`,
+`failed`, `refused`), the written `parts` and SAP's `message`. See
+[abapgit-deploy.md](abapgit-deploy.md) for how it works, team/transport behaviour
+and limitations.
+
+### screen -- Disposable classic Dynpro screens
+
+```bash
+erpl-adt screen create --program ZJR66_HOST --screen 9001 --package '$TMP' \
+    --fields HEADERNAME:Header:5:3:30,VALUE:Value:7:3:30
+erpl-adt screen read --program ZJR66_HOST --screen 9001 --package '$TMP'
+erpl-adt screen delete --program ZJR66_HOST --screen 9001 --package '$TMP'
+```
+
+Quick, throwaway screens with plain input fields (e.g. for tests). For complete
+screens with flow logic, tabstrips, table controls and GUI status, use
+`erpl-adt abapgit deploy`. The helper class always lives in a local package.
+
 ### deploy -- Legacy deploy workflow
 
 ```bash
