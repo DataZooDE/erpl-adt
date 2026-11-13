@@ -93,6 +93,10 @@ struct DeployPlan {
     // Working objects to activate after the writes (owner is set by the
     // workflow), e.g. {"", "REPS", "ZFOO"}.
     std::vector<WorkingObject> activate;
+    // Engine writes that need the object active (e.g. report variants, which
+    // SAP checks against the generated selection screen): at the end of the
+    // write run, after the activation; skipped when the object failed.
+    std::vector<PlannedOp> after_activation;
 };
 
 class IClassicTypeHandler {

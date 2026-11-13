@@ -290,7 +290,7 @@ Result<void, Error> CheckNoSymlinkEscape(const fs::path& root, const fs::path& d
 void RegisterAbapGitTools(ToolRegistry& registry, IAdtSession& session,
                           AbapGitToolOptions options) {
     const std::string how =
-        " Classic objects (DOMA, DTEL, FUGR, PROG with text pool, dynpros and GUI status, "
+        " Classic objects (DOMA, DTEL, FUGR, PROG with text pool, dynpros, GUI status and system variants, "
         "TRAN) are read and written through SAP's workbench function modules from a "
         "temporary helper class in $TMP. Only customer objects (Y*, Z*, registered "
         "namespaces) are touched. The result is the JSON report of `erpl-adt --json abapgit "

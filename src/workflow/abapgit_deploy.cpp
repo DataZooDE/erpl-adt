@@ -418,6 +418,23 @@ void RunBatch(IEngineRunner& engine, std::vector<Work>& works, AbapGitRunReport&
             what.emplace_back();
         }
     }
+    // Writes that need their object active: after everything else, each
+    // guarded by its own object too (failed write or activation -> skipped).
+    for (size_t i = 0; !ddic && i < works.size(); ++i) {
+        const auto& w = works[i];
+        if (w.broken) {
+            continue;
+        }
+        std::vector<std::string> required = {w.owner};
+        for (const auto d : w.deps) {
+            required.push_back(works[d].owner);
+        }
+        for (const auto& planned : w.plan.after_activation) {
+            ops.push_back(GuardedOp(planned.op, w.owner, required));
+            owner_of.push_back(i);
+            what.push_back(planned.what);
+        }
+    }
     if (ops.empty()) {
         return;
     }

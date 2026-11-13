@@ -7867,7 +7867,7 @@ void RegisterAllCommands(CommandRouter& router) {
             help.flags.push_back({"force", "", "Overwrite objects changed in the system outside git", false});
             help.long_description =
                 "Creates or updates every object in dependency order (DOMA, DTEL, FUGR, PROG "
-                "with text pool, dynpros and GUI status, TRAN) and activates it. Objects whose "
+                "with text pool, dynpros, GUI status and system variants, TRAN) and activates it. Objects whose "
                 "system state already equals the files are left alone, so re-running is safe. "
                 "SAP's messages are shown per object. Exit codes (the most severe object "
                 "decides): 0 ok, 1 authorization / guard rail / connection, 2 not found, "

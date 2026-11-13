@@ -286,13 +286,6 @@ TEST_CASE("PROG: a screen missing from the files is deleted", "[workflow][abapgi
 
 TEST_CASE("PROG: unsupported parts are refused by name", "[workflow][abapgit_prog]") {
     Ctx c;
-    SECTION("VARIS") {
-        ProgFiles files;
-        files.extra = "<VARIS><item><VARIANT>SAP&amp;DEFAULT</VARIANT></item></VARIS>";
-        auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
-        REQUIRE(plan.IsErr());
-        CHECK(plan.Error().message.find("VARIS") != std::string::npos);
-    }
     SECTION("native dynpro") {
         ProgFiles files;
         files.screens[0] = "<item><HEADER><SCREEN>0100</SCREEN></HEADER><NAT_HEADER><PROG>X</PROG>"
@@ -303,6 +296,106 @@ TEST_CASE("PROG: unsupported parts are refused by name", "[workflow][abapgit_pro
         CHECK(plan.Error().message.find("native dynpro") != std::string::npos);
     }
     CHECK(c.engine.runs.empty());
+}
+
+std::string Variant(const std::string& name, const std::string& low) {
+    return "<item><VARIANT>" + name + "</VARIANT><ENVIRONMNT>A</ENVIRONMNT><VALUES>"
+           "<RSPARAMSL_255><SELNAME>P_MAX</SELNAME><KIND>P</KIND><LOW>" + low +
+           "</LOW></RSPARAMSL_255></VALUES><TEXTS><item><LANGU>E</LANGU><VTEXT>Open</VTEXT>"
+           "</item></TEXTS></item>";
+}
+
+TEST_CASE("PROG: a new system variant is written after the activation",
+          "[workflow][abapgit_prog][varis]") {
+    Ctx c;
+    ProgFiles current;
+    ProgFiles desired;
+    desired.extra = "<VARIS>" + Variant("CUS&amp;OPEN_POS", "200") + "</VARIS>";
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"variant CUS&OPEN_POS"});
+    CHECK(p.writes.empty());     // nothing saved inactive ...
+    CHECK(p.activate.empty());   // ... and nothing to activate: variants have no versions
+    REQUIRE(p.after_activation.size() == 1);
+    const auto& op = p.after_activation[0].op;
+    CHECK(op.call == "prog_put_varis( name = 'ZERPL_T_PROG' language = 'E' devclass = '$TMP' "
+                     "trkorr = '' ).");
+    CHECK(op.payload.find("<VARIS><item><VARIANT>CUS&amp;OPEN_POS</VARIANT>") !=
+          std::string::npos);
+    CHECK(op.payload.find("<DELETE_VARIS></DELETE_VARIS>") != std::string::npos);
+    CHECK(p.after_activation[0].what == "Writing the variants of program ZERPL_T_PROG");
+}
+
+TEST_CASE("PROG: only the changed variant is rewritten, a removed one deleted",
+          "[workflow][abapgit_prog][varis]") {
+    Ctx c;
+    ProgFiles current;
+    current.extra = "<VARIS>" + Variant("CUS&amp;A", "1") + Variant("CUS&amp;B", "2") +
+                    Variant("SAP&amp;OLD", "3") + "</VARIS>";
+    ProgFiles desired;
+    desired.extra = "<VARIS>" + Variant("CUS&amp;A", "1") + Variant("CUS&amp;B", "5") + "</VARIS>";
+    auto plan = Handler()->Plan(kKey, desired.Build(), Existing(current), c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"variant CUS&B", "variant SAP&OLD (deleted)"});
+    REQUIRE(p.after_activation.size() == 1);
+    const auto& payload = p.after_activation[0].op.payload;
+    CHECK(payload.find("CUS&amp;A") == std::string::npos);
+    CHECK(payload.find("<LOW>5</LOW>") != std::string::npos);
+    CHECK(payload.find("<DELETE_VARIS><item>SAP&amp;OLD</item></DELETE_VARIS>") !=
+          std::string::npos);
+}
+
+TEST_CASE("PROG: a new program gets its variants after it is activated",
+          "[workflow][abapgit_prog][varis]") {
+    Ctx c;
+    ProgFiles files;
+    files.extra = "<VARIS>" + Variant("CUS&amp;OPEN_POS", "200") + "</VARIS>";
+    auto plan = Handler()->Plan(kKey, files.Build(), ObjectState{}, c.ctx);
+    REQUIRE(plan.IsOk());
+    const auto& p = plan.Value();
+    CHECK(p.parts == std::vector<std::string>{"source", "PROGDIR", "screen 0100", "screen 0200",
+                                               "CUA", "variant CUS&OPEN_POS", "TPOOL"});
+    REQUIRE(p.writes.size() == 1);
+    CHECK(p.writes[0].op.payload.find("VARIS") == std::string::npos);
+    REQUIRE(p.after_activation.size() == 1);
+}
+
+TEST_CASE("PROG: unchanged variants write nothing", "[workflow][abapgit_prog][varis]") {
+    Ctx c;
+    ProgFiles files;
+    files.extra = "<VARIS>" + Variant("CUS&amp;OPEN_POS", "200") + "</VARIS>";
+    auto plan = Handler()->Plan(kKey, files.Build(), Existing(files), c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts.empty());
+    CHECK(plan.Value().after_activation.empty());
+}
+
+TEST_CASE("PROG: a user variant (not SAP&/CUS&) is refused before anything runs",
+          "[workflow][abapgit_prog][varis]") {
+    ProgFiles files;
+    files.extra = "<VARIS>" + Variant("OPEN_POS", "200") + "</VARIS>";
+    auto checked = Handler()->Validate(kKey, files.Build(), ObjectState{}, "E");
+    REQUIRE(checked.IsErr());
+    CHECK(checked.Error().category == ErrorCategory::CheckError);
+    CHECK(checked.Error().message.find("OPEN_POS") != std::string::npos);
+    CHECK(checked.Error().message.find("CUS&") != std::string::npos);
+}
+
+TEST_CASE("PROG: abapGit's own system variant file is accepted", "[workflow][abapgit_prog][varis]") {
+    Ctx c;
+    const AbapGitObjectKey key{"PROG", "ZABAPGIT_TEST_SYS_VARIANT_01"};
+    ObjectFileSet files;
+    files["zabapgit_test_sys_variant_01.prog.xml"] =
+        LoadTestData("abapgit/PROG_sys_variant/src/zabapgit_test_sys_variant_01.prog.xml");
+    files["zabapgit_test_sys_variant_01.prog.abap"] =
+        LoadTestData("abapgit/PROG_sys_variant/src/zabapgit_test_sys_variant_01.prog.abap");
+    auto plan = Handler()->Plan(key, files, ObjectState{}, c.ctx);
+    REQUIRE(plan.IsOk());
+    CHECK(plan.Value().parts == std::vector<std::string>{"source", "PROGDIR",
+                                                          "variant CUS&SYVAR01",
+                                                          "variant CUS&TESTVAR", "TPOOL"});
 }
 
 TEST_CASE("PROG: a flow logic file without its screen is refused", "[workflow][abapgit_prog]") {
@@ -359,7 +452,7 @@ TEST_CASE("PROG: last changers per part (source, texts, CUA known; dynpros unkno
                     "<PROGDIR><NAME>ZERPL_T_PROG</NAME></PROGDIR></asx:values></asx:abap>";
     r.data["SOURCE"] = "REPORT zerpl_t_prog.\n";
     r.data["SCREEN_0100"] = "PROCESS BEFORE OUTPUT.\n";
-    r.values["CHANGED"] = {"SOURCE DEVELOPER", "TEXTS COLLEAGUE", "CUA ?"};
+    r.values["CHANGED"] = {"SOURCE DEVELOPER", "TEXTS COLLEAGUE", "CUA ?", "VARIS COLLEAGUE"};
     auto state = Handler()->BuildState(kKey, {r}, c.ctx);
     REQUIRE(state.IsOk());
     const auto& by = state.Value().part_changed_by;
@@ -367,6 +460,7 @@ TEST_CASE("PROG: last changers per part (source, texts, CUA known; dynpros unkno
     CHECK(by.at("zerpl_t_prog.prog.xml#PROGDIR") == "DEVELOPER");
     CHECK(by.at("zerpl_t_prog.prog.xml#TPOOL") == "COLLEAGUE");
     CHECK(by.at("zerpl_t_prog.prog.xml#CUA").empty());
+    CHECK(by.at("zerpl_t_prog.prog.xml#VARIS") == "COLLEAGUE");
     CHECK(by.at("zerpl_t_prog.prog.xml").empty());  // DYNPROS & others: unknown
     CHECK(by.at("zerpl_t_prog.prog.screen_0100.abap").empty());
 }

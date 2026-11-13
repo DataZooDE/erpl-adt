@@ -2,7 +2,7 @@
 // GUI status / titles (CUA) and text pool. abapGit serializer LCL_OBJECT_PROG
 // (ZCL_ABAPGIT_OBJECT_PROG / ZCL_ABAPGIT_OBJECTS_PROGRAM).
 //
-// Files:  <name>.prog.xml               PROGDIR, DYNPROS, CUA, TPOOL
+// Files:  <name>.prog.xml               PROGDIR, DYNPROS, CUA, VARIS, TPOOL
 //         <name>.prog.abap              source
 //         <name>.prog.screen_NNNN.abap  flow logic of screen NNNN
 //
@@ -18,7 +18,11 @@
 //     text pool: INSERT TEXTPOOL ... STATE 'I';
 //   * activation: RS_WORKING_OBJECTS_ACTIVATE at the end of the deploy's
 //     write run, for all programs at once (ADT activation of the program does
-//     not activate CUAD / REPT).
+//     not activate CUAD / REPT);
+//   * system variants (VARIS, SAP&... / CUS&...): after the activation, as
+//     SAP checks a variant against the generated selection screen —
+//     RS_VARIANT_DELETE + RS_CREATE_VARIANT_255 + RS_CHANGE_CREATED_VARIANT_255
+//     (abapGit's DESERIALIZE_VARIS). Variants have no inactive version.
 
 #include "abapgit_types.hpp"
 
@@ -76,6 +80,14 @@ EngineOp ProgPutOp(const std::string& name, const TypeContext& ctx, const PutFla
             asx_xml};
 }
 
+EngineOp ProgPutVarisOp(const std::string& name, const TypeContext& ctx,
+                        const std::string& asx_xml) {
+    return {"prog_put_varis( name = " + AbapQuote(name) + " language = " +
+                AbapQuote(ctx.language) + " devclass = " + AbapQuote(ctx.package) +
+                " trkorr = " + AbapQuote(ctx.transport) + " ).",
+            asx_xml};
+}
+
 EngineOp ProgDeleteOp(const std::string& name, const std::string& devclass,
                       const std::string& trkorr) {
     return {"prog_delete( name = " + AbapQuote(name) + " devclass = " + AbapQuote(devclass) +
@@ -89,6 +101,8 @@ struct ProgParts {
     std::string progdir;                         // <PROGDIR>...</PROGDIR>
     std::map<std::string, std::string> screens;  // "0100" -> <item>...</item>
     std::string cua;                             // <CUA>...</CUA>
+    // System variants by name (unescaped, e.g. "CUS&OPEN_POS") -> <item>...</item>
+    std::map<std::string, std::string> varis;
     std::string tpool;                           // <TPOOL>...</TPOOL>
 };
 
@@ -110,6 +124,25 @@ std::string ElementText(const std::string& xml, const std::string& tag) {
     start += open.size();
     auto end = xml.find("</" + tag + ">", start);
     return end == std::string::npos ? "" : xml.substr(start, end - start);
+}
+
+std::string UnescapeXmlText(std::string text) {
+    static const std::vector<std::pair<std::string, std::string>> entities = {
+        {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}, {"&amp;", "&"}};
+    for (const auto& [entity, plain] : entities) {
+        size_t pos = 0;
+        while ((pos = text.find(entity, pos)) != std::string::npos) {
+            text.replace(pos, entity.size(), plain);
+            pos += plain.size();
+        }
+    }
+    return text;
+}
+
+// abapGit only serializes system variants (DESERIALIZE_VARIS refuses others):
+// they live in client 000 and travel with the program.
+bool IsSystemVariant(const std::string& name) {
+    return name.rfind("SAP&", 0) == 0 || name.rfind("CUS&", 0) == 0;
 }
 
 Result<ProgParts, Error> SplitProgXml(const std::string& file_content,
@@ -145,10 +178,14 @@ Result<ProgParts, Error> SplitProgXml(const std::string& file_content,
         } else if (element == "TPOOL") {
             parts.tpool = xml;
         } else if (element == "VARIS") {
-            return R::Err(ProgError(file_name +
-                                        ": VARIS (system variants SAP&/CUS&) are not supported "
-                                        "by erpl-adt",
-                                    ErrorCategory::Internal));
+            for (const auto& [item_name, item] : SplitAsxValues(InnerXml(xml))) {
+                const std::string variant = UnescapeXmlText(ElementText(item, "VARIANT"));
+                if (item_name != "item" || variant.empty()) {
+                    return R::Err(ProgError(file_name + ": VARIS entry without VARIANT",
+                                            ErrorCategory::Internal));
+                }
+                parts.varis[variant] = item;
+            }
         } else if (element == "I18N_TPOOL") {
             return R::Err(ProgError(file_name +
                                         ": I18N_TPOOL (text pool translations) is not supported "
@@ -256,6 +293,9 @@ public:
         state.part_changed_by[xml_name + "#PROGDIR"] = changer("SOURCE");
         state.part_changed_by[xml_name + "#TPOOL"] = changer("TEXTS");
         state.part_changed_by[xml_name + "#CUA"] = changer("CUA");
+        // System variants: VARID-AENAME / ENAME (the logon user when there
+        // are none: nothing to overwrite).
+        state.part_changed_by[xml_name + "#VARIS"] = changer("VARIS");
         return Result<ObjectState, Error>::Ok(state);
     }
 
@@ -295,6 +335,16 @@ public:
                     "Missing file " + FlowFileName(key, screen) + " (flow logic of screen " +
                         screen + ")",
                     ErrorCategory::Internal));
+            }
+        }
+        for (const auto& [variant, item] : want.Value().varis) {
+            if (!IsSystemVariant(variant)) {
+                return Result<void, Error>::Err(ProgError(
+                    xml_name + ": variant " + variant +
+                        " is not a system variant; abapGit's VARIS holds only SAP&... and "
+                        "CUS&... variants (client 000, transported with the program) - "
+                        "rename it to CUS&" + variant.substr(0, 10),
+                    ErrorCategory::CheckError));
             }
         }
         auto cur_xml = current.files.find(xml_name);
@@ -363,6 +413,19 @@ public:
             }
         }
         const bool cua_changed = w.cua != have.cua;  // removal: refused by Validate
+        std::vector<std::string> varis_to_write;
+        for (const auto& [variant, item] : w.varis) {
+            auto it = have.varis.find(variant);
+            if (create || it == have.varis.end() || it->second != item) {
+                varis_to_write.push_back(variant);
+            }
+        }
+        std::vector<std::string> varis_to_delete;
+        for (const auto& [variant, item] : have.varis) {
+            if (w.varis.count(variant) == 0) {
+                varis_to_delete.push_back(variant);
+            }
+        }
         bool tpool_changed = w.tpool != have.tpool;
 
         // Parts with an inactive version (a previous deploy failed to
@@ -450,11 +513,32 @@ public:
             parts.push_back("CUA");
             add_object("CUAD", key.name);
         }
+        for (const auto& variant : varis_to_write) {
+            parts.push_back("variant " + variant);
+        }
+        for (const auto& variant : varis_to_delete) {
+            parts.push_back("variant " + variant + " (deleted)");
+        }
         if (flags.write_tpool) {
             if (!(create && w.tpool.empty())) {
                 parts.push_back("TPOOL");
             }
             add_object("REPT", key.name);
+        }
+        if (!varis_to_write.empty() || !varis_to_delete.empty()) {
+            std::string values = "<VARIS>";
+            for (const auto& variant : varis_to_write) {
+                values += w.varis.at(variant);
+            }
+            values += "</VARIS><DELETE_VARIS>";
+            for (const auto& variant : varis_to_delete) {
+                values += "<item>" + EscapeXmlText(variant) + "</item>";
+            }
+            values += "</DELETE_VARIS>";
+            PlannedOp put;
+            put.op = ProgPutVarisOp(key.name, ctx, WrapAsxValues(values));
+            put.what = "Writing the variants of program " + key.name;
+            plan.after_activation.push_back(std::move(put));
         }
 
         const bool engine_write = create || flags.write_progdir || !screens_to_write.empty() ||

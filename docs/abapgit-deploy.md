@@ -1,8 +1,8 @@
 # Classic GUI objects from git: `erpl-adt abapgit`
 
 `erpl-adt abapgit` deploys classic SAP GUI objects — dynpros, GUI status and
-titles, transaction codes, domains, data elements, text pools and function
-modules — from files in **abapGit's serialization format**, and exports them
+titles, transaction codes, domains, data elements, text pools, report
+variants and function modules — from files in **abapGit's serialization format**, and exports them
 back into exactly the same bytes. A repository can be edited in git, linted
 with abaplint, pulled with abapGit inside SAP, or deployed headless with
 erpl-adt from CI — all on the same files.
@@ -77,6 +77,7 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
    | PROG source and attributes | `REPOSRC-UNAM` |
    | PROG text pool | `REPOTEXT-UNAM` |
    | PROG GUI status / titles | `EUDB-VAUTOR` (creator `AUTOR` until first change) |
+   | PROG system variants | `VARID-AENAME` (creator `ENAME` until first change), client 000 |
    | FUGR function module, include | `REPOSRC-UNAM` of that include (`L<fg>U<nn>`, not `SAPL<fg>`) |
    | Dynpros, TRAN, FUGR short text | **none** — SAP keeps no last changer (`D020S`, `TSTC*` have no user field; SE93 writes no version) |
 
@@ -95,7 +96,7 @@ runs whatever the number of objects:
 | read | every object's state, system facts | engine run 1 |
 | DDIC | domains, data elements: written and activated | engine run 2 (only if any changed) |
 | ADT | function groups, source of existing programs | ADT requests, per object |
-| write + activate | new programs, screens, GUI status, text pools, transactions; then one `RS_WORKING_OBJECTS_ACTIVATE` of everything saved | engine run 3 (only if any changed) |
+| write + activate | new programs, screens, GUI status, text pools, transactions; then one `RS_WORKING_OBJECTS_ACTIVATE` of everything saved; then report variants (they need the active selection screen) | engine run 3 (only if any changed) |
 
 DDIC objects are active before anything that uses them is written or
 generated, and programs are activated before the transactions that call them
@@ -135,6 +136,7 @@ SE51/SE41/SE93/SE11:
 | Dynpro | `RS_SCREEN_LIST`, `RPY_DYNPRO_READ` | `RPY_DYNPRO_INSERT` | `RS_SCRP_DELETE` |
 | GUI status, titles (CUA) | `RS_CUA_INTERNAL_FETCH` | `RS_CUA_INTERNAL_WRITE` (inactive) | |
 | Text pool | `READ TEXTPOOL` | `INSERT TEXTPOOL … STATE 'I'` | |
+| Report variants (`VARIS`, system variants `SAP&…`/`CUS&…`) | `RS_ALL_VARIANTS_4_1_REPORT`, `RS_VARIANT_VALUES_TECH_DAT_255`, `RS_VARIANT_CONTENTS_255`, `RS_GET_SCREENS_4_1_VARIANT`, `VARIT` (texts) | `RS_VARIANT_DELETE` + `RS_CREATE_VARIANT_255` + `RS_CHANGE_CREATED_VARIANT_255`, after the activation | `RS_VARIANT_DELETE`; with the program by `RS_DELETE_PROGRAM` |
 | Activation of dynpros/CUA/text pool | | `RS_WORKING_OBJECTS_ACTIVATE` | |
 | Transaction (TRAN) | `TSTC`, `TSTCC`, `TSTCT`, `TSTCP` | `RPY_TRANSACTION_INSERT` | `RPY_TRANSACTION_DELETE` |
 | System facts | `sy-uname`, `TRNSPACE`, `TADIR`/`TDEVC` (export: package of an object) | | |
@@ -264,8 +266,17 @@ problems in the code being deployed.
   deploy classes with `erpl-adt source write`.
 * Translations (I18N/LXE) and long-text documentation (DOCU) are not
   deployed; only the master language.
-* Native dynpros (splitter screens stored as `NAT_HEADER`) and report variants
-  (`VARIS`) are reported as unsupported parts.
+* Report variants: only system variants (`SAP&…`, `CUS&…`; client 000,
+  transported with the program) — abapGit's `VARIS` holds no others, and a
+  user variant in the file is refused (exit 8). Variants are written after the
+  program's activation (SAP checks them against the generated selection
+  screen) and have no inactive version. Where abapGit unprotects a protected
+  variant with a direct `UPDATE VARID` before replacing it, erpl-adt uses
+  `RS_VARIANT_DELETE`'s `suppress_protected_check`; drift protection has
+  refused a variant someone else changed before that. Variant texts are
+  written in the master language only.
+* Native dynpros (splitter screens stored as `NAT_HEADER`) are reported as
+  unsupported parts.
 * The drift check needs `git` on the PATH to consult file history (the last
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.

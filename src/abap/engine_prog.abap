@@ -2,12 +2,17 @@
 * titles and text pool -- mirrors abapGit's ZCL_ABAPGIT_OBJECTS_PROGRAM.
 *   read:     READ_PROGDIR, READ REPORT, RS_SCREEN_LIST + RPY_DYNPRO_READ
 *             (+ RPY_DYNPRO_READ_NATIVE for abapGit's flag fixes),
-*             RS_CUA_INTERNAL_FETCH, READ TEXTPOOL
+*             RS_CUA_INTERNAL_FETCH, READ TEXTPOOL, system variants
+*             (RS_ALL_VARIANTS_4_1_REPORT, RS_VARIANT_VALUES_TECH_DAT_255,
+*             RS_VARIANT_CONTENTS_255, RS_GET_SCREENS_4_1_VARIANT)
 *   write:    RS_CORR_INSERT, RPY_PROGRAM_INSERT (create), UPDATE_PROGDIR,
 *             RPY_DYNPRO_INSERT / RS_SCRP_DELETE, RS_CUA_INTERNAL_WRITE,
 *             INSERT TEXTPOOL -- everything saved inactive
 *   activate: activate_objects (engine_activate.abap) at the end of the
 *             deploy's write run, for every program at once
+*   variants: prog_put_varis after the activation (a variant is checked
+*             against the generated selection screen): RS_VARIANT_DELETE +
+*             RS_CREATE_VARIANT_255 + RS_CHANGE_CREATED_VARIANT_255
 *   delete:   RS_DELETE_PROGRAM
 * Source code of an existing program is written over ADT (lock + PUT), not here.
 "@@DEFINITIONS
@@ -94,6 +99,30 @@
       END OF ty_prog_flow.
     TYPES ty_prog_flows TYPE STANDARD TABLE OF ty_prog_flow WITH DEFAULT KEY.
     TYPES ty_prog_dynnrs TYPE STANDARD TABLE OF dynnr WITH DEFAULT KEY.
+    "! abapGit's TY_VARI (component order = XML order): a system variant.
+    TYPES:
+      BEGIN OF ty_prog_vari_text,
+        langu TYPE langu,
+        vtext TYPE rvart_vtxt,
+      END OF ty_prog_vari_text.
+    TYPES:
+      BEGIN OF ty_prog_vari,
+        variant     TYPE varid-variant,
+        flag1       TYPE varid-flag1,
+        flag2       TYPE varid-flag2,
+        transport   TYPE varid-transport,
+        environmnt  TYPE varid-environmnt,
+        protected   TYPE varid-protected,
+        secu        TYPE varid-secu,
+        xflag1      TYPE varid-xflag1,
+        xflag2      TYPE varid-xflag2,
+        variscreens TYPE STANDARD TABLE OF rsdynnr WITH DEFAULT KEY,
+        objects     TYPE STANDARD TABLE OF vanz WITH DEFAULT KEY,
+        values      TYPE STANDARD TABLE OF rsparamsl_255 WITH DEFAULT KEY,
+        texts       TYPE STANDARD TABLE OF ty_prog_vari_text WITH DEFAULT KEY,
+      END OF ty_prog_vari.
+    TYPES ty_prog_varis TYPE STANDARD TABLE OF ty_prog_vari WITH DEFAULT KEY.
+    TYPES ty_prog_vari_names TYPE STANDARD TABLE OF variant WITH DEFAULT KEY.
 
     METHODS prog_get
       IMPORTING name     TYPE syrepid
@@ -115,6 +144,31 @@
       IMPORTING name     TYPE syrepid
                 devclass TYPE devclass
                 trkorr   TYPE trkorr.
+    "! Writes the system variants of the payload (VARIS: delete if present,
+    "! then create, as abapGit's DESERIALIZE_VARIS) and deletes the ones in
+    "! DELETE_VARIS. Runs after the activation of the program.
+    METHODS prog_put_varis
+      IMPORTING name     TYPE syrepid
+                language TYPE sylangu
+                devclass TYPE devclass
+                trkorr   TYPE trkorr.
+    "! abapGit SERIALIZE_VARIS: the report's system variants (SAP&*, CUS&*),
+    "! texts in the master language only. Returns abap_false (after
+    "! emitting ERR/RC) on failure.
+    METHODS prog_read_varis
+      IMPORTING program   TYPE syrepid
+                language  TYPE sylangu
+      EXPORTING varis     TYPE ty_prog_varis
+      RETURNING VALUE(ok) TYPE abap_bool.
+    "! Names of the report's system variants (abapGit GET_VARIS_FOR_REPORT).
+    METHODS prog_system_variants
+      IMPORTING program      TYPE syrepid
+      RETURNING VALUE(names) TYPE ty_prog_vari_names.
+    "! RS_VARIANT_DELETE of one system variant; returns sy-subrc.
+    METHODS prog_delete_variant
+      IMPORTING program      TYPE syrepid
+                variant      TYPE variant
+      RETURNING VALUE(subrc) TYPE sysubrc.
     "! abapGit SERIALIZE_DYNPROS: screens in abapGit's normalized form, flow
     "! logic separately. Returns abap_false (after emitting ERR/RC) on failure.
     METHODS prog_read_dynpros
@@ -180,6 +234,23 @@
       cua = cua_author.
     ENDIF.
     emit_changed( part = `CUA` user = cua ).
+    " System variants: VARID-AENAME (ENAME until the first change), in client
+    " 000. Any other user's variant makes the part someone else's; without
+    " variants there is nothing to overwrite.
+    DATA variants_by TYPE syuname.
+    variants_by = sy-uname.
+    SELECT ename, aename FROM varid USING CLIENT '000'
+      WHERE report = @name AND ( variant LIKE 'SAP&%' OR variant LIKE 'CUS&%' )
+      INTO TABLE @DATA(variant_users).
+    LOOP AT variant_users ASSIGNING FIELD-SYMBOL(<variant_user>).
+      DATA(variant_by) = COND syuname( WHEN <variant_user>-aename IS NOT INITIAL
+                                       THEN <variant_user>-aename ELSE <variant_user>-ename ).
+      IF variant_by <> sy-uname.
+        variants_by = variant_by.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+    emit_changed( part = `VARIS` user = variants_by ).
   ENDMETHOD.
 
   METHOD prog_get.
@@ -191,6 +262,7 @@
     DATA dynpros TYPE ty_prog_dynpros.
     DATA flows TYPE ty_prog_flows.
     DATA cua TYPE ty_prog_cua.
+    DATA varis TYPE ty_prog_varis.
     DATA bind TYPE abap_trans_srcbind_tab.
     DATA xml TYPE xstring.
 
@@ -249,6 +321,9 @@
       IF prog_read_cua( EXPORTING program = name language = language IMPORTING cua = cua ) = abap_false.
         RETURN.
       ENDIF.
+      IF prog_read_varis( EXPORTING program = name language = language IMPORTING varis = varis ) = abap_false.
+        RETURN.
+      ENDIF.
     ENDIF.
 
     READ TEXTPOOL name INTO tpool LANGUAGE language STATE 'A'.
@@ -273,6 +348,9 @@
     ENDIF.
     IF cua IS NOT INITIAL.
       APPEND VALUE #( name = 'CUA' value = REF #( cua ) ) TO bind.
+    ENDIF.
+    IF varis IS NOT INITIAL.
+      APPEND VALUE #( name = 'VARIS' value = REF #( varis ) ) TO bind.
     ENDIF.
     IF tpool_ext IS NOT INITIAL.
       APPEND VALUE #( name = 'TPOOL' value = REF #( tpool_ext ) ) TO bind.
@@ -822,6 +900,234 @@
       RETURN.
     ENDIF.
     ok = abap_true.
+  ENDMETHOD.
+
+
+  METHOD prog_system_variants.
+    DATA catalog TYPE rsvcat.
+    CALL FUNCTION 'RS_ALL_VARIANTS_4_1_REPORT'
+      EXPORTING
+        program = program
+      IMPORTING
+        cat     = catalog
+      EXCEPTIONS
+        OTHERS  = 1.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    LOOP AT catalog-cat ASSIGNING FIELD-SYMBOL(<cat>)
+        WHERE variant CP 'SAP&*' OR variant CP 'CUS&*'.
+      APPEND <cat>-variant TO names.
+    ENDLOOP.
+    SORT names.
+  ENDMETHOD.
+
+
+  METHOD prog_read_varis.
+    DATA techn TYPE varid.
+    DATA ignored TYPE STANDARD TABLE OF rsparamsl_255 WITH DEFAULT KEY.
+    DATA dynnrs TYPE STANDARD TABLE OF rsdynnr WITH DEFAULT KEY.
+    DATA vari TYPE ty_prog_vari.
+
+    CLEAR varis.
+    DATA(names) = prog_system_variants( program ).
+    LOOP AT names INTO DATA(variant).
+      CLEAR: vari, techn, ignored, dynnrs.
+      CALL FUNCTION 'RS_VARIANT_VALUES_TECH_DAT_255'
+        EXPORTING
+          report         = program
+          variant        = variant
+          sorted         = abap_true
+        IMPORTING
+          techn_data     = techn
+        TABLES
+          variant_values = ignored
+        EXCEPTIONS
+          OTHERS         = 1.
+      IF sy-subrc <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |Variant { variant } of { program } could not be read.| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+      MOVE-CORRESPONDING techn TO vari.
+      " abapGit selects the texts (RS_VARIANT_TEXT cannot list languages);
+      " master language only, as the rest of the deploy.
+      SELECT langu, vtext FROM varit USING CLIENT '000'
+        WHERE report = @program AND variant = @variant AND langu = @language
+        ORDER BY langu
+        INTO CORRESPONDING FIELDS OF TABLE @vari-texts.
+      CALL FUNCTION 'RS_VARIANT_CONTENTS_255'
+        EXPORTING
+          report         = program
+          variant        = variant
+          execute_direct = abap_true
+        TABLES
+          valutab        = vari-values
+          objects        = vari-objects
+        EXCEPTIONS
+          OTHERS         = 1.
+      IF sy-subrc <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |The values of variant { variant } of { program } could not be read.| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+      " abapGit: reproducible order; object texts come from the text pool.
+      SORT vari-values.
+      SORT vari-objects.
+      SORT vari-texts.
+      LOOP AT vari-objects ASSIGNING FIELD-SYMBOL(<object>).
+        CLEAR <object>-text.
+      ENDLOOP.
+      CALL FUNCTION 'RS_GET_SCREENS_4_1_VARIANT'
+        EXPORTING
+          program     = program
+          variant     = variant
+        TABLES
+          dynnr       = dynnrs
+          variscreens = vari-variscreens
+        EXCEPTIONS
+          OTHERS      = 1.
+      IF sy-subrc <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |The screens of variant { variant } of { program } could not be read.| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+      SORT vari-variscreens.
+      APPEND vari TO varis.
+    ENDLOOP.
+    ok = abap_true.
+  ENDMETHOD.
+
+
+  METHOD prog_delete_variant.
+    " SUPPRESS_PROTECTED_CHECK instead of abapGit's direct UPDATE of
+    " VARID-PROTECTED: the file is the truth, and drift protection has
+    " already refused a variant someone else changed.
+    CALL FUNCTION 'RS_VARIANT_DELETE'
+      EXPORTING
+        report                   = program
+        variant                  = variant
+        flag_confirmscreen       = abap_true
+        suppress_message         = abap_true
+        suppress_input_dialog    = abap_true
+        suppress_protected_check = abap_true
+      EXCEPTIONS
+        variant_not_existent     = 1
+        OTHERS                   = 2.
+    subrc = sy-subrc.
+    IF subrc = 1.
+      subrc = 0.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD prog_put_varis.
+    DATA varis TYPE ty_prog_varis.
+    DATA delete_varis TYPE ty_prog_vari_names.
+    DATA varid TYPE varid.
+    DATA texts TYPE STANDARD TABLE OF varit WITH DEFAULT KEY.
+    DATA(xml) = take_payload( ).
+
+    CALL TRANSFORMATION id SOURCE XML xml
+      RESULT varis        = varis
+             delete_varis = delete_varis.
+
+    " Only system variants are part of abapGit's format (and transported
+    " with the program); the workflow refuses others before this runs.
+    LOOP AT varis ASSIGNING FIELD-SYMBOL(<vari>)
+        WHERE NOT ( variant CP 'SAP&*' OR variant CP 'CUS&*' ).
+      emit( kind = 'ERR' text = |Variant { <vari>-variant } of { name } is not a system variant (SAP&... / CUS&...).| ).
+      emit_rc( 8 ).
+      RETURN.
+    ENDLOOP.
+
+    " R3TR PROG on the request (the system variants travel with it), as
+    " abapGit does before it deserializes anything.
+    IF corr_insert( object = name object_class = 'ABAP'
+                    devclass = devclass trkorr = trkorr language = language ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    LOOP AT delete_varis INTO DATA(variant).
+      IF prog_delete_variant( program = name variant = variant ) <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |Variant { variant } of { name } could not be deleted (RS_VARIANT_DELETE).| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT varis ASSIGNING <vari>.
+      " No update API: delete + create, as abapGit does.
+      IF prog_delete_variant( program = name variant = <vari>-variant ) <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |Variant { <vari>-variant } of { name } could not be replaced (RS_VARIANT_DELETE).| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+      CLEAR: varid, texts.
+      MOVE-CORRESPONDING <vari> TO varid.
+      varid-mandt  = '000'.
+      varid-report = name.
+      LOOP AT <vari>-texts ASSIGNING FIELD-SYMBOL(<text>).
+        APPEND VALUE #( mandt = '000' report = name variant = <vari>-variant
+                        langu = <text>-langu vtext = <text>-vtext ) TO texts.
+      ENDLOOP.
+      DATA(values) = <vari>-values.
+      DATA(screens) = <vari>-variscreens.
+      DATA(objects) = <vari>-objects.
+      CALL FUNCTION 'RS_CREATE_VARIANT_255'
+        EXPORTING
+          curr_report               = name
+          curr_variant              = <vari>-variant
+          vari_desc                 = varid
+        TABLES
+          vari_contents             = values
+          vari_text                 = texts
+          vscreens                  = screens
+        EXCEPTIONS
+          illegal_report_or_variant = 1
+          illegal_variantname       = 2
+          not_authorized            = 3
+          not_executed              = 4
+          report_not_existent       = 5
+          report_not_supplied       = 6
+          variant_exists            = 7
+          variant_locked            = 8
+          OTHERS                    = 9.
+      IF sy-subrc <> 0.
+        DATA(subrc) = sy-subrc.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |Variant { <vari>-variant } of { name } could not be created (RS_CREATE_VARIANT_255 rc { subrc }).| ).
+        IF subrc = 3.
+          emit( kind = 'KIND' text = `AUTH` ).
+        ENDIF.
+        emit_rc( subrc ).
+        RETURN.
+      ENDIF.
+      " The field attributes (VANZ) only go in through the change call.
+      CALL FUNCTION 'RS_CHANGE_CREATED_VARIANT_255'
+        EXPORTING
+          curr_report   = name
+          curr_variant  = <vari>-variant
+          vari_desc     = varid
+        TABLES
+          vari_contents = values
+          vari_text     = texts
+          objects       = objects
+        EXCEPTIONS
+          OTHERS        = 1.
+      IF sy-subrc <> 0.
+        emit_symsg( ).
+        emit( kind = 'ERR' text = |The attributes of variant { <vari>-variant } of { name } could not be saved (RS_CHANGE_CREATED_VARIANT_255).| ).
+        emit_rc( 4 ).
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    emit_rc( 0 ).
   ENDMETHOD.
 
 

@@ -4,6 +4,7 @@
 
 #include "../../test/mocks/mock_adt_session.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -177,6 +178,7 @@ public:
     std::string changed_by = "DEVELOPER";
     std::map<std::string, std::string> part_changed_by;  // file[#SECTION] -> user
     std::vector<std::string> pending;  // reported as inactive leftovers
+    bool after_activation = false;     // also plans a write that needs it active (variants)
 
     std::string Type() const override { return type_; }
     std::vector<EngineOp> ReadOps(const AbapGitObjectKey& key,
@@ -210,6 +212,11 @@ public:
             plan.writes.push_back({put, "Writing " + key.name});
             if (phase_ == "write") {
                 plan.activate.push_back({"", "REPS", key.name});
+            }
+            if (after_activation) {
+                plan.after_activation.push_back(
+                    {{"fake_after( '" + type_ + "' '" + key.name + "' ).", ""},
+                     "Writing the variants of " + key.name});
             }
         } else {
             const std::string name = key.name;
@@ -311,6 +318,12 @@ struct Fixture {
     Fixture() {
         handler->system = &system;
         engine.execute = [this](const EngineOp& op) {
+            if (op.call.rfind("fake_after(", 0) == 0) {
+                log.push_back("AFTER " + Between(op.call, "' '", "'"));
+                EngineOpResult r;
+                r.rc = 0;
+                return r;
+            }
             // fake_put( 'TYPE' 'NAME' ).
             const auto type = Between(op.call, "fake_put( '", "'");
             const auto name = Between(op.call, "' '", "'");
@@ -1236,6 +1249,40 @@ TEST_CASE("abapGit batching: what activation leaves inactive fails its own objec
     CHECK(report.objects[4].message.empty());
     CHECK(report.objects[5].action == ObjectAction::Skipped);  // its program is not active
     CHECK(report.ExitCode() == 5);
+}
+
+TEST_CASE("abapGit batching: writes that need their object active run after the activation",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    f.prog->after_activation = true;
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK_FALSE(report.Failed());
+    REQUIRE(f.engine.runs.size() == 3);
+    CHECK(BatchFixture::Calls(f.engine.runs[2]) ==
+          std::vector<std::string>{"fake_put( 'PROG' 'ZP_A' ).", "fake_put( 'PROG' 'ZP_B' ).",
+                                   "activate_objects( ).", "fake_put( 'TRAN' 'ZT_A' ).",
+                                   "fake_after( 'PROG' 'ZP_A' ).",
+                                   "fake_after( 'PROG' 'ZP_B' )."});
+    // Guarded by its own object: skipped when that object failed.
+    const auto& last = f.engine.runs[2].back().call;
+    CHECK(last.find("op_owner = 'PROG ZP_B' requires = 'PROG ZP_B'") != std::string::npos);
+}
+
+TEST_CASE("abapGit batching: a write after the activation is skipped when the activation failed",
+          "[workflow][abapgit_deploy][batch]") {
+    BatchFixture f;
+    f.prog->after_activation = true;
+    f.engine.fail_activation_for = {"PROG ZP_A"};
+
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+
+    CHECK(report.objects[3].action == ObjectAction::Failed);
+    CHECK(report.objects[3].error->category == ErrorCategory::ActivationError);
+    CHECK(report.objects[4].action == ObjectAction::Created);
+    CHECK(std::find(f.log.begin(), f.log.end(), "AFTER ZP_A") == f.log.end());
+    CHECK(std::find(f.log.begin(), f.log.end(), "AFTER ZP_B") != f.log.end());
 }
 
 TEST_CASE("abapGit batching: a run that fails as a whole fails every object in it",
