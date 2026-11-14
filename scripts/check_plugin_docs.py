@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""scripts/check_plugin_docs.py -- keep the Claude Code plugin honest (offline, no SAP).
+"""scripts/check_plugin_docs.py -- keep the Claude Code plugin's command lines spelled right (offline, no SAP).
 
 For every `erpl-adt …` command line in a ```bash fence or backtick span of plugins/erpl-adt/**.md:
-  * `erpl-adt <command> [<action>] --help` must succeed (the command exists), and
-  * every `--flag` on the line must appear in that help text or in the global flags.
+  * the command (and, for a command group, its action) must exist: `erpl-adt <command> [<action>] --help` must
+    print that command's own usage, and
+  * every `--flag` must appear as a whole token in that help or in the GLOBAL FLAGS section of the top-level help.
 Every backticked `erpl-adt-*` skill and `/erpl-adt:*` command must exist in the plugin.
+
+Scope: spelling only. It does not check workflows, sessions, output fields or exit-code semantics.
 
 Usage: python3 scripts/check_plugin_docs.py [--binary build/erpl-adt]
 Exit 0 clean, 1 on problems, 2 when the binary cannot run.
@@ -22,38 +25,83 @@ FENCE_RE = re.compile(r"^```[ \t]*([A-Za-z0-9_+-]*)[ \t]*$")
 SPAN_RE = re.compile(r"`([^`\n]*)`")
 SKILL_RE = re.compile(r"^erpl-adt-[a-z0-9-]+$")
 COMMAND_RE = re.compile(r"^/erpl-adt:([a-z0-9-]+)")
-# Commands that take an action word as their second token.
-GROUPS = {"search", "object", "source", "transport", "ddic", "package", "discover", "bw", "catalog", "screen",
-          "abapgit"}
+FLAG_RE = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
+# Global options that take a value: their value is not a command word.
+LEGACY = {"deploy", "status", "pull"}
+GLOBAL_WITH_VALUE = {"--host", "--port", "--user", "--password", "--password-env", "--client", "--language",
+                     "--timeout", "--session-file", "-c", "--config"}
 
 
-def help_text(binary, args, cache):
+def run_help(binary, args, cache):
     key = tuple(args)
     if key not in cache:
         try:
             r = subprocess.run([binary] + args + ["--help"], capture_output=True, text=True, timeout=30)
-        except OSError as e:
+        except (OSError, subprocess.TimeoutExpired) as e:
             print(f"ERROR: cannot run {binary}: {e}", file=sys.stderr)
             sys.exit(2)
         cache[key] = (r.returncode, r.stdout + r.stderr)
     return cache[key]
 
 
+def section(text, title):
+    """Lines of an upper-case section (e.g. GLOBAL FLAGS) of the top-level help."""
+    out, on = [], False
+    for line in text.splitlines():
+        if line.strip() == title:
+            on = True
+            continue
+        if on and line and not line.startswith(" "):
+            break
+        if on:
+            out.append(line)
+    return "\n".join(out)
+
+
 def command_lines(text):
-    in_fence, lang = False, ""
-    for i, line in enumerate(text.splitlines()):
-        m = FENCE_RE.match(line.strip())
+    """(line number, command) for every erpl-adt invocation; joins backslash continuations."""
+    in_fence, lang, pending, start = False, "", "", 0
+    for i, raw in enumerate(text.splitlines()):
+        m = FENCE_RE.match(raw.strip())
         if m and not in_fence:
             in_fence, lang = True, m.group(1).lower()
             continue
-        if in_fence and line.strip() == "```":
+        if in_fence and raw.strip() == "```":
             in_fence = False
             continue
-        candidates = [line] if in_fence and lang in ("bash", "sh", "") else SPAN_RE.findall(line)
-        for c in candidates:
-            c = c.split("#", 1)[0].split("|", 1)[0].split(">", 1)[0].strip().rstrip("\\").strip()
-            if c.startswith("erpl-adt ") or c.startswith("uvx erpl-adt "):
-                yield i + 1, c.replace("uvx erpl-adt", "erpl-adt", 1)
+        if in_fence and lang in ("bash", "sh", ""):
+            line = (pending + " " + raw.strip()) if pending else raw.strip()
+            if not pending:
+                start = i + 1
+            if line.endswith("\\"):
+                pending = line[:-1].strip()
+                continue
+            pending = ""
+            candidates = [(start, line)]
+        elif not in_fence:
+            candidates = [(i + 1, s) for s in SPAN_RE.findall(raw)]
+        else:
+            continue
+        for n, c in candidates:
+            c = re.split(r"\s#|\s\|\s|\s>", " " + c)[0].strip()
+            c = re.sub(r"<[^>]*>", "X", c)                      # placeholders like <handle>
+            c = c.replace("uvx erpl-adt", "erpl-adt", 1)
+            if c.startswith("erpl-adt ") and not c.startswith("erpl-adt-"):
+                yield n, c
+
+
+def command_words(tokens):
+    words, skip = [], False
+    for t in tokens:
+        if skip:
+            skip = False
+            continue
+        if t.startswith("-"):
+            if "=" not in t and t in GLOBAL_WITH_VALUE:
+                skip = True
+            continue
+        words.append(t)
+    return words
 
 
 def main():
@@ -61,13 +109,16 @@ def main():
     ap.add_argument("--binary", default=os.path.join(REPO, "build", "erpl-adt"))
     args = ap.parse_args()
     cache = {}
-    rc, global_help = help_text(args.binary, [], cache)
+    rc, top = run_help(args.binary, [], cache)
     if rc != 0:
         print(f"ERROR: {args.binary} --help failed", file=sys.stderr)
         return 2
+    global_flags = section(top, "GLOBAL FLAGS")
+    # Command groups are the commands that the top-level help lists with an action ("  bw lock …").
+    groups = {m.group(1) for m in re.finditer(r"^  ([a-z]+) [a-z][a-z-]* ", top, re.M)}
     skills = set(os.listdir(os.path.join(PLUGIN, "skills")))
-    commands = {f[:-3] for f in os.listdir(os.path.join(PLUGIN, "commands"))} if os.path.isdir(
-        os.path.join(PLUGIN, "commands")) else set()
+    cmd_dir = os.path.join(PLUGIN, "commands")
+    commands = {f[:-3] for f in os.listdir(cmd_dir)} if os.path.isdir(cmd_dir) else set()
     problems, checked = [], 0
     for base, _, names in os.walk(PLUGIN):
         for name in sorted(names):
@@ -90,18 +141,24 @@ def main():
                     tokens = shlex.split(cmd)[1:]
                 except ValueError:
                     tokens = cmd.split()[1:]
-                words = [t for t in tokens if not t.startswith("-")]
+                words = command_words(tokens)
                 if not words:
                     continue
-                path_args = words[:2] if words[0] in GROUPS and len(words) > 1 else words[:1]
-                rc, text_help = help_text(args.binary, path_args, cache)
+                target = words[:2] if words[0] in groups and len(words) > 1 else words[:1]
+                if any(w == "X" or "…" in w for w in target):
+                    continue                                    # a placeholder, e.g. `erpl-adt bw <action> --help`
+                rc, help_out = run_help(args.binary, target, cache)
                 checked += 1
-                if rc != 0 or "Unknown" in text_help.splitlines()[0:1]:
-                    problems.append(f"{rel}:{line_no}\t`erpl-adt {' '.join(path_args)}` has no help: {cmd}")
+                usage = f"erpl-adt {' '.join(target)}"
+                # The legacy deploy workflow (deploy/status/pull) prints a generic argparse usage line.
+                legacy = target[0] in LEGACY and "Usage: erpl-adt [" in help_out
+                if rc != 0 or (usage not in help_out and not legacy):
+                    problems.append(f"{rel}:{line_no}\t`{usage}` is not a command: {cmd}")
                     continue
-                for flag in re.findall(r"(?<!\S)(--[a-z][a-z0-9-]*)", cmd):
-                    if flag not in text_help and flag not in global_help:
-                        problems.append(f"{rel}:{line_no}\tunknown flag {flag} for erpl-adt {' '.join(path_args)}")
+                known = set(FLAG_RE.findall(help_out)) | set(FLAG_RE.findall(global_flags))
+                for flag in FLAG_RE.findall(cmd):
+                    if flag not in known:
+                        problems.append(f"{rel}:{line_no}\tunknown flag {flag} for {usage}")
     print("\n".join(problems))
     print(f"check_plugin_docs: {checked} command lines checked, {len(problems)} problems")
     return 1 if problems else 0

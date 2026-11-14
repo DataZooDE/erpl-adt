@@ -55,5 +55,5 @@ clean:
 # Check the Claude Code plugin (plugins/erpl-adt/): every `erpl-adt …` line must name a real
 # command and only flags its --help lists; every skill/command reference must exist.
 .PHONY: check-plugin
-check-plugin: release
+check-plugin:
 	python3 scripts/check_plugin_docs.py --binary $(BUILD_DIR)/erpl-adt

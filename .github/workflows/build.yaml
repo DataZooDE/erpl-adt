@@ -128,6 +128,10 @@ jobs:
         if: runner.os != 'Windows'
         run: python3 scripts/ci/webui_smoke.py --binary build/erpl-adt
 
+      - name: Check the Claude Code plugin against the binary
+        if: runner.os != 'Windows'
+        run: python3 scripts/check_plugin_docs.py --binary build/erpl-adt
+
       - name: Webui smoke test (Windows)
         if: runner.os == 'Windows'
         shell: bash

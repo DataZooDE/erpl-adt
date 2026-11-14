@@ -2,8 +2,8 @@
 name: erpl-adt-develop
 description: >
   Developing ABAP from the shell with erpl-adt: finding objects (erpl-adt search --type, package list/tree,
-  object read), reading and writing source (source read --version --section, source write --file --activate,
-  source edit, source check), activation (activate), ABAP Unit (test) and ATC (check --variant), creating objects
+  object read), reading and writing source (source read --version --section, source write --file, then activate;
+  source check), activation (activate), ABAP Unit (test) and ATC (check --variant), creating objects
   (object create --type CLAS/OC, PROG/P, INTF/OI, DDLS/DF, TABL/DT, BDEF/BDO, SRVD/SRV, SRVB/SVB with binding
   flags), deleting, locks (object lock/unlock, --session-file), running console classes (object run for
   IF_OO_ADT_CLASSRUN), DDIC inspection (ddic table, ddic cds) and the ABAP Cloud rules agent-written code must
@@ -14,19 +14,24 @@ user-invocable: false
 
 # erpl-adt — ABAP Development Cheat Sheet
 
-Always add `--json` when an agent parses the output. Names resolve to ADT URIs (`ZCL_FOO` →
-`/sap/bc/adt/oo/classes/zcl_foo`); pass `--type` when a name is ambiguous.
+Always add `--json` when an agent parses the output, and judge results by its fields (see `erpl-adt-setup`).
+Names resolve to ADT URIs (`ZCL_FOO` → `/sap/bc/adt/oo/classes/zcl_foo`); when a name is ambiguous, find the URI
+with `search … --type` (or `source read --type`) and pass the URI.
 
 ## Critical gotchas
 
-1. **Read before you write.** `source read` first, edit a local file, then `source write --file … --activate`.
-   Writing replaces the whole section.
+1. **Read before you write.** `source read` first, edit a local file, then `source write --file …` and
+   `--json activate`. Writing replaces the whole section.
 2. **Transportable packages need `--transport`.** `$TMP` objects do not; anything else fails without a request
    (`erpl-adt-transport`).
-3. **Activation can fail after a successful write** (exit 5): the inactive version is saved — read it with
-   `--version inactive`, fix, write again.
+3. **Activation failures are in the JSON, not the exit code.** `--json activate` exits 0 with `failed > 0`
+   and `error_messages` when activation fails; the inactive version is saved — read it with
+   `--version inactive`, fix, write again. `source check` checks the *active* version only, so it cannot gate
+   code you have just written.
 4. **Lock conflicts (exit 6)**: someone (or an earlier aborted run) holds the lock. Commands lock and unlock
-   automatically; manual locks need `object unlock --handle …`.
+   automatically. A manual `object lock` → `source write --handle` → `object unlock --handle` sequence must
+   share one private `--session-file` (a global flag; the file holds session cookies — keep it outside the
+   repository and delete it afterwards).
 5. **ABAP Cloud rules for generated code**: no `MANDT` in `WHERE` (client handling is automatic); a CDS-defined
    table (`TABL/DT`) needs `@AbapCatalog.enhancement.category`, `@AbapCatalog.tableCategory`,
    `@AbapCatalog.deliveryClass` and `@AbapCatalog.dataMaintenance` before `define table`.
@@ -48,11 +53,13 @@ erpl-adt ddic cds ZERPL_APE_FLIGHT
 erpl-adt source read ZCL_MY_CLASS > zcl_my_class.abap
 erpl-adt source read ZCL_MY_CLASS --section testclasses > zcl_my_class.testclasses.abap
 # … edit …
-erpl-adt --json source check ZCL_MY_CLASS
-erpl-adt --json source write ZCL_MY_CLASS --file zcl_my_class.abap --transport A4HK900001 --activate
-erpl-adt --json test ZCL_MY_CLASS
-erpl-adt --json check ZCL_MY_CLASS --variant DEFAULT
+erpl-adt --json source write ZCL_MY_CLASS --file zcl_my_class.abap --transport A4HK900001
+erpl-adt --json activate ZCL_MY_CLASS            # failed / error_messages
+erpl-adt --json test ZCL_MY_CLASS                # all_passed / total_failed
+erpl-adt --json check ZCL_MY_CLASS --variant DEFAULT   # findings / error_count
 ```
+
+`source edit` opens `$EDITOR` — interactive, for humans only.
 
 Sections: `main`, `localdefinitions`, `localimplementations`, `testclasses` (`--section all` for reading).
 `/erpl-adt:edit-activate-test` runs this loop.

@@ -4,7 +4,8 @@ description: >
   Working with SAP BW/4HANA models from the shell with erpl-adt bw: searching and reading objects (bw search,
   bw read, read-adso, read-trfn, read-dtp, read-rsds, read-query, nodes, xref), lineage and exports
   (bw lineage, export-query / export-cube / export-area with --mermaid or --shape openmetadata, --out-dir), the
-  change cycle (bw lock, bw save, bw validate, bw activate, bw unlock, bw transport), and system information
+  change cycle in one --session-file (bw lock, bw read --version m --raw, bw save, bw activate --validate,
+  bw activate, bw unlock), and system information
   (sysinfo, dbinfo, applog, datavolumes). Use when documenting, diagramming, changing or activating BW objects
   (aDSO, transformations, DTPs, queries, CompositeProviders) outside the BW modeling tools.
 user-invocable: false
@@ -19,10 +20,15 @@ activate → unlock, with a transport where the object is transportable.
 
 1. **The BW modeling services must be active** on the system (`erpl-adt --json bw discover`). On the ABAP
    Platform Trial they are off until set up.
-2. **Changes need a lock handle.** `bw lock` returns it; pass it to `bw save`/`bw activate`/`bw delete` with
-   `--lock-handle`, and always `bw unlock` afterwards — also after a failure.
-3. **Validate before activating**: `bw activate <type> <name> --validate` runs the checks only.
-4. **Exports can be large** on a real system; scope them (`export-query`, `export-cube`) or skip parts
+2. **One session for the whole change.** `bw lock` returns a lock handle (and a timestamp) that is valid only
+   in its session: run lock, save, activate and unlock with the same `--session-file "$SESSION"` (a global
+   flag), pass `--lock-handle`, and always `bw unlock` afterwards — also after a failure. The session file holds
+   cookies and CSRF tokens: keep it in a private temp directory, never in the repository, never share it.
+3. **Validate before activating**: `bw activate <type> <name> --validate` runs the model checks only.
+   (`bw validate` is a name/existence check, not a model check.)
+4. **`bw delete` deletes immediately** — a lock handle is not consent. Confirm system, type, name and transport
+   with the user first.
+5. **Exports can be large** on a real system; scope them (`export-query`, `export-cube`) or skip parts
    (`--no-queries`, `--no-lineage`).
 
 ## Read
@@ -48,12 +54,18 @@ erpl-adt --json bw lineage <DTP_NAME>
 ## Change cycle
 
 ```bash
-erpl-adt --json bw lock ADSO ZMYADSO                          # → lock handle
-erpl-adt --json bw save ADSO ZMYADSO --lock-handle <handle> --file zmyadso.xml   # payload: see `bw save --help`
-erpl-adt --json bw activate ADSO ZMYADSO --validate --lock-handle <handle>
-erpl-adt --json bw activate ADSO ZMYADSO --lock-handle <handle> --transport A4HK900001
-erpl-adt --json bw unlock ADSO ZMYADSO
+SESSION="$(mktemp -d)/bw-session.json"
+erpl-adt --json --session-file "$SESSION" bw lock ADSO ZMYADSO          # → lock handle, timestamp
+erpl-adt --session-file "$SESSION" bw read ADSO ZMYADSO --version m --raw > zmyadso.xml   # payload to edit
+# … edit zmyadso.xml …
+erpl-adt --json --session-file "$SESSION" bw save ADSO ZMYADSO --lock-handle <handle> --file zmyadso.xml
+erpl-adt --json --session-file "$SESSION" bw activate ADSO ZMYADSO --validate --lock-handle <handle>
+erpl-adt --json --session-file "$SESSION" bw activate ADSO ZMYADSO --lock-handle <handle> --transport A4HK900001
+erpl-adt --json --session-file "$SESSION" bw unlock ADSO ZMYADSO
+rm -f "$SESSION"
 ```
+
+`bw save` also takes `--timestamp` (from the lock response).
 
 Check `erpl-adt bw <action> --help` for the exact flags of an action before scripting it.
 

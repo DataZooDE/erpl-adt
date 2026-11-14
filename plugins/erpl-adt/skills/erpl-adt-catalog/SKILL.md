@@ -17,16 +17,18 @@ user-invocable: false
 1. **`--sid` is required** on build and sync — it stamps every entity with the system id.
 2. **Scope first.** Find the packages with `erpl-adt --json search 'Z*' --type DEVC` before building; a whole
    system is a long run.
-3. **`--embed` sends entity text to the Gemini API** (needs `GEMINI_API_KEY`). Leave it off for confidential
-   systems; full-text search works without it.
-4. **The web UI binds 127.0.0.1**; binding elsewhere needs `--auth-token-env`.
+3. **Three paths send data to the Gemini API** (with `GEMINI_API_KEY` set): `catalog build --embed` and
+   `catalog annotate --embed` send entity text, and `catalog search --mode vss|hybrid` sends the query. Use
+   `--mode fts` (the default) for confidential systems and ask the user before any semantic search or embedding.
+4. **The web UI binds 127.0.0.1.** Binding elsewhere without `--auth-token-env` only produces a warning — always
+   set a token when using `--host` other than loopback.
 
 ## Build, sync, search
 
 ```bash
 erpl-adt catalog build --sid A4H --package ZTEST,ZERPL --infoarea 0D_NW_DEMO --db catalog.duckdb
 erpl-adt catalog sync catalog.duckdb --sid A4H --package ZTEST --resume
-erpl-adt --json catalog search catalog.duckdb 'flight booking' --mode fts --max 20
+erpl-adt --json catalog search catalog.duckdb 'flight booking' --mode fts --max 20   # local full-text, no Gemini
 erpl-adt catalog build --sid A4H --package ZTEST --format openmetadata > catalog.json
 ```
 

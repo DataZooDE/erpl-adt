@@ -133,8 +133,8 @@ Code session:
 
 | Command | Does |
 |---------|------|
-| `/erpl-adt:edit-activate-test` | Changes an ABAP object and reports activation, unit tests and ATC |
-| `/erpl-adt:release` | Shows a transport's contents, asks, releases |
+| `/erpl-adt:edit-activate-test` | Changes an ABAP object and reports activation, unit tests and ATC (judged by their JSON fields) |
+| `/erpl-adt:release` | Shows a transport's metadata, asks you to confirm a contents review and the release, releases |
 
 For SAP *data* in DuckDB, install the erpl plugin as well (`/plugin marketplace add DataZooDE/erpl` →
 `/plugin install erpl@erpl`). `make check-plugin` checks every command line in the plugin against the built
@@ -215,9 +215,12 @@ BW, CATALOG, MCP, LOGIN — see the sections below and `erpl-adt <command> --hel
 
 EXIT CODES
   0  Success           1  Connection/auth     2  Not found
-  3  Clone error       4  Pull error          5  Activation error
-  6  Lock conflict     7  Test failure        8  ATC check error
+  3  Clone error       4  Pull error          5  Activation error (text mode)
+  6  Lock conflict     7  Test run error      8  ATC run error
   9  Transport error   10 Timeout             99 Internal error
+
+  With --json, judge activate / test / check by their fields (failed, all_passed,
+  findings): they exit 0 whenever the run itself worked.
 ```
 
 ## MCP server
