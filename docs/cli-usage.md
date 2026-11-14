@@ -148,7 +148,7 @@ erpl-adt check ZCL_MY_CLASS --variant FUNCTIONAL_DB_ADDITION
 
 ```bash
 # List transports for a user
-erpl-adt transport list --user DEVELOPER
+erpl-adt transport list --owner DEVELOPER
 
 # Create a new transport
 erpl-adt transport create --desc "Feature X implementation" --package ZTEST_PKG
@@ -315,6 +315,11 @@ is why this is an allowlist and not a heuristic.
 
 Authentication is off unless a token is configured. Binding beyond loopback without one
 warns on stderr; `/healthz` never requires the token so liveness probes keep working.
+
+### bw, catalog, login -- see the built-in help
+
+`erpl-adt bw --help`, `erpl-adt catalog --help` and `erpl-adt login --help` list every action with its flags
+and examples; the README has an overview of each (BW/4HANA modeling, Catalog, Installation).
 
 ### deploy -- Legacy deploy workflow
 
