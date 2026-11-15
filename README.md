@@ -112,6 +112,34 @@ Alternatively, download the binary for your platform from the [latest release](h
 | macOS    | arm64, x86_64 |
 | Windows  | x64         |
 
+## Claude Code plugin
+
+erpl-adt ships a [Claude Code](https://claude.com/claude-code) plugin, so an assistant working on an SAP system
+with you drives the CLI correctly — the right flags, `--json`, exit codes, transports. Install it in any Claude
+Code session:
+
+```
+/plugin marketplace add DataZooDE/erpl-adt
+/plugin install erpl-adt@erpl-adt
+```
+
+| Skill | Covers |
+|-------|--------|
+| `erpl-adt-setup` | Install, `login` and credentials, global flags, exit codes, MCP mode |
+| `erpl-adt-develop` | Find, read, edit, check, write, activate, test, ATC, create, run console classes |
+| `erpl-adt-transport` | Transports and the YAML deploy workflow |
+| `erpl-adt-bw` | BW modeling: read, lineage, Mermaid/OpenMetadata exports, lock/save/activate |
+| `erpl-adt-catalog` | Metadata catalog: build, sync, annotate, search, web UI |
+
+| Command | Does |
+|---------|------|
+| `/erpl-adt:edit-activate-test` | Changes an ABAP object and reports activation, unit tests and ATC (judged by their JSON fields) |
+| `/erpl-adt:release` | Shows a transport's metadata, asks you to confirm a contents review and the release, releases |
+
+For SAP *data* in DuckDB, install the erpl plugin as well (`/plugin marketplace add DataZooDE/erpl` →
+`/plugin install erpl@erpl`). `make check-plugin` checks every command line in the plugin against the built
+binary's `--help`; to try local changes run `claude --plugin-dir ./plugins/erpl-adt`.
+
 ## Full reference
 
 Run `erpl-adt --help` for the complete command listing. Key commands:
@@ -157,7 +185,7 @@ TEST / CHECK
 
 TRANSPORT — List, create, and release transports
   transport create --desc <text> --package <pkg>
-  transport list [--user <user>]
+  transport list [--owner <user>]           (default: the logon user)
   transport release <number>
 
 DATA DICTIONARY — Tables and CDS views
@@ -183,9 +211,16 @@ GLOBAL FLAGS
   --session-file <path>                   Persist session for lock/write/unlock workflows
   -v / -vv                                INFO / DEBUG logging
 
+BW, CATALOG, MCP, LOGIN — see the sections below and `erpl-adt <command> --help`
+
 EXIT CODES
-  0  Success   1  Connection/auth/authorization   2  Not found   5  Activation error
-  6  Lock conflict   7  Test failure   8  ATC check error   99  Internal error
+  0  Success           1  Connection/auth     2  Not found
+  3  Clone error       4  Pull error          5  Activation error (text mode)
+  6  Lock conflict     7  Test run error      8  ATC run error
+  9  Transport error   10 Timeout             99 Internal error
+
+  With --json, judge activate / test / check by their fields (failed, all_passed,
+  findings): they exit 0 whenever the run itself worked.
 ```
 
 ## MCP server

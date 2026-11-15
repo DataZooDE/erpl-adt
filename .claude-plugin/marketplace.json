@@ -1,0 +1,16 @@
+{
+  "name": "erpl-adt",
+  "description": "Claude Code plugin for erpl-adt — ABAP and BW development on SAP from the command line.",
+  "owner": {
+    "name": "DataZoo GmbH",
+    "url": "https://github.com/DataZooDE"
+  },
+  "plugins": [
+    {
+      "name": "erpl-adt",
+      "source": "./plugins/erpl-adt",
+      "description": "Skills and commands for erpl-adt, the CLI for SAP's ADT REST API: connect, read and change ABAP objects, activate, test and run ATC, manage transports, model BW objects, and build a searchable metadata catalog.",
+      "keywords": ["sap", "abap", "adt", "bw", "cli", "transport", "claude-code"]
+    }
+  ]
+}
