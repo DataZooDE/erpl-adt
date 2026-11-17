@@ -1,0 +1,10 @@
+PROCESS BEFORE OUTPUT.
+  MODULE status_0200.
+  CALL SUBSCREEN sub_items INCLUDING sy-repid '0210'.
+  CALL SUBSCREEN sub_notes INCLUDING sy-repid '0220'.
+
+PROCESS AFTER INPUT.
+  MODULE exit_command AT EXIT-COMMAND.
+  CALL SUBSCREEN sub_items.
+  CALL SUBSCREEN sub_notes.
+  MODULE user_command_0200.

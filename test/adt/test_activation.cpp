@@ -579,3 +579,55 @@ TEST_CASE("ActivateObject: legacy activationResultList format - activation_execu
     CHECK(result.Value().activation_executed == false);
     CHECK(result.Value().failed == 0);
 }
+
+// ===========================================================================
+// ActivationParamsFromObjectUri — type/name for source write --activate
+// ===========================================================================
+
+TEST_CASE("ActivationParamsFromObjectUri: function module is FUGR/FF with the module name",
+          "[adt][activation][uri]") {
+    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zfg/fmodules/z_fm");
+    CHECK(p.uri == "/sap/bc/adt/functions/groups/zfg/fmodules/z_fm");
+    CHECK(p.type == "FUGR/FF");
+    CHECK(p.name == "Z_FM");
+    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/zfg");
+}
+
+TEST_CASE("ActivationParamsFromObjectUri: function group include is FUGR/I",
+          "[adt][activation][uri]") {
+    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zfg/includes/lzfgtop");
+    CHECK(p.type == "FUGR/I");
+    CHECK(p.name == "LZFGTOP");
+    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/zfg");
+}
+
+TEST_CASE("ActivationParamsFromObjectUri: function group itself stays FUGR/F",
+          "[adt][activation][uri]") {
+    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zfg");
+    CHECK(p.type == "FUGR/F");
+    CHECK(p.name == "ZFG");
+    CHECK(p.parent_uri.empty());
+    auto main = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zfg/source/main");
+    CHECK(main.type == "FUGR/F");
+    CHECK(main.name == "ZFG");
+}
+
+TEST_CASE("ActivationParamsFromObjectUri: namespaced names are decoded",
+          "[adt][activation][uri]") {
+    auto p = ActivationParamsFromObjectUri(
+        "/sap/bc/adt/functions/groups/%2fdmo%2ffg/fmodules/%2fdmo%2ffm");
+    CHECK(p.type == "FUGR/FF");
+    CHECK(p.name == "/DMO/FM");
+    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/%2fdmo%2ffg");
+}
+
+TEST_CASE("ActivationParamsFromObjectUri: other object types", "[adt][activation][uri]") {
+    CHECK(ActivationParamsFromObjectUri("/sap/bc/adt/oo/classes/zcl_x").type == "CLAS/OC");
+    CHECK(ActivationParamsFromObjectUri("/sap/bc/adt/oo/classes/zcl_x").name == "ZCL_X");
+    CHECK(ActivationParamsFromObjectUri("/sap/bc/adt/programs/includes/zincl").type == "PROG/I");
+    CHECK(ActivationParamsFromObjectUri("/sap/bc/adt/ddic/ddl/sources/zi_x").type == "DDLS/DF");
+    auto unknown = ActivationParamsFromObjectUri("/sap/bc/adt/unknown/thing/x");
+    CHECK(unknown.uri == "/sap/bc/adt/unknown/thing/x");
+    CHECK(unknown.type.empty());
+    CHECK(unknown.name.empty());
+}

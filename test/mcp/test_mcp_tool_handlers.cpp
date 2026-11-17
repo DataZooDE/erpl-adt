@@ -1325,6 +1325,7 @@ TEST_CASE("The destructive tools are exactly the reviewed set",
         "adt_write_source",   "adt_delete_object", "adt_release_transport",
         "bw_save_object",     "bw_delete_object",  "bw_delete_lock",
         "bw_clear_favorites", "bw_move_requests",
+        "abapgit_deploy",     "abapgit_export",    "abapgit_delete",
     };
 
     std::set<std::string> actual;

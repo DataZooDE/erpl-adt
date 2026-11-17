@@ -1,0 +1,6 @@
+# Byte-exact files: abapGit serializations are compared byte for byte, and the
+# ABAP engine parts are composed by line markers. A CRLF checkout (Windows
+# core.autocrlf) would break both, so these are never converted.
+src/abap/** -text
+test/testdata/abapgit/** -text
+test/integration_py/fixtures/abapgit/** -text

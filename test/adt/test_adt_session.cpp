@@ -1104,7 +1104,7 @@ TEST_CASE("AdtSession: leaving stateful mode closes the server session",
 
     svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
         std::lock_guard<std::mutex> lock(mu);
-        if (req.has_param("sap-sessioncmd") && req.get_param_value("sap-sessioncmd") == "close") {
+        if (req.path == "/sap/public/bc/icf/logoff") {
             close_cookies.push_back(req.get_header_value("Cookie"));
             close_session_types.push_back(req.get_header_value("X-sap-adt-sessiontype"));
             closed = true;
@@ -1142,7 +1142,7 @@ TEST_CASE("AdtSession: no close request when no stateful session was opened",
     httplib::Server svr;
     std::atomic<int> closes{0};
     svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
-        if (req.has_param("sap-sessioncmd")) {
+        if (req.path == "/sap/public/bc/icf/logoff") {
             ++closes;
         }
         res.set_content("<ok/>", "application/xml");
@@ -1158,4 +1158,95 @@ TEST_CASE("AdtSession: no close request when no stateful session was opened",
     session->SetStateful(false);
 
     CHECK(closes.load() == 0);
+}
+
+// ===========================================================================
+// Ending the logon (security) session
+//
+// Every AdtSession logs on once and keeps SAP's SAP_SESSIONID_<SID>_<CLIENT>
+// cookie. Left alone, SAP keeps that logon until rdisp/plugin_auto_logout
+// (30 min); a CI job or test suite running a few hundred erpl-adt commands
+// as one user then exhausts the per-user logon limit and every request is
+// answered "429 Too Many Logons" (observed on A4H). A session that nobody
+// will reuse logs off when it is destroyed.
+// ===========================================================================
+
+namespace {
+
+struct LogoffServer {
+    httplib::Server svr;
+    std::mutex mu;
+    std::vector<std::string> logoff_cookies;
+    int requests = 0;
+
+    explicit LogoffServer(bool set_logon_cookie) {
+        svr.Get(".*", [this, set_logon_cookie](const httplib::Request& req,
+                                                httplib::Response& res) {
+            std::lock_guard<std::mutex> lock(mu);
+            ++requests;
+            if (req.path == "/sap/public/bc/icf/logoff") {
+                logoff_cookies.push_back(req.get_header_value("Cookie"));
+            } else if (set_logon_cookie) {
+                res.set_header("Set-Cookie", "SAP_SESSIONID_A4H_001=LOGON-1; path=/");
+            }
+            res.set_content("<ok/>", "application/xml");
+        });
+    }
+};
+
+}  // namespace
+
+TEST_CASE("AdtSession: destroying the session logs off its logon session",
+          "[adt][session][logoff]") {
+    LogoffServer s(true);
+    LocalServer server(s.svr);
+    {
+        auto session = MakeTestSession(server.Port());
+        REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+    }
+    std::lock_guard<std::mutex> lock(s.mu);
+    REQUIRE(s.logoff_cookies.size() == 1);
+    // The logoff is sent inside the logon it ends.
+    CHECK(s.logoff_cookies[0].find("SAP_SESSIONID_A4H_001=LOGON-1") != std::string::npos);
+}
+
+TEST_CASE("AdtSession: no logoff without a logon session",
+          "[adt][session][logoff]") {
+    LogoffServer s(false);
+    LocalServer server(s.svr);
+    {
+        auto session = MakeTestSession(server.Port());
+        REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+    }
+    {
+        // Never talked to the server: nothing to end, no request at all.
+        auto unused = MakeTestSession(server.Port());
+    }
+    std::lock_guard<std::mutex> lock(s.mu);
+    CHECK(s.logoff_cookies.empty());
+    CHECK(s.requests == 1);
+}
+
+TEST_CASE("AdtSession: a session saved to or loaded from a file stays logged on",
+          "[adt][session][logoff]") {
+    LogoffServer s(true);
+    LocalServer server(s.svr);
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("erpl_adt_logoff_" + std::to_string(server.Port()) + ".json"))
+                          .string();
+    {
+        // lock --session-file: the next command continues this logon.
+        auto session = MakeTestSession(server.Port());
+        REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+        REQUIRE(session->SaveSession(path).IsOk());
+    }
+    {
+        // write --session-file: still the same logon, still needed by unlock.
+        auto session = MakeTestSession(server.Port());
+        REQUIRE(session->LoadSession(path).IsOk());
+        REQUIRE(session->Get("/sap/bc/adt/discovery").IsOk());
+    }
+    std::filesystem::remove(path);
+    std::lock_guard<std::mutex> lock(s.mu);
+    CHECK(s.logoff_cookies.empty());
 }

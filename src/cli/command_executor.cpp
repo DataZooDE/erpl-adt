@@ -4,6 +4,7 @@
 #include <erpl_adt/cli/login_wizard.hpp>
 #include <erpl_adt/cli/output_formatter.hpp>
 #include <erpl_adt/core/ansi.hpp>
+#include <erpl_adt/core/log.hpp>
 #include <erpl_adt/core/telemetry.hpp>
 #include <erpl_adt/core/terminal.hpp>
 
@@ -58,10 +59,16 @@
 #include <erpl_adt/adt/xml_codec.hpp>
 #include <erpl_adt/workflow/lock_workflow.hpp>
 #include <erpl_adt/workflow/screen_workflow.hpp>
+#include <erpl_adt/workflow/abapgit_deploy.hpp>
+#include <erpl_adt/app/abapgit_command.hpp>
+#include <erpl_adt/workflow/classrun_helper.hpp>
+#include <erpl_adt/adt/abapgit_repo.hpp>
+#include <erpl_adt/adt/abapgit_xml.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -147,62 +154,7 @@ inline std::string SectionUriSegment(const std::string& section) {
 
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
-    "transport", "ddic", "package", "discover", "catalog", "screen"};
-
-// ---------------------------------------------------------------------------
-// DeriveActivationParamsFromUri
-//
-// Extracts type and name from a well-known ADT object URI without an extra
-// HTTP round-trip.  Used by source write/edit --activate so the activation
-// XML carries adtcore:type and adtcore:name, which SAP requires to generate
-// the DDIC artefact (e.g. a DDIC VIEW for DDLS/DF).
-// ---------------------------------------------------------------------------
-struct UriTypeMapping {
-    const char* path_segment; // segment after "/sap/bc/adt/"
-    const char* type;
-};
-
-static const UriTypeMapping kUriTypeMap[] = {
-    {"programs/programs/",  "PROG/P"},
-    {"oo/classes/",         "CLAS/OC"},
-    {"oo/interfaces/",      "INTF/OI"},
-    {"programs/includes/",  "PROG/I"},
-    {"functions/groups/",   "FUGR/F"},
-    {"packages/",           "DEVC/K"},
-    {"ddic/ddl/sources/",   "DDLS/DF"},
-    {"ddic/tables/",        "TABL/DT"},
-    {"ddic/dataelements/",  "DTEL/DE"},
-    {"messageclass/",       "MSAG/N"},
-};
-
-ActivateObjectParams DeriveActivationParamsFromUri(const std::string& obj_uri) {
-    ActivateObjectParams params;
-    params.uri = obj_uri;
-
-    const std::string base = "/sap/bc/adt/";
-    if (obj_uri.substr(0, base.size()) != base) {
-        return params;
-    }
-    const std::string tail = obj_uri.substr(base.size());
-
-    for (const auto& m : kUriTypeMap) {
-        const std::string seg(m.path_segment);
-        if (tail.size() > seg.size() && tail.substr(0, seg.size()) == seg) {
-            params.type = m.type;
-            std::string raw_name = tail.substr(seg.size());
-            // Strip any trailing path segments (e.g. "/source/main").
-            auto slash = raw_name.find('/');
-            if (slash != std::string::npos) {
-                raw_name = raw_name.substr(0, slash);
-            }
-            std::transform(raw_name.begin(), raw_name.end(), raw_name.begin(),
-                           [](unsigned char c) { return std::toupper(c); });
-            params.name = std::move(raw_name);
-            break;
-        }
-    }
-    return params;
-}
+    "transport", "ddic", "package", "discover", "catalog", "screen", "abapgit"};
 
 constexpr const char* kCredsFile = ".adt.creds";
 
@@ -1486,6 +1438,174 @@ int HandleScreenDelete(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
+// abapgit deploy / export / status / delete
+//
+// Classic GUI objects (dynpros, GUI status, transactions, domains, text
+// pools, function modules) deployed from abapGit-serialized files. The
+// logic lives in workflow/abapgit_deploy.hpp; these handlers only resolve
+// the files, build the sessions and print the report.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> SplitObjectSpecs(const std::string& csv) {
+    std::vector<std::string> parts;
+    std::stringstream ss(csv);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        auto first = item.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            auto last = item.find_last_not_of(" \t");
+            parts.push_back(item.substr(first, last - first + 1));
+        }
+    }
+    return parts;
+}
+
+ClassrunHelperOptions AbapGitHelperOptions(const CommandArgs& args) {
+    ClassrunHelperOptions helper;
+    helper.helper_class = MakeHelperClassName();
+    helper.package = HasFlag(args, "helper-package") ? GetFlag(args, "helper-package") : "$TMP";
+    helper.description = "Temporary erpl-adt abapgit helper (safe to delete)";
+    helper.keep_helper = HasFlag(args, "keep-helper");
+    return helper;
+}
+
+const char* kAbapGitUsagePath = "<path> is an abapGit repository folder (with .abapgit.xml) "
+                                "or a single object file such as src/zfoo.prog.xml";
+
+// The shared abapgit command (app/abapgit_command.hpp) behind a CLI front:
+// flags -> request, two sessions, report -> stdout.
+int RunAbapGitCli(AbapGitCommand command, const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    if (args.positional.empty()) {
+        const std::string usage =
+            command == AbapGitCommand::Export
+                ? std::string("Missing <dir>. Usage: erpl-adt abapgit export <dir> --package <PKG> "
+                              "[--object TYPE:NAME,...]")
+                : "Missing <path>. Usage: erpl-adt abapgit " + ToString(command) +
+                      " <path> --package <PKG>. " + kAbapGitUsagePath;
+        fmt.PrintError(MakeValidationError(usage));
+        return 99;
+    }
+    AbapGitRequest request;
+    request.path = args.positional[0];
+    request.package = GetFlag(args, "package");
+    request.transport = GetFlag(args, "transport");
+    request.dry_run = HasFlag(args, "dry-run");
+    request.force = HasFlag(args, "force");
+    request.strict = HasFlag(args, "strict");
+    request.objects = SplitObjectSpecs(GetFlag(args, "object"));
+    request.master_language = GetFlag(args, "master-language");
+    auto prepared = PrepareAbapGitRun(command, request);
+    if (prepared.IsErr()) {
+        fmt.PrintError(prepared.Error());
+        return prepared.Error().ExitCode();
+    }
+    auto run = std::move(prepared).Value();
+    if (!JsonMode(args) && IsStderrTty()) {
+        run.options.progress = [](const std::string& line) { std::cerr << line << std::endl; };
+    }
+
+    auto session = CreateSession(args);
+    if (session.IsErr()) {
+        fmt.PrintError(session.Error());
+        return session.Error().ExitCode();
+    }
+    // Separate session for classrun — see workflow/classrun_helper.hpp.
+    auto classrun_session = CreateSession(args);
+    if (classrun_session.IsErr()) {
+        fmt.PrintError(classrun_session.Error());
+        return classrun_session.Error().ExitCode();
+    }
+    auto creds = LoadCredentials();
+    const std::string system =
+        ResolveConnectionSetting(args, "host", "HOST", creds ? creds->host : "", "localhost") +
+        ":" +
+        ResolveConnectionSetting(args, "port", "PORT",
+                                 creds ? std::to_string(creds->port) : "", "50000") +
+        "/" + ResolveConnectionSetting(args, "client", "CLIENT", creds ? creds->client : "", "001");
+    const auto report = RunAbapGit(run, *session.Value(), *classrun_session.Value(),
+                                   AbapGitHelperOptions(args), system,
+                                   DeployRecordDirectory(run));
+    if (fmt.IsJsonMode()) {
+        fmt.PrintJson(AbapGitReportJson(run, report).dump());
+    } else {
+        std::cout << AbapGitReportText(run, report) << std::endl;
+    }
+    // The most severe object decides (see AbapGitRunReport::MostSevereError);
+    // status reports refusals without failing unless --strict.
+    return AbapGitExitCode(run, report);
+}
+
+}  // namespace
+
+int HandleAbapGitDeploy(const CommandArgs& args) {
+    return RunAbapGitCli(AbapGitCommand::Deploy, args);
+}
+
+int HandleAbapGitCleanup(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    int minutes = 60;
+    if (HasFlag(args, "older-than")) {
+        // The whole value must be a number of minutes: "10x" is a typo, not 10.
+        const std::string value = GetFlag(args, "older-than");
+        const auto parsed =
+            std::from_chars(value.data(), value.data() + value.size(), minutes);
+        if (value.empty() || parsed.ec != std::errc() ||
+            parsed.ptr != value.data() + value.size() || minutes < 0) {
+            fmt.PrintError(MakeValidationError("Invalid --older-than '" + value +
+                                               "': expected minutes, e.g. 60"));
+            return 99;
+        }
+    }
+    auto created = CreateSession(args);
+    if (created.IsErr()) {
+        fmt.PrintError(created.Error());
+        return created.Error().ExitCode();
+    }
+    auto session = std::move(created).Value();
+    auto report = CleanupStaleHelpers(*session, session->LogonUserName(),
+                                      std::chrono::minutes(minutes));
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j;
+        j["deleted"] = report.deleted;
+        j["kept"] = report.kept;
+        j["failed"] = nlohmann::json::array();
+        for (const auto& [name, reason] : report.failed) {
+            j["failed"].push_back({{"name", name}, {"reason", reason}});
+        }
+        fmt.PrintJson(j.dump());
+    } else {
+        std::ostringstream out;
+        for (const auto& n : report.deleted) {
+            out << "deleted  " << n << "\n";
+        }
+        for (const auto& [name, reason] : report.failed) {
+            out << "failed   " << name << "  " << reason << "\n";
+        }
+        out << report.deleted.size() << " deleted, " << report.kept.size()
+            << " kept (younger than " << minutes << " min or not yours), " << report.failed.size()
+            << " failed";
+        std::cout << out.str() << std::endl;
+    }
+    return report.failed.empty() ? 0 : 6;
+}
+
+int HandleAbapGitStatus(const CommandArgs& args) {
+    return RunAbapGitCli(AbapGitCommand::Status, args);
+}
+
+int HandleAbapGitDelete(const CommandArgs& args) {
+    return RunAbapGitCli(AbapGitCommand::Delete, args);
+}
+
+int HandleAbapGitExport(const CommandArgs& args) {
+    return RunAbapGitCli(AbapGitCommand::Export, args);
+}
+
+
+// ---------------------------------------------------------------------------
 // object lock
 // ---------------------------------------------------------------------------
 int HandleObjectLock(const CommandArgs& args) {
@@ -2054,7 +2174,7 @@ int HandleSourceWrite(const CommandArgs& args) {
 
     // Optional activation after successful write.
     if (HasFlag(args, "activate") && !obj_uri_for_activate.empty()) {
-        auto act_params = DeriveActivationParamsFromUri(obj_uri_for_activate);
+        auto act_params = ActivationParamsFromObjectUri(obj_uri_for_activate);
         auto act_result = ActivateObject(*session, act_params);
         if (act_result.IsErr()) {
             fmt.PrintError(act_result.Error());
@@ -7012,7 +7132,7 @@ int RunSourceEdit(IAdtSession& session,
 
     // 8. Optional activation.
     if (activate && !obj_uri.empty()) {
-        auto act_params = DeriveActivationParamsFromUri(obj_uri);
+        auto act_params = ActivationParamsFromObjectUri(obj_uri);
         auto act_result = ActivateObject(session, act_params);
         if (act_result.IsErr()) {
             fmt.PrintError(act_result.Error());
@@ -7092,7 +7212,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     // Group ordering.
     const std::vector<std::string> group_order = {
         "search", "object", "source", "activate", "test", "check",
-        "transport", "ddic", "package", "discover", "bw", "catalog", "screen"};
+        "transport", "ddic", "package", "discover", "bw", "catalog", "screen", "abapgit"};
 
     // Group display names and short descriptions (overrides for cleaner display).
     struct GroupMeta {
@@ -7113,6 +7233,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"bw",        {"BW", "SAP BW/4HANA Modeling operations"}},
         {"catalog",   {"CATALOG", "Unified cross-domain metadata catalog"}},
         {"screen",    {"SCREEN", "Disposable classic Dynpro (Screen Painter) screens"}},
+        {"abapgit",   {"ABAPGIT", "Deploy/export classic objects (dynpros, GUI status, transactions, ...) from abapGit files"}},
     };
 
     // Pre-compute max left-column width across ALL groups for alignment.
@@ -7710,6 +7831,141 @@ void RegisterAllCommands(CommandRouter& router) {
     }
 
     // -----------------------------------------------------------------------
+    // abapgit deploy / status / export / delete
+    // -----------------------------------------------------------------------
+    router.SetGroupDescription(
+        "abapgit",
+        "Deploy and export classic objects (dynpros, GUI status, transactions, domains, "
+        "text pools, function modules) from abapGit files");
+    // A typo in a safety flag (--dryrun) must fail, not run destructively.
+    router.SetStrictFlags("abapgit");
+    router.SetGroupExamples("abapgit", {
+        "$ erpl-adt abapgit status ./my-repo --package ZDEMO --transport A4HK900042",
+        "$ erpl-adt abapgit deploy ./my-repo --package ZDEMO --transport A4HK900042",
+        "$ erpl-adt abapgit deploy ./my-repo/src/zdemo.prog.xml --package '$TMP'",
+        "$ erpl-adt abapgit export ./my-repo --package ZDEMO",
+        "$ erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZDEMO,TRAN:ZDEMO",
+        "$ erpl-adt abapgit cleanup    # helper classes left by interrupted runs",
+    });
+    {
+        const std::string how_it_works =
+            "ADT has no REST endpoint for classic GUI objects. erpl-adt calls the "
+            "workbench function modules SE51/SE41/SE93/SE11 use (RPY_DYNPRO_INSERT, "
+            "RS_CUA_INTERNAL_WRITE, RPY_TRANSACTION_INSERT, DDIF_DOMA_PUT, ...) from a "
+            "temporary helper class in $TMP, which is deleted afterwards. Changes are "
+            "recorded on --transport like in the GUI tools; objects are locked while they "
+            "are written. Only customer objects (Y*, Z*, registered /NAMESPACE/) are touched.";
+        const std::vector<FlagHelp> common = {
+            {"package", "<pkg>", "Target package (root package of the repository)", true},
+            {"transport", "<request>", "Workbench request; required for transportable packages", false},
+            {"helper-package", "<pkg>", "Local package for the temporary helper class (default $TMP)", false},
+            {"keep-helper", "", "Keep the temporary helper class (for debugging)", false},
+        };
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit deploy <path> --package <PKG> [--transport <TR>] [flags]";
+            help.args_description =
+                "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
+            help.flags = common;
+            help.flags.push_back({"dry-run", "", "Only report what would change (same as 'status')", false});
+            help.flags.push_back({"strict", "", "With --dry-run: exit with the code of any refusal (a missing --transport is one)", false});
+            help.flags.push_back({"force", "", "Overwrite objects changed in the system outside git", false});
+            help.long_description =
+                "Creates or updates every object in dependency order (DOMA, DTEL, FUGR, PROG "
+                "with text pool, dynpros, GUI status and system variants, TRAN) and activates it. Objects whose "
+                "system state already equals the files are left alone, so re-running is safe. "
+                "SAP's messages are shown per object. Exit codes (the most severe object "
+                "decides): 0 ok, 1 authorization / guard rail / connection, 2 not found, "
+                "5 activation, 6 lock or drift, 8 part the deploy cannot write, 9 transport, "
+                "10 timeout, 99 usage. " + how_it_works;
+            help.examples = {
+                "erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900042",
+                "erpl-adt abapgit deploy ./erpl-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'",
+            };
+            router.Register("abapgit", "deploy", "Create/update classic objects from abapGit files",
+                            HandleAbapGitDeploy, std::move(help));
+        }
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit status <path> --package <PKG> [flags]";
+            help.args_description =
+                "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
+            help.flags = common;
+            help.long_description =
+                "Shows per object whether a deploy would create, update or leave it "
+                "unchanged, and what it would refuse (objects changed in the system outside "
+                "git, parts the deploy cannot write). Changes no object, but it reads through "
+                "SAP's function modules from a temporary helper class in $TMP (created and "
+                "deleted again), so it needs the same development authorization (S_DEVELOP) "
+                "as a deploy. Exits 0 when it could run - refusals are reported, not fatal; "
+                "--strict makes any refusal exit with its code (6 drift, 9 missing transport). "
+                "Use it in pull-request checks: without --transport, transportable packages "
+                "only get a note (--strict makes that a refusal).";
+            help.flags.push_back({"strict", "", "Exit with the most severe code of any refusal (drift 6, missing --transport 9)", false});
+            help.flags.push_back({"force", "", "Preview a 'deploy --force': show drifted objects as updates instead of refusals", false});
+            help.examples = {"erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO"};
+            router.Register("abapgit", "status", "Show what a deploy would change (no writes)",
+                            HandleAbapGitStatus, std::move(help));
+        }
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit export <dir> --package <PKG> [--object TYPE:NAME,...]";
+            help.args_description = "<dir>    Repository folder to write (created if missing)";
+            // Export writes files only: no --transport.
+            for (const auto& f : common) {
+                if (f.name != "transport") {
+                    help.flags.push_back(f);
+                }
+            }
+            help.flags.push_back({"dry-run", "", "Only report what would be written", false});
+            help.flags.push_back({"object", "<TYPE:NAME,...>", "Objects to export; default: refresh the objects already in <dir>", false});
+            help.flags.push_back({"master-language", "<lang>", "Master language for a new repository (default E)", false});
+            help.long_description =
+                "Writes objects from the system as abapGit files (byte-identical to what "
+                "abapGit writes). Use it to pull changes made in SE51/SE41/SE93 back into "
+                "git, or to start a repository from existing objects. " + how_it_works;
+            help.examples = {
+                "erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO",
+                "erpl-adt abapgit export ./erpl-demo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03",
+            };
+            router.Register("abapgit", "export", "Write classic objects from the system as abapGit files",
+                            HandleAbapGitExport, std::move(help));
+        }
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit delete <path> --package <PKG> [--transport <TR>] [flags]";
+            help.args_description =
+                "<path>    abapGit repository folder (with .abapgit.xml) or one object file";
+            help.flags = common;
+            help.flags.push_back({"dry-run", "", "Only report what would be deleted", false});
+            help.flags.push_back({"force", "", "Also delete objects changed in the system outside git", false});
+            help.long_description =
+                "Deletes the objects described by the files, in reverse dependency order. "
+                "Objects that do not exist are reported as missing, not as errors. An object "
+                "whose system version differs from the files (and from their git history) "
+                "and was last changed by someone else is refused unless --force is given.";
+            help.examples = {"erpl-adt abapgit delete ./erpl-demo --package '$TMP'"};
+            router.Register("abapgit", "delete", "Delete the objects described by abapGit files",
+                            HandleAbapGitDelete, std::move(help));
+        }
+        {
+            CommandHelp help;
+            help.usage = "erpl-adt abapgit cleanup [--older-than <minutes>]";
+            help.flags = {
+                {"older-than", "<minutes>", "Only helpers last changed at least this long ago (default 60)", false},
+            };
+            help.long_description =
+                "Deletes temporary helper classes (ZCL_ERPLHLP_<8 hex>) that interrupted runs left "
+                "behind — only your own, and only old ones, so runs in progress are never "
+                "disturbed. Every abapgit command already does this quietly for helpers older "
+                "than two hours.";
+            help.examples = {"erpl-adt abapgit cleanup", "erpl-adt abapgit cleanup --older-than 10"};
+            router.Register("abapgit", "cleanup", "Remove helper classes left by interrupted runs",
+                            HandleAbapGitCleanup, std::move(help));
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // activate run (default action — "erpl-adt activate <name>" works)
     // -----------------------------------------------------------------------
     {
@@ -8273,6 +8529,8 @@ void RegisterAllCommands(CommandRouter& router) {
             {"max-depth", "<n>", "Max package-tree recursion depth (default: 50)", false},
             {"resume", "", "Continue from the checkpoint left by an interrupted sync of the same "
                            "scope, instead of starting over", false},
+            {"resolve-ddic-types", "", "Enrich TABL fields with data-element descriptions/types (slower)", false},
+            {"include-raw-source", "", "Also stash each object's full raw source/XML (slower, larger DB)", false},
         };
         help.examples = {
             "erpl-adt catalog sync catalog.duckdb --sid A4H --package ZTEST",
@@ -8310,6 +8568,7 @@ void RegisterAllCommands(CommandRouter& router) {
         help.flags = {
             {"port", "<n>", "Port to listen on (default: 8383)", false},
             {"host", "<addr>", "Host/address to bind (default: 127.0.0.1)", false},
+            {"catalog-db", "<path.duckdb>", "DuckDB file, instead of the positional argument", false},
             {"cors-origin", "<list>", "Comma-separated extra origins allowed to call the API", false},
             {"allowed-hosts", "<list>", "Host headers this server answers to beyond loopback and IP literals; a browser using any other is refused", false},
             {"config", "<path>", "YAML file whose http: block supplies these settings", false},
@@ -8690,6 +8949,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-area 0D_NW_DEMO",
@@ -8736,6 +8996,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-query 0D_FC_NW_C01_Q0001",
@@ -8779,6 +9040,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"service-name", "<name>",
              "Service name for openmetadata FQN (default: erpl_adt)", false},
             {"system-id", "<id>", "System ID for openmetadata FQN prefix", false},
+            {"editor", "", "With --mermaid: open the diagram in $VISUAL/$EDITOR", false},
         };
         help.examples = {
             "erpl-adt --json bw export-cube 0D_NW_C01",
@@ -9172,11 +9434,16 @@ void RegisterAllCommands(CommandRouter& router) {
     // bw qprops
     {
         CommandHelp help;
-        help.usage = "erpl-adt bw qprops";
+        help.usage = "erpl-adt bw qprops <infoprovider> [--type=<tlogo>] [--version=<a|m>]";
+        help.args_description = "<infoprovider>    InfoProvider whose query properties to read";
         help.long_description = "Read BW query-properties rule service (rules/qprops).";
+        help.flags = {
+            {"type", "<tlogo>", "InfoProvider type (e.g. ADSO, HCPR)", false},
+            {"version", "<a|m>", "Object version: a (active, default) or m (modified)", false},
+        };
         help.examples = {
-            "erpl-adt bw qprops",
-            "erpl-adt --json bw qprops",
+            "erpl-adt bw qprops 0D_NW_C01",
+            "erpl-adt --json bw qprops 0D_NW_C01 --type=CUBE",
         };
         router.Register("bw", "qprops", "Read BW query properties rules",
                          HandleBwQueryProperties, std::move(help));
@@ -9262,6 +9529,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw dbinfo";
         help.long_description = "Show HANA database connection info (host, port, schema).";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw dbinfo",
             "erpl-adt --json bw dbinfo",
@@ -9275,6 +9545,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw sysinfo";
         help.long_description = "Show BW system properties.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw sysinfo",
             "erpl-adt --json bw sysinfo",
@@ -9288,6 +9561,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw changeability";
         help.long_description = "Show per-TLOGO changeability and transport settings.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw changeability",
             "erpl-adt --json bw changeability",
@@ -9301,6 +9577,9 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt bw adturi";
         help.long_description = "Show BW-to-ADT URI mappings.";
+        help.flags = {
+            {"raw", "", "Output the raw Atom XML", false},
+        };
         help.examples = {
             "erpl-adt bw adturi",
             "erpl-adt --json bw adturi",
@@ -9330,6 +9609,28 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("bw", "job", "BW background job operations",
                          HandleBwJob, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // Unknown flags: every command warns and runs, except these, which refuse
+    // (exit 99, nothing done). They delete, release or execute something, or
+    // have a safety switch whose misspelling (--simulat, --no-wirte, --dryrun)
+    // would silently do the real thing. The abapgit group is strict as a
+    // whole (SetStrictFlags("abapgit") above).
+    // -----------------------------------------------------------------------
+    for (const auto& [group, action] : std::vector<std::pair<const char*, const char*>>{
+             {"object", "delete"},      // deletes a repository object
+             {"transport", "release"},  // releases a request (irreversible)
+             {"bw", "delete"},          // deletes a BW object
+             {"screen", "delete"},      // deletes a dynpro
+             {"bw", "activate"},        // --simulate / --validate are safety switches
+             {"bw", "transport"},       // write: --simulate is the dry run
+             {"bw", "locks"},           // delete removes another user's lock
+             {"bw", "job"},             // cancel / restart / cleanup
+             {"bw", "favorites"},       // clear
+             {"source", "edit"},        // --no-write is the dry run
+         }) {
+        router.SetStrictFlags(group, action);
     }
 }
 

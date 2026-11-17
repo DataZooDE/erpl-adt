@@ -159,10 +159,45 @@ json CatalogLineageSchema() {
                {"chain"});
 }
 
+// -- abapgit_* ----------------------------------------------------------------
+// The same report as `erpl-adt --json abapgit ...`. An agent branches on the
+// top-level exit_code and on each object's action.
+json AbapGitReportSchema() {
+    const json strings = {{"type", "array"}, {"items", {{"type", "string"}}}};
+    json parts = strings;
+    parts["description"] = "Parts written (or that would be), e.g. DD01V, screen 0100, CUA";
+    json notes = strings;
+    notes["description"] = "Non-fatal annotations";
+    const json object =
+        Obj({{"type", Str("abapGit object type, e.g. DOMA, PROG")},
+             {"name", Str("Object name")},
+             {"package", Str("Target package")},
+             {"action", Str("created, updated, unchanged, deleted, missing, exported, failed, "
+                            "refused or skipped")},
+             {"parts", parts},
+             {"message", Str("Failure or refusal reason (SAP's message)")},
+             {"notes", notes},
+             {"category", Str("Error category of a failed / refused object")},
+             {"exit_code", Int("Exit code this object's error maps to")}},
+            {"type", "name", "action"});
+    json skipped = strings;
+    skipped["description"] = "Files not deployed (unsupported types)";
+    return Obj({{"command", Str("deploy (also for status), export or delete")},
+                {"package", Str("Root package")},
+                {"dry_run", Bool("True when nothing was written")},
+                {"objects", ArrayOf(object, "One outcome per object")},
+                {"skipped", skipped},
+                {"summary", {{"type", "object"},
+                             {"description", "Number of objects per action"},
+                             {"additionalProperties", {{"type", "integer"}}}}},
+                {"exit_code", Int("0 when nothing failed, else the most severe object's code")}},
+               {"command", "objects", "exit_code"});
+}
+
 }  // namespace
 
 size_t ApplyToolOutputSchemas(ToolRegistry& registry) {
-    // The six tools whose results a model must branch on rather than quote.
+    // The tools whose results a model must branch on rather than quote.
     // Everything else stays text + structuredContent without a declared
     // schema; adding one is cheap when a tool proves to need it.
     const std::vector<std::pair<std::string, json>> schemas = {
@@ -172,6 +207,10 @@ size_t ApplyToolOutputSchemas(ToolRegistry& registry) {
         {"adt_read_table", ReadTableSchema()},
         {"catalog_search", CatalogSearchSchema()},
         {"catalog_lineage", CatalogLineageSchema()},
+        {"abapgit_status", AbapGitReportSchema()},
+        {"abapgit_deploy", AbapGitReportSchema()},
+        {"abapgit_export", AbapGitReportSchema()},
+        {"abapgit_delete", AbapGitReportSchema()},
     };
 
     size_t applied = 0;

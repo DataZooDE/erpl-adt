@@ -175,6 +175,10 @@ struct AdtSession::Impl {
     bool stateful_ = false;
     std::string sap_context_id_;
     std::map<std::string, std::string> cookies_;
+    // Set when the session was saved to or loaded from a --session-file:
+    // another erpl-adt process continues this logon, so it must not be
+    // logged off when this object goes away.
+    bool keep_logon_ = false;
     // Kept for error messages: a transport failure that does not name the
     // server it tried is the hardest kind to diagnose.
     std::string base_url_;
@@ -528,7 +532,65 @@ AdtSession::AdtSession(const std::string& host,
     : impl_(std::make_unique<Impl>(host, port, use_https, user, password,
                                    sap_client.Value(), options)) {}
 
-AdtSession::~AdtSession() = default;
+namespace {
+
+// SAP's logon (security) session cookie: SAP_SESSIONID_<SID>_<CLIENT>.
+bool HoldsLogonSession(const std::map<std::string, std::string>& cookies) {
+    for (const auto& [name, _] : cookies) {
+        if (name.rfind("SAP_SESSIONID_", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// Ends the logon on the server - and with it any stateful ABAP context -
+// through ICF's logoff service, then forgets everything bound to it (logon
+// and context cookies, CSRF tokens). The next request logs on afresh.
+//
+// Measured on A4H (TH_USER_LIST): a stateful session left behind stays a
+// user context until rdisp/plugin_auto_logout (30 min); at 400 per user SAP
+// refuses new stateful sessions ("400 Service cannot be reached") and then
+// every request ("429 Too Many Logons"), for every tool of that user.
+// `sap-sessioncmd=close` (parameter or header) and `sap-sessioncmd=logoff`
+// on an ADT URL are answered 200 but end nothing; /sap/public/bc/icf/logoff
+// does. Best effort: on failure the session times out on the server.
+void AdtSession::EndServerSession() {
+    auto ended = impl_->DoGet("/sap/public/bc/icf/logoff", {});
+    if (ended.IsErr()) {
+        LogDebug("http", "Logging off failed (the session will time out on the server): " +
+                             ended.Error().message);
+    }
+    for (auto it = impl_->cookies_.begin(); it != impl_->cookies_.end();) {
+        const auto& name = it->first;
+        if (name == "sap-contextid" || name == "MYSAPSSO2" ||
+            name.rfind("SAP_SESSIONID_", 0) == 0) {
+            it = impl_->cookies_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    impl_->csrf_token.reset();
+    impl_->bw_csrf_token_.reset();
+    impl_->sap_context_id_.clear();
+}
+
+// A session nobody will continue (no --session-file) logs off when it goes
+// away, so a CI job running hundreds of commands as one user leaves nothing
+// open on the server.
+AdtSession::~AdtSession() {
+    if (!impl_ || impl_->keep_logon_ ||
+        (!HoldsLogonSession(impl_->cookies_) && impl_->cookies_.count("sap-contextid") == 0)) {
+        return;
+    }
+    try {
+        EndServerSession();
+    } catch (...) {
+        // A destructor must not throw; the session times out on the server.
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Get — with 403 CSRF retry
@@ -661,22 +723,10 @@ Result<HttpResponse, Error> AdtSession::Put(std::string_view path,
 // ---------------------------------------------------------------------------
 void AdtSession::SetStateful(bool enabled) {
     // Leaving stateful mode ends the server-side ABAP session as well, like
-    // Eclipse does when it drops a session. Merely forgetting the context id
-    // leaves the session open on the server until rdisp/plugin_auto_logout
-    // (30 min by default); under load (CI, several parallel runs as one user)
-    // the per-user session limit is then exhausted and every new stateful
-    // request fails with "400 Session not found" (observed live on A4H).
-    // sap-sessioncmd=close is the ICF parameter for that; the URL is the
-    // cheapest ADT resource (a few hundred bytes).
+    // Eclipse does when it drops a session (see EndServerSession for why
+    // merely forgetting the context id is not enough).
     if (!enabled && impl_->stateful_ && impl_->cookies_.count("sap-contextid") > 0) {
-        auto closed = Get(
-            "/sap/bc/adt/repository/informationsystem/objecttypes"
-            "?maxItemCount=1&name=PROG&data=usedByProvider&sap-sessioncmd=close");
-        if (closed.IsErr()) {
-            LogDebug("http", "Closing the stateful session failed (it will time out on the "
-                             "server): " + closed.Error().message);
-        }
-        impl_->cookies_.erase("sap-contextid");
+        EndServerSession();
     }
     impl_->stateful_ = enabled;
     if (!enabled) {
@@ -779,6 +829,7 @@ Result<void, Error> AdtSession::SaveSession(const std::string& path) const {
                              "Failed to open file for writing"));
     }
     ofs << j.dump(2);
+    impl_->keep_logon_ = true;
 #ifndef _WIN32
     // Set file permissions to owner read/write only (chmod 600).
     chmod(path.c_str(), S_IRUSR | S_IWUSR);
@@ -819,6 +870,7 @@ Result<void, Error> AdtSession::LoadSession(const std::string& path) {
         impl_->cookies_ =
             j["cookies"].get<std::map<std::string, std::string>>();
     }
+    impl_->keep_logon_ = true;
 
     return Result<void, Error>::Ok();
 }

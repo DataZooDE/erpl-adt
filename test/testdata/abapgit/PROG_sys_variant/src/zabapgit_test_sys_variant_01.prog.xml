@@ -1,0 +1,90 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<abapGit version="v1.0.0" serializer="LCL_OBJECT_PROG" serializer_version="v1.0.0">
+ <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+   <PROGDIR>
+    <NAME>ZABAPGIT_TEST_SYS_VARIANT_01</NAME>
+    <DBAPL>S</DBAPL>
+    <SUBC>1</SUBC>
+    <FIXPT>X</FIXPT>
+    <LDBNAME>D$S</LDBNAME>
+    <UCCHECK>X</UCCHECK>
+   </PROGDIR>
+   <VARIS>
+    <item>
+     <VARIANT>CUS&amp;SYVAR01</VARIANT>
+     <TRANSPORT>F</TRANSPORT>
+     <ENVIRONMNT>A</ENVIRONMNT>
+     <VARISCREENS>
+      <RSDYNNR>
+       <DYNNR>*</DYNNR>
+      </RSDYNNR>
+     </VARISCREENS>
+     <OBJECTS>
+      <VANZ>
+       <NAME>P_NAME</NAME>
+       <KIND>P</KIND>
+       <OLEN>30</OLEN>
+       <FROM>1</FROM>
+       <TO>1</TO>
+       <OBLI>X</OBLI>
+      </VANZ>
+     </OBJECTS>
+     <VALUES>
+      <RSPARAMSL_255>
+       <SELNAME>P_NAME</SELNAME>
+       <KIND>P</KIND>
+       <LOW>My name</LOW>
+      </RSPARAMSL_255>
+     </VALUES>
+     <TEXTS>
+      <item>
+       <LANGU>E</LANGU>
+       <VTEXT>Sysvar Test 01</VTEXT>
+      </item>
+     </TEXTS>
+    </item>
+    <item>
+     <VARIANT>CUS&amp;TESTVAR</VARIANT>
+     <TRANSPORT>F</TRANSPORT>
+     <ENVIRONMNT>A</ENVIRONMNT>
+     <VARISCREENS>
+      <RSDYNNR>
+       <DYNNR>*</DYNNR>
+      </RSDYNNR>
+     </VARISCREENS>
+     <OBJECTS>
+      <VANZ>
+       <NAME>P_NAME</NAME>
+       <KIND>P</KIND>
+       <OLEN>30</OLEN>
+       <FROM>1</FROM>
+       <TO>1</TO>
+       <PROTECTED>X</PROTECTED>
+      </VANZ>
+     </OBJECTS>
+     <VALUES>
+      <RSPARAMSL_255>
+       <SELNAME>P_NAME</SELNAME>
+       <KIND>P</KIND>
+       <LOW>Test name</LOW>
+      </RSPARAMSL_255>
+     </VALUES>
+     <TEXTS>
+      <item>
+       <LANGU>E</LANGU>
+       <VTEXT>Sysvar Test 02</VTEXT>
+      </item>
+     </TEXTS>
+    </item>
+   </VARIS>
+   <TPOOL>
+    <item>
+     <ID>R</ID>
+     <ENTRY>System variants test 01</ENTRY>
+     <LENGTH>23</LENGTH>
+    </item>
+   </TPOOL>
+  </asx:values>
+ </asx:abap>
+</abapGit>
