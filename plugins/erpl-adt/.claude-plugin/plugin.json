@@ -1,0 +1,12 @@
+{
+  "name": "erpl-adt",
+  "description": "Skills and commands for erpl-adt, the CLI for SAP's ADT REST API: connect, read and change ABAP objects, activate, test and run ATC, manage transports, model BW objects, and build a searchable metadata catalog.",
+  "version": "2026.09.27",
+  "author": {
+    "name": "DataZoo GmbH",
+    "url": "https://github.com/DataZooDE"
+  },
+  "homepage": "https://github.com/DataZooDE/erpl-adt",
+  "repository": "https://github.com/DataZooDE/erpl-adt",
+  "license": "Apache-2.0"
+}

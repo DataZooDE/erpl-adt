@@ -172,7 +172,7 @@ erpl-adt check ZCL_MY_CLASS --variant FUNCTIONAL_DB_ADDITION
 
 ```bash
 # List transports for a user
-erpl-adt transport list --user DEVELOPER
+erpl-adt transport list --owner DEVELOPER
 
 # Create a new transport
 erpl-adt transport create --desc "Feature X implementation" --package ZTEST_PKG
@@ -403,6 +403,11 @@ erpl-adt screen delete --program ZJR66_HOST --screen 9001 --package '$TMP'
 Quick, throwaway screens with plain input fields (e.g. for tests). For complete
 screens with flow logic, tabstrips, table controls and GUI status, use
 `erpl-adt abapgit deploy`. The helper class always lives in a local package.
+
+### bw, catalog, login -- see the built-in help
+
+`erpl-adt bw --help`, `erpl-adt catalog --help` and `erpl-adt login --help` list every action with its flags
+and examples; the README has an overview of each (BW/4HANA modeling, Catalog, Installation).
 
 ### deploy -- Legacy deploy workflow
 
