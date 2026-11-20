@@ -9,6 +9,12 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
   "Change recording must be activated for package ...": the package payload never asked for change recording,
   so no transportable package could be created. A package with a software component other than `LOCAL` now
   records changes (`pak:recordChanges="true"`); local packages are created as before.
+- **[fix]** The MCP HTTP server (`mcp --http`, `catalog webui`) could lose its own 403: it refuses a foreign
+  Host or Origin before reading the request body, and closing the socket with that body unread made TCP send
+  a reset, so the client saw a dropped connection instead of the message naming `--allowed-hosts` /
+  `--cors-origin`. Measured with a 2 MB body on Linux (16 of 20 refusals lost); on Windows it happened with a
+  small one and failed the web UI smoke test in CI. A refused request with a body is now answered after the
+  body is read, still before any handler runs.
 - **[feature]** `transport show <number>` (MCP: `adt_show_transport`) lists a request's tasks and the object
   entries recorded on the request and on each task (`pgmid`, `type`, `name`, `description`, `lock_status`),
   so a release can be reviewed from erpl-adt (#76). A task number shows that task; a number that does not

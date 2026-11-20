@@ -78,6 +78,32 @@ std::string HostOnly(const std::string& host) {
     return colon == std::string::npos ? host : host.substr(0, colon);
 }
 
+// Does the request carry a body httplib has not read yet? The pre-routing
+// hook runs before the body is read.
+bool HasUnreadBody(const httplib::Request& req) {
+    if (req.has_header("Transfer-Encoding")) return true;
+    const auto length = req.get_header_value("Content-Length");
+    return !length.empty() && length != "0";
+}
+
+// Answer a refused request with 403 and `body`.
+//
+// A request without a body is answered at once. One with a body must not be:
+// replying and closing the socket while that body is still unread makes TCP
+// send a reset, and the client loses the 403 that tells it what to allow
+// (seen on Windows in CI, and with a 2 MB body on Linux). So the 403 is only
+// prepared here; httplib then reads the body as usual, and the pre-request
+// hook (or, for an unknown path, httplib's own "not routed" branch, which
+// keeps a status already set) sends it before any handler runs.
+httplib::Server::HandlerResponse Refuse(const httplib::Request& req,
+                                        httplib::Response& res,
+                                        const std::string& body) {
+    res.status = 403;
+    res.set_content(body, "application/json");
+    return HasUnreadBody(req) ? httplib::Server::HandlerResponse::Unhandled
+                              : httplib::Server::HandlerResponse::Handled;
+}
+
 } // anonymous namespace
 
 struct McpHttpServer::Impl {
@@ -164,28 +190,22 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
             const bool browser = IsBrowserRequest(origin, HasSecFetchHeader(req));
             impl_->ReportHostOnce(host, browser);
             if (browser) {
-                res.status = 403;
-                res.set_content(
-                    nlohmann::json{
-                        {"error", "host '" + host +
-                                      "' not allowed; start the server with "
-                                      "--allowed-hosts " + HostOnly(host) +
-                                      " (or set ERPL_ADT_ALLOWED_HOSTS) if that "
-                                      "is an address you serve on"}}
-                        .dump(),
-                    "application/json");
-                return httplib::Server::HandlerResponse::Handled;
+                return Refuse(req, res,
+                              nlohmann::json{
+                                  {"error", "host '" + host +
+                                                "' not allowed; start the server with "
+                                                "--allowed-hosts " + HostOnly(host) +
+                                                " (or set ERPL_ADT_ALLOWED_HOSTS) if that "
+                                                "is an address you serve on"}}
+                                  .dump());
             }
         }
 
         const auto verdict = ClassifyOrigin(origin, host, impl_->security);
 
         if (!IsAllowed(verdict)) {
-            res.status = 403;
-            res.set_content(
-                R"({"error":"origin not allowed; pass --cors-origin to allow it"})",
-                "application/json");
-            return httplib::Server::HandlerResponse::Handled;
+            return Refuse(req, res,
+                          R"({"error":"origin not allowed; pass --cors-origin to allow it"})");
         }
 
         if (!origin.empty()) {
@@ -202,6 +222,15 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
             return httplib::Server::HandlerResponse::Handled;
         }
         return httplib::Server::HandlerResponse::Unhandled;
+    });
+
+    // Runs after httplib has read the body, before a matched route's handler:
+    // a request refused above (status already 403, see Refuse) goes out here,
+    // so no handler ever runs for it.
+    impl_->http.set_pre_request_handler([](const httplib::Request&,
+                                           httplib::Response& res) {
+        return res.status == 403 ? httplib::Server::HandlerResponse::Handled
+                                 : httplib::Server::HandlerResponse::Unhandled;
     });
 
     impl_->http.Post("/mcp", [this](const httplib::Request& req, httplib::Response& res) {
