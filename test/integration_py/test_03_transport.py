@@ -6,6 +6,8 @@ to contain it. This catches regressions where the command returns an empty
 array even though transports exist (the failure mode of issue #9).
 """
 
+import os
+import random
 import re
 
 import pytest
@@ -141,3 +143,76 @@ class TestTransportMutations:
         result = cli.run("transport", "create", "--desc", "no package")
         assert result.returncode != 0
         assert "package" in result.stderr.lower() or "package" in result.stdout.lower()
+
+
+# The package for the object-entry test: transportable, with change recording
+# on. A4H has neither ("Change recording must be activated for package ..."),
+# so the test only runs where one is named.
+RECORDING_PACKAGE = os.getenv("SAP_TRANSPORT_PACKAGE")
+
+
+@pytest.mark.transport
+class TestTransportShow:
+    """Review a request before releasing it (#76) — release cannot be undone,
+    so what it would ship has to be readable from erpl-adt."""
+
+    @pytest.fixture(scope="class")
+    def request_number(self, cli):
+        data = cli.run_ok(
+            "transport", "create",
+            "--desc", "pytest transport show (test_03_transport)",
+            "--package", "$TMP",
+        )
+        yield data["transport_number"]
+        cli.run("transport", "release", data["transport_number"])
+
+    def test_show_names_the_request_and_its_task(self, cli, request_number):
+        data = cli.run_ok("transport", "show", request_number)
+        assert data["number"] == request_number
+        assert data["description"] == "pytest transport show (test_03_transport)"
+        assert data["owner"] == "DEVELOPER"
+        assert data["status"] == "modifiable"
+        assert isinstance(data["objects"], list)
+
+        # `transport create` opens the request with one task for its owner.
+        assert len(data["tasks"]) >= 1, data
+        task = data["tasks"][0]
+        assert TRANSPORT_PATTERN.match(task["number"]), task
+        assert task["number"] != request_number
+        assert task["owner"] == "DEVELOPER"
+        assert task["status"] == "modifiable"
+        assert isinstance(task["objects"], list)
+
+    def test_show_of_a_task_number_names_the_task(self, cli, request_number):
+        task = cli.run_ok("transport", "show", request_number)["tasks"][0]["number"]
+        data = cli.run_ok("transport", "show", task)
+        assert data["number"] == task
+
+    def test_show_human_readable_lists_the_task(self, cli, request_number):
+        result = cli.run_no_json("transport", "show", request_number)
+        assert result.returncode == 0, result.stderr
+        task = cli.run_ok("transport", "show", request_number)["tasks"][0]["number"]
+        assert request_number in result.stdout
+        assert task in result.stdout
+
+    def test_show_of_a_missing_request_is_not_found(self, cli):
+        result = cli.run("transport", "show", "A4HK999999")
+        assert result.returncode == 2, result.stderr
+        assert "A4HK999999" in result.stderr
+
+    @pytest.mark.skipif(not RECORDING_PACKAGE,
+                        reason="SAP_TRANSPORT_PACKAGE not set: needs a "
+                               "transportable package with change recording")
+    def test_show_lists_an_object_written_on_the_request(self, cli, request_number):
+        name = f"ZCL_TRSHOW_{random.randint(10000, 99999)}"
+        cli.run_ok("object", "create", "--type", "CLAS/OC", "--name", name,
+                   "--package", RECORDING_PACKAGE, "--description",
+                   "transport show test", "--transport", request_number)
+        try:
+            data = cli.run_ok("transport", "show", request_number)
+            entries = data["objects"] + [o for t in data["tasks"] for o in t["objects"]]
+            assert any(o["pgmid"] == "R3TR" and o["type"] == "CLAS"
+                       and o["name"] == name for o in entries), data
+        finally:
+            cli.run("object", "delete", f"/sap/bc/adt/oo/classes/{name.lower()}",
+                    "--transport", request_number)

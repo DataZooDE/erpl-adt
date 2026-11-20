@@ -2,7 +2,9 @@
 #include <erpl_adt/adt/object_exists.hpp>
 
 #include "adt_utils.hpp"
+#include "atom_parser.hpp"
 #include "xml_utils.hpp"
+#include <erpl_adt/core/types.hpp>
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
@@ -152,6 +154,109 @@ std::string ResolveSearchConfigUri(IAdtSession& session) {
     return FindAtomLinkHref(root, "configurations");
 }
 
+// Direct children of `parent` with the given local name, in document order.
+std::vector<const tinyxml2::XMLElement*> ChildrenByLocalName(
+    const tinyxml2::XMLElement* parent, std::string_view local_name) {
+    std::vector<const tinyxml2::XMLElement*> out;
+    for (auto* child = parent->FirstChildElement(); child;
+         child = child->NextSiblingElement()) {
+        if (atom_parser::HasLocalName(child, local_name)) {
+            out.push_back(child);
+        }
+    }
+    return out;
+}
+
+std::vector<TransportObjectEntry> ParseObjectEntries(
+    const tinyxml2::XMLElement* owner) {
+    std::vector<TransportObjectEntry> objects;
+    for (const auto* el : ChildrenByLocalName(owner, "abap_object")) {
+        TransportObjectEntry entry;
+        entry.pgmid = xml_utils::AttrAny(el, "tm:pgmid", "pgmid");
+        entry.type = xml_utils::AttrAny(el, "tm:type", "type");
+        entry.name = xml_utils::AttrAny(el, "tm:name", "name");
+        entry.description = xml_utils::AttrAny(el, "tm:obj_info", "obj_info");
+        entry.lock_status = xml_utils::AttrAny(el, "tm:lock_status", "lock_status");
+        objects.push_back(std::move(entry));
+    }
+    return objects;
+}
+
+TransportTask ParseTask(const tinyxml2::XMLElement* el) {
+    TransportTask task;
+    task.number = xml_utils::AttrAny(el, "tm:number", "number");
+    task.description = xml_utils::AttrAny(el, "tm:desc", "desc");
+    task.owner = xml_utils::AttrAny(el, "tm:owner", "owner");
+    task.status = TranslateStatus(xml_utils::AttrAny(el, "tm:status", "status"));
+    task.type = xml_utils::AttrAny(el, "tm:type", "type");
+    task.objects = ParseObjectEntries(el);
+    return task;
+}
+
+TransportDetail ParseRequest(const tinyxml2::XMLElement* el) {
+    TransportDetail detail;
+    detail.number = xml_utils::AttrAny(el, "tm:number", "number");
+    detail.description = xml_utils::AttrAny(el, "tm:desc", "desc");
+    detail.owner = xml_utils::AttrAny(el, "tm:owner", "owner");
+    detail.status = TranslateStatus(xml_utils::AttrAny(el, "tm:status", "status"));
+    detail.target = xml_utils::AttrAny(el, "tm:target", "target");
+    detail.type = xml_utils::AttrAny(el, "tm:type", "type");
+    for (const auto* task : ChildrenByLocalName(el, "task")) {
+        detail.tasks.push_back(ParseTask(task));
+    }
+    detail.objects = ParseObjectEntries(el);
+    return detail;
+}
+
+// A task answered on its own: no sub-tasks; the target is the request's.
+TransportDetail DetailFromTask(TransportTask task, const std::string& target) {
+    TransportDetail detail;
+    detail.number = std::move(task.number);
+    detail.description = std::move(task.description);
+    detail.owner = std::move(task.owner);
+    detail.status = std::move(task.status);
+    detail.target = target;
+    detail.type = std::move(task.type);
+    detail.objects = std::move(task.objects);
+    return detail;
+}
+
+// The detail document holds the request; asked for a task number, the task
+// is answered on its own (no sub-tasks).
+Result<TransportDetail, Error> ParseTransportDetail(std::string_view xml,
+                                                     const std::string& number,
+                                                     const std::string& url) {
+    return adt_utils::ParseXmlWithRoot<TransportDetail>(
+        xml, "GetTransport", url, "Failed to parse transport request XML",
+        [&](const tinyxml2::XMLElement* root) {
+            std::vector<const tinyxml2::XMLElement*> requests;
+            CollectRequests(root, requests);
+            for (const auto* req : requests) {
+                auto detail = ParseRequest(req);
+                if (detail.number == number) {
+                    return Result<TransportDetail, Error>::Ok(std::move(detail));
+                }
+                for (auto& task : detail.tasks) {
+                    if (task.number != number) continue;
+                    return Result<TransportDetail, Error>::Ok(
+                        DetailFromTask(std::move(task), detail.target));
+                }
+            }
+            // Asked for a task, SAP puts the task beside its parent request
+            // under tm:root (tm:object_type="T"), not inside it.
+            for (const auto* el : ChildrenByLocalName(root, "task")) {
+                auto task = ParseTask(el);
+                if (task.number != number) continue;
+                return Result<TransportDetail, Error>::Ok(
+                    DetailFromTask(std::move(task), ""));
+            }
+            return Result<TransportDetail, Error>::Err(Error{
+                "GetTransport", url, std::nullopt,
+                "Transport " + number + " is not in the response",
+                std::nullopt, ErrorCategory::NotFound});
+        });
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -292,6 +397,35 @@ Result<void, Error> ReleaseTransport(
     }
 
     return Result<void, Error>::Ok();
+}
+
+// ---------------------------------------------------------------------------
+// GetTransport
+// ---------------------------------------------------------------------------
+Result<TransportDetail, Error> GetTransport(
+    IAdtSession& session,
+    const std::string& transport_number) {
+    // The number goes into the URL path: refuse anything that is not one.
+    auto id = TransportId::Create(transport_number);
+    if (id.IsErr()) {
+        return Result<TransportDetail, Error>::Err(Error{
+            "GetTransport", "", std::nullopt, id.Error(), std::nullopt,
+            ErrorCategory::Internal});
+    }
+    const auto url = "/sap/bc/adt/cts/transportrequests/" + id.Value().Value();
+
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap.adt.transportorganizer.v1+xml";
+    auto response = session.Get(url, headers);
+    if (response.IsErr()) {
+        return Result<TransportDetail, Error>::Err(std::move(response).Error());
+    }
+    const auto& http = response.Value();
+    if (http.status_code != 200) {
+        return Result<TransportDetail, Error>::Err(
+            Error::FromHttpStatus("GetTransport", url, http.status_code, http.body));
+    }
+    return ParseTransportDetail(http.body, id.Value().Value(), url);
 }
 
 } // namespace erpl_adt

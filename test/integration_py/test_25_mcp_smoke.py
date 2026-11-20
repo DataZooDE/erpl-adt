@@ -145,3 +145,25 @@ class TestMcpToolsAnswer:
         for (name, _), resp in zip(calls, mcp_call(cli, calls)):
             assert tool_error(resp) is not None, (
                 f"{name} reported success for an object that does not exist")
+
+
+class TestMcpTransportReview:
+    """An agent reviews a request over MCP before releasing it (#76)."""
+
+    def test_show_transport_lists_the_task_and_refuses_a_missing_number(self, cli):
+        number = cli.run_ok("transport", "create", "--desc",
+                            "pytest MCP transport show", "--package",
+                            "$TMP")["transport_number"]
+        try:
+            shown, missing = mcp_call(cli, [
+                ("adt_show_transport", {"transport_number": number}),
+                ("adt_show_transport", {"transport_number": "A4HK999999"}),
+            ])
+            assert tool_error(shown) is None, tool_error(shown)
+            data = shown["result"]["structuredContent"]
+            assert data["number"] == number
+            assert data["status"] == "modifiable"
+            assert data["tasks"] and data["tasks"][0]["owner"] == cli.user
+            assert tool_error(missing) is not None
+        finally:
+            cli.run("transport", "release", number)

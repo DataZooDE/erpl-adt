@@ -351,6 +351,49 @@ ToolResult HandleListTransports(IAdtSession& session,
     return MakeOkResult(j);
 }
 
+// adt_show_transport
+nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& o : objects) {
+        j.push_back({{"pgmid", o.pgmid},
+                      {"type", o.type},
+                      {"name", o.name},
+                      {"description", o.description},
+                      {"lock_status", o.lock_status}});
+    }
+    return j;
+}
+
+ToolResult HandleShowTransport(IAdtSession& session,
+                               const nlohmann::json& params) {
+    ToolResult err;
+    auto number = RequireString(params, "transport_number", err);
+    if (!number) return err;
+
+    auto result = GetTransport(session, *number);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+
+    const auto& tr = result.Value();
+    nlohmann::json tasks = nlohmann::json::array();
+    for (const auto& t : tr.tasks) {
+        tasks.push_back({{"number", t.number},
+                          {"description", t.description},
+                          {"owner", t.owner},
+                          {"status", t.status},
+                          {"type", t.type},
+                          {"objects", TransportObjectsJson(t.objects)}});
+    }
+    nlohmann::json j = {{"number", tr.number},
+                        {"description", tr.description},
+                        {"owner", tr.owner},
+                        {"status", tr.status},
+                        {"target", tr.target},
+                        {"type", tr.type},
+                        {"tasks", tasks},
+                        {"objects", TransportObjectsJson(tr.objects)}};
+    return MakeOkResult(j);
+}
+
 // adt_read_table
 ToolResult HandleReadTable(IAdtSession& session,
                            const nlohmann::json& params) {
@@ -942,6 +985,19 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             nlohmann::json::array()),
         [&session](const nlohmann::json& params) {
             return HandleListTransports(session, params);
+        });
+
+    registry.Register(
+        "adt_show_transport",
+        "Show a transport request (or task) with its tasks and the object "
+        "entries recorded on them (pgmid/type/name, lock status) - what a "
+        "release would ship. Review it before adt_release_transport, which "
+        "cannot be undone.",
+        MakeSchema(
+            {{"transport_number", StringProp("Transport request or task number (e.g., A4HK900001)")}},
+            {"transport_number"}),
+        [&session](const nlohmann::json& params) {
+            return HandleShowTransport(session, params);
         });
 
     registry.Register(

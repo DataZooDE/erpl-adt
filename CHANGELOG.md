@@ -5,6 +5,12 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** `transport show <number>` (MCP: `adt_show_transport`) lists a request's tasks and the object
+  entries recorded on the request and on each task (`pgmid`, `type`, `name`, `description`, `lock_status`),
+  so a release can be reviewed from erpl-adt (#76). A task number shows that task; a number that does not
+  exist exits 2. `/erpl-adt:release` reviews the request with it instead of asking for SE09.
+- **[fix]** Transport numbers whose system ID contains a digit (`A4HK900001` — the trial system is A4H) were
+  refused as malformed (`TransportId`), among others by `abapgit deploy --transport`.
 - **[docs]** A Claude Code plugin in `plugins/erpl-adt/` (install: `/plugin marketplace add DataZooDE/erpl-adt`
   → `/plugin install erpl-adt@erpl-adt`) with five skills (setup, develop, transport, BW, catalog) and two
   commands (`/erpl-adt:edit-activate-test`, `/erpl-adt:release`). `make check-plugin` (and CI, after the

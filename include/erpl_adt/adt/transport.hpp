@@ -29,6 +29,49 @@ struct TransportInfo {
     const std::string& user);
 
 // ---------------------------------------------------------------------------
+// TransportDetail — one request (or task) with its tasks and object entries,
+// for reviewing what a release would ship.
+// ---------------------------------------------------------------------------
+struct TransportObjectEntry {
+    std::string pgmid;        // "R3TR", "LIMU", "CORR"
+    std::string type;         // "CLAS", "METH", "DEVC", ...
+    std::string name;
+    std::string description;  // tm:obj_info
+    std::string lock_status;  // "X" when the object is locked on the request
+};
+
+struct TransportTask {
+    std::string number;
+    std::string description;
+    std::string owner;
+    std::string status;       // translated like TransportInfo::status
+    std::string type;         // e.g. "Development/Correction", "Unclassified"
+    std::vector<TransportObjectEntry> objects;
+};
+
+struct TransportDetail {
+    std::string number;
+    std::string description;
+    std::string owner;
+    std::string status;
+    std::string target;
+    std::string type;         // "K" workbench, "W" customizing, ...
+    std::vector<TransportTask> tasks;
+    std::vector<TransportObjectEntry> objects;  // entries on the request itself
+};
+
+// ---------------------------------------------------------------------------
+// GetTransport — read a request (or task) with its tasks and object entries.
+//
+// Endpoint: GET /sap/bc/adt/cts/transportrequests/{number}
+// A number that does not exist is NotFound (exit 2); a malformed number is
+// refused before any request.
+// ---------------------------------------------------------------------------
+[[nodiscard]] Result<TransportDetail, Error> GetTransport(
+    IAdtSession& session,
+    const std::string& transport_number);
+
+// ---------------------------------------------------------------------------
 // CreateTransport — create a new transport request.
 //
 // Endpoint: POST /sap/bc/adt/cts/transports

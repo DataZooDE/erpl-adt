@@ -182,12 +182,22 @@ erpl-adt transport list --owner DEVELOPER
 # Create a new transport
 erpl-adt transport create --desc "Feature X implementation" --package ZTEST_PKG
 
+# Show a request with its tasks and recorded objects (review before release)
+erpl-adt transport show NPLK900001
+erpl-adt --json transport show NPLK900001
+
 # Release a transport
 erpl-adt transport release NPLK900001
 ```
 
+`transport show` accepts a request or a task number. JSON: `number`, `description`, `owner`, `status`,
+`target`, `type`, `objects` (entries on the request itself) and `tasks` (each with its own `objects`); an
+object entry has `pgmid`, `type`, `name`, `description` and `lock_status`. A number that does not exist
+exits 2. The MCP tool is `adt_show_transport`.
+
 **API:**
 - `ListTransports(session, user)` -- `GET /sap/bc/adt/cts/transportrequests?user=...`
+- `GetTransport(session, number)` -- `GET /sap/bc/adt/cts/transportrequests/{number}`
 - `CreateTransport(session, desc, pkg)` -- `POST /sap/bc/adt/cts/transports`
 - `ReleaseTransport(session, number)` -- `POST /sap/bc/adt/cts/transportrequests/{number}/newreleasejobs`
 
