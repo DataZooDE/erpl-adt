@@ -1,15 +1,36 @@
 #include <erpl_adt/adt/checks.hpp>
 #include "adt_utils.hpp"
+#include "atom_parser.hpp"
 
 #include <erpl_adt/adt/object_exists.hpp>
 #include <tinyxml2.h>
 
 #include <cstdlib>
 #include <string>
+#include <string_view>
 
 namespace erpl_adt {
 
 namespace {
+
+// Attribute value by local name, ignoring the namespace prefix.
+std::string AttrByLocalName(const tinyxml2::XMLElement* el,
+                            std::string_view local_name) {
+    for (auto* a = el->FirstAttribute(); a; a = a->Next()) {
+        if (atom_parser::LocalName(a->Name()) == local_name) {
+            return a->Value();
+        }
+    }
+    return {};
+}
+
+// SAP pads some message titles with a trailing blank and newline.
+std::string Trim(const std::string& s) {
+    const auto first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
+}
 
 Result<std::string, Error> CreateWorklist(
     IAdtSession& session,
@@ -118,38 +139,31 @@ Result<std::vector<AtcFinding>, Error> GetWorklistFindings(
         return Result<std::vector<AtcFinding>, Error>::Ok(std::move(findings));
     }
 
-    // Navigate to objects > object > findings > finding
-    auto* objects = root->FirstChildElement("objects");
+    // Navigate to objects > object > findings > finding. SAP prefixes every
+    // element and attribute (atcworklist:objects, atcobject:object,
+    // atcfinding:finding, atcfinding:priority, ...), so match by local name.
+    auto* objects = atom_parser::FirstChildByLocalName(root, "objects");
     if (!objects) objects = root; // fallback to root level
 
-    for (auto* obj = objects->FirstChildElement("object"); obj;
-         obj = obj->NextSiblingElement("object")) {
-        auto* findings_el = obj->FirstChildElement("findings");
+    for (auto* obj = objects->FirstChildElement(); obj;
+         obj = obj->NextSiblingElement()) {
+        if (!atom_parser::HasLocalName(obj, "object")) continue;
+        auto* findings_el = atom_parser::FirstChildByLocalName(obj, "findings");
         if (!findings_el) continue;
 
-        for (auto* f = findings_el->FirstChildElement("finding"); f;
-             f = f->NextSiblingElement("finding")) {
+        for (auto* f = findings_el->FirstChildElement(); f;
+             f = f->NextSiblingElement()) {
+            if (!atom_parser::HasLocalName(f, "finding")) continue;
             AtcFinding finding;
-
-            const char* uri = f->Attribute("uri");
-            finding.uri = uri ? uri : "";
-
-            const char* priority = f->Attribute("priority");
-            finding.priority = priority ? std::atoi(priority) : 0;
-
-            const char* check = f->Attribute("checkTitle");
-            finding.check_title = check ? check : "";
-
-            const char* msg_title = f->Attribute("messageTitle");
-            finding.message_title = msg_title ? msg_title : "";
-
-            const char* msg = f->Attribute("message");
-            if (!msg) {
-                // Try getting text content
-                msg = f->GetText();
-            }
-            finding.message = msg ? msg : "";
-
+            // The source position an agent jumps to; the finding's own
+            // adtcore:uri only names the worklist item.
+            finding.uri = AttrByLocalName(f, "location");
+            if (finding.uri.empty()) finding.uri = AttrByLocalName(f, "uri");
+            finding.priority = std::atoi(AttrByLocalName(f, "priority").c_str());
+            finding.check_title = AttrByLocalName(f, "checkTitle");
+            finding.message_title = Trim(AttrByLocalName(f, "messageTitle"));
+            // The worklist carries no separate message text; the title is it.
+            finding.message = finding.message_title;
             findings.push_back(std::move(finding));
         }
     }

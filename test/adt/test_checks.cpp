@@ -47,22 +47,40 @@ TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
     auto xml = LoadFixture("checks/atc_worklist.xml");
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
-    auto result = RunAtcCheck(mock, "/sap/bc/adt/packages/ztest_pkg", "FUNCTIONAL_DB_ADDITION");
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/ztest_prb_17726",
+                              "ZABAP_CLOUD_DEVELOPMENT");
     REQUIRE(result.IsOk());
 
+    // The fixture is a worklist captured from A4H (SAP_BASIS 816): every
+    // element and attribute is namespace-prefixed (atcobject:object,
+    // atcfinding:finding, atcfinding:priority, ...). A parser that looked for
+    // unprefixed names read it as "no findings" — every live run was clean.
     auto& atc = result.Value();
     CHECK(atc.worklist_id == "wl_001");
-    REQUIRE(atc.findings.size() == 3);
+    REQUIRE(atc.findings.size() == 5);
 
     CHECK(atc.findings[0].priority == 1);
-    CHECK(atc.findings[0].message == "SELECT statement inside LOOP detected");
-    CHECK(atc.findings[0].check_title == "Functional DB Check");
+    CHECK(atc.findings[0].check_title == "ABAP Language Version (Syntax)");
+    CHECK(atc.findings[0].message_title ==
+          "Syntax error in restricted language scope (checkpoints)");
+    // There is no separate message attribute; the title is the message.
+    CHECK(atc.findings[0].message == atc.findings[0].message_title);
+    // uri is the source position an agent jumps to, not the finding id.
+    CHECK(atc.findings[0].uri ==
+          "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main#start=8,0");
 
     CHECK(atc.findings[1].priority == 2);
-    CHECK(atc.findings[2].priority == 3);
+    CHECK(atc.findings[1].message_title ==
+          "The line contains a BREAK-POINT statement.");
+    CHECK(atc.findings[2].priority == 2);
+    CHECK(atc.findings[3].priority == 1);
+    CHECK(atc.findings[3].check_title == "Usage of Released APIs");
+    CHECK(atc.findings[4].priority == 3);
+    CHECK(atc.findings[4].uri ==
+          "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main#start=10,0");
 
-    CHECK(atc.ErrorCount() == 1);
-    CHECK(atc.WarningCount() == 1);
+    CHECK(atc.ErrorCount() == 2);
+    CHECK(atc.WarningCount() == 2);
 }
 
 TEST_CASE("RunAtcCheck: clean results", "[adt][checks]") {
