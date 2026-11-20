@@ -265,3 +265,103 @@ TEST_CASE("ReleaseTransport: a missing transport is not reported as released",
     CHECK(result.Error().category == ErrorCategory::NotFound);
     CHECK(mock.PostCallCount() == 0);
 }
+
+// ===========================================================================
+// GetTransport — review a request before releasing it (#76)
+// ===========================================================================
+
+TEST_CASE("GetTransport: reads the request and its task", "[adt][transport]") {
+    MockAdtSession mock;
+    // Captured from A4H: a request from `transport create`, one task, no objects.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show.xml")}));
+
+    auto result = GetTransport(mock, "A4HK900156");
+    REQUIRE(result.IsOk());
+    const auto& tr = result.Value();
+    CHECK(tr.number == "A4HK900156");
+    CHECK(tr.description == "erpl-adt transport show probe");
+    CHECK(tr.owner == "DEVELOPER");
+    CHECK(tr.status == "modifiable");
+    CHECK(tr.type == "K");
+    CHECK(tr.objects.empty());
+
+    REQUIRE(tr.tasks.size() == 1);
+    CHECK(tr.tasks[0].number == "A4HK900157");
+    CHECK(tr.tasks[0].owner == "DEVELOPER");
+    CHECK(tr.tasks[0].status == "modifiable");
+    CHECK(tr.tasks[0].type == "Development/Correction");
+    CHECK(tr.tasks[0].objects.empty());
+
+    REQUIRE(mock.GetCallCount() == 1);
+    CHECK(mock.GetCalls()[0].path == "/sap/bc/adt/cts/transportrequests/A4HK900156");
+    CHECK(mock.GetCalls()[0].headers.at("Accept") ==
+          "application/vnd.sap.adt.transportorganizer.v1+xml");
+}
+
+TEST_CASE("GetTransport: lists the object entries of request and task",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+
+    auto result = GetTransport(mock, "A4HK900156");
+    REQUIRE(result.IsOk());
+    const auto& tr = result.Value();
+
+    REQUIRE(tr.objects.size() == 1);
+    CHECK(tr.objects[0].pgmid == "R3TR");
+    CHECK(tr.objects[0].type == "DEVC");
+    CHECK(tr.objects[0].name == "ZERPL_TRSHOW");
+
+    REQUIRE(tr.tasks.size() == 1);
+    const auto& objs = tr.tasks[0].objects;
+    REQUIRE(objs.size() == 2);
+    CHECK(objs[0].pgmid == "R3TR");
+    CHECK(objs[0].type == "CLAS");
+    CHECK(objs[0].name == "ZCL_TRSHOW_DEMO");
+    CHECK(objs[0].description == "Class");
+    CHECK(objs[0].lock_status == "X");
+    CHECK(objs[1].pgmid == "LIMU");
+    CHECK(objs[1].type == "METH");
+    CHECK(objs[1].lock_status.empty());
+}
+
+TEST_CASE("GetTransport: a missing request is NotFound", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {404, {}, "<exc:exception xmlns:exc=\"http://www.sap.com/abapxml/types/communicationframework\">"
+                  "<message lang=\"EN\">Resource Transport Request/Task A4HK999999 does not exist.</message>"
+                  "</exc:exception>"}));
+
+    auto result = GetTransport(mock, "A4HK999999");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(result.Error().ExitCode() == 2);
+}
+
+TEST_CASE("GetTransport: a malformed number is refused before any request",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    auto result = GetTransport(mock, "../../oo/classes/x");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("Transport ID") != std::string::npos);
+    CHECK(mock.GetCallCount() == 0);
+}
+
+TEST_CASE("GetTransport: a task number answers with the task", "[adt][transport]") {
+    MockAdtSession mock;
+    // Captured from A4H for the task: tm:root holds the parent request and,
+    // beside it rather than inside, the task (tm:object_type="T").
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_task.xml")}));
+
+    auto result = GetTransport(mock, "A4HK900157");
+    REQUIRE(result.IsOk());
+    const auto& tr = result.Value();
+    CHECK(tr.number == "A4HK900157");
+    CHECK(tr.owner == "DEVELOPER");
+    CHECK(tr.status == "modifiable");
+    CHECK(tr.type == "Development/Correction");
+    CHECK(tr.tasks.empty());
+}

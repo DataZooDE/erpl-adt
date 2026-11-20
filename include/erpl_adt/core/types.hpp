@@ -171,7 +171,8 @@ private:
 
 // ---------------------------------------------------------------------------
 // TransportId — transport request number (e.g. "NPLK900001").
-// Pattern: 3 uppercase letters + 1 uppercase letter + 6 digits.
+// Pattern: system ID (a letter, then 2 letters or digits) + 1 uppercase
+// letter (request type) + 6 digits, e.g. A4HK900001.
 // ---------------------------------------------------------------------------
 class TransportId {
 public:

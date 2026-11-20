@@ -11,7 +11,7 @@ Part of the [Datazoo](https://datazoo.de) ERPL family.
 - **Search and browse** ABAP objects, packages, data dictionary tables, CDS views
 - **Read and write** source code with lock management and transport integration
 - **Run tests** — ABAP Unit and ATC quality checks from the command line
-- **Manage transports** — create, list, and release transport requests
+- **Manage transports** — create, list, review (tasks and objects) and release transport requests
 - **MCP server** — expose all capabilities to AI agents over JSON-RPC (MCP 2025-06-18, negotiating down to 2024-11-05)
 
 Every command accepts `--json` for machine-readable output.
@@ -77,8 +77,9 @@ erpl-adt activate ZCL_MY_CLASS
 erpl-adt test ZCL_MY_CLASS
 erpl-adt check ZCL_MY_CLASS --variant DEFAULT
 
-# Create a transport request and release it
+# Create a transport request, review what it holds, and release it
 erpl-adt transport create --desc "Feature XYZ" --package ZPACKAGE
+erpl-adt transport show NPLK900042
 erpl-adt transport release NPLK900042
 
 # Browse packages and data dictionary
@@ -134,7 +135,7 @@ Code session:
 | Command | Does |
 |---------|------|
 | `/erpl-adt:edit-activate-test` | Changes an ABAP object and reports activation, unit tests and ATC (judged by their JSON fields) |
-| `/erpl-adt:release` | Shows a transport's metadata, asks you to confirm a contents review and the release, releases |
+| `/erpl-adt:release` | Shows a transport's tasks and objects, asks you to confirm the release, releases |
 
 For SAP *data* in DuckDB, install the erpl plugin as well (`/plugin marketplace add DataZooDE/erpl` →
 `/plugin install erpl@erpl`). `make check-plugin` checks every command line in the plugin against the built
@@ -183,9 +184,10 @@ TEST / CHECK
   check <name-or-uri>                     Run ATC quality checks
       --variant <name>                    ATC variant (default: DEFAULT)
 
-TRANSPORT — List, create, and release transports
+TRANSPORT — List, show, create, and release transports
   transport create --desc <text> --package <pkg>
   transport list [--owner <user>]           (default: the logon user)
+  transport show <number>                   Tasks and recorded objects (review before release)
   transport release <number>
 
 DATA DICTIONARY — Tables and CDS views

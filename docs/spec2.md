@@ -548,6 +548,7 @@ When running as an MCP server (`erpl-adt mcp`), the tool names and schemas are d
 |---|---|
 | `adt_create_transport` | Create a new transport request for recording changes. Returns transport ID. Required for non-$TMP packages. |
 | `adt_transport_info` | Get transport information for an object: which transport it belongs to, whether it's modifiable. |
+| `adt_show_transport` | Show a request (or task) with its tasks and recorded object entries — review before release. |
 | `adt_release_transport` | Release a transport request, triggering export to downstream systems. Irreversible — use with caution. |
 
 #### abapGit

@@ -2540,6 +2540,102 @@ int HandleTransportList(const CommandArgs& args) {
 }
 
 // ---------------------------------------------------------------------------
+// transport show
+// ---------------------------------------------------------------------------
+namespace {
+
+nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& o : objects) {
+        j.push_back({{"pgmid", o.pgmid},
+                     {"type", o.type},
+                     {"name", o.name},
+                     {"description", o.description},
+                     {"lock_status", o.lock_status}});
+    }
+    return j;
+}
+
+} // namespace
+
+int HandleTransportShow(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kTransportOp);  // { op, duration_ms }
+    ft.SetStr("op", "show");
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing transport number. Usage: erpl-adt transport show <number>"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) {
+        return 99;
+    }
+
+    auto result = GetTransport(*session, args.positional[0]);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    const auto& tr = result.Value();
+
+    if (fmt.IsJsonMode()) {
+        nlohmann::json tasks = nlohmann::json::array();
+        for (const auto& t : tr.tasks) {
+            tasks.push_back({{"number", t.number},
+                             {"description", t.description},
+                             {"owner", t.owner},
+                             {"status", t.status},
+                             {"type", t.type},
+                             {"objects", TransportObjectsJson(t.objects)}});
+        }
+        nlohmann::json j = {{"number", tr.number},
+                            {"description", tr.description},
+                            {"owner", tr.owner},
+                            {"status", tr.status},
+                            {"target", tr.target},
+                            {"type", tr.type},
+                            {"tasks", tasks},
+                            {"objects", TransportObjectsJson(tr.objects)}};
+        fmt.PrintJson(j.dump());
+        return 0;
+    }
+
+    std::cout << tr.number << "  " << tr.description << "\n"
+              << "  Owner: " << tr.owner << "   Status: " << tr.status;
+    if (!tr.target.empty()) std::cout << "   Target: " << tr.target;
+    std::cout << "\n\n";
+
+    if (!tr.tasks.empty()) {
+        std::vector<std::vector<std::string>> rows;
+        for (const auto& t : tr.tasks) {
+            rows.push_back({t.number, t.owner, t.status, t.type,
+                            std::to_string(t.objects.size())});
+        }
+        fmt.PrintTable({"Task", "Owner", "Status", "Type", "Objects"}, rows);
+    }
+
+    std::vector<std::vector<std::string>> object_rows;
+    for (const auto& o : tr.objects) {
+        object_rows.push_back({tr.number, o.pgmid, o.type, o.name, o.lock_status});
+    }
+    for (const auto& t : tr.tasks) {
+        for (const auto& o : t.objects) {
+            object_rows.push_back({t.number, o.pgmid, o.type, o.name, o.lock_status});
+        }
+    }
+    if (object_rows.empty()) {
+        std::cout << "\nNo objects recorded.\n";
+    } else {
+        std::cout << "\n";
+        fmt.PrintTable({"Request/Task", "PGMID", "Type", "Name", "Locked"}, object_rows);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // transport create
 // ---------------------------------------------------------------------------
 int HandleTransportCreate(const CommandArgs& args) {
@@ -7724,7 +7820,7 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt check run /sap/bc/adt/packages/ZTEST --variant=FUNCTIONAL_DB_ADDITION",
     });
 
-    router.SetGroupDescription("transport", "List, create, and release transports");
+    router.SetGroupDescription("transport", "List, show, create, and release transports");
     router.SetGroupExamples("transport", {
         "$ erpl-adt transport list",
         "$ erpl-adt transport create --desc=\"Feature X\" --package=ZTEST",
@@ -8308,6 +8404,26 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("transport", "list", "List transports",
                          HandleTransportList, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // transport show
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt transport show <number>";
+        help.args_description = "<number>    Transport request or task number (e.g. A4HK900001)";
+        help.long_description =
+            "Shows a request with its tasks and the object entries recorded on "
+            "them (PGMID/type/name, lock status) — what a release would ship. "
+            "Review it before `transport release`, which cannot be undone. "
+            "A number that does not exist exits 2.";
+        help.examples = {
+            "erpl-adt transport show A4HK900001",
+            "erpl-adt --json transport show A4HK900001",
+        };
+        router.Register("transport", "show", "Show a transport's tasks and objects",
+                         HandleTransportShow, std::move(help));
     }
 
     // -----------------------------------------------------------------------

@@ -446,6 +446,16 @@ TEST_CASE("TransportId: valid IDs", "[types][TransportId]") {
     }
 }
 
+// A system ID starts with a letter and may then hold digits — the trial
+// system is A4H, so its requests are A4HK9xxxxx.
+TEST_CASE("TransportId: a system ID with a digit is valid", "[types][TransportId]") {
+    auto r = TransportId::Create("A4HK900156");
+    REQUIRE(r.IsOk());
+    CHECK(r.Value().Value() == "A4HK900156");
+    CHECK(TransportId::Create("S4DK900001").IsOk());
+    CHECK(TransportId::Create("A4H1900156").IsErr());  // 4th: request type letter
+}
+
 TEST_CASE("TransportId: invalid IDs", "[types][TransportId]") {
     SECTION("empty") {
         auto r = TransportId::Create("");

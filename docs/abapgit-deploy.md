@@ -401,7 +401,8 @@ problems in the code being deployed.
   variant flag or an OO type (x'08') is refused as well (exit 8, also with
   `--force`): the re-insert would silently drop it. On A4H no such
   transaction can be set up without direct table writes, so this refusal is
-  unit-tested only.
+  unit-tested there; `test_41_abapgit_transport_live.py` checks it live on a
+  system with such a transaction (`SAP_TRAN_AUTH_OBJ`, set up in SE93; #73).
 * The drift check needs `git` on the PATH to consult file history (the last
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.
@@ -413,7 +414,10 @@ problems in the code being deployed.
   parameter, and the deletion is expected on the request through the R3TR
   PROG entry `RS_CORR_INSERT` makes first (abapGit's
   `ZCL_ABAPGIT_OBJECTS_PROGRAM->DESERIALIZE_DYNPROS` relies on the same) —
-  unverified as well.
+  unverified as well. `test/integration_py/test_41_abapgit_transport_live.py`
+  checks all of it (first deploy, changed parts only, unchanged redeploy,
+  deleted screen, released / unknown request, colleague's lock) on a system
+  that has recording: set `SAP_TRANSPORT_PACKAGE` (#72).
 * A transaction update is delete + insert (there is no update API).
   `RPY_TRANSACTION_INSERT` checks little — measured on A4H, it accepts a
   `PGMNA` that does not exist — but when it fails (e.g. its `RS_CORR_INSERT`
