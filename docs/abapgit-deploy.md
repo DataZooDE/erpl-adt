@@ -240,7 +240,10 @@ entry afterwards.
 
 * **Transports** — pass `--transport <request>` for transportable packages;
   changes are recorded on it by the same function modules the GUI tools use.
-  Only parts that actually changed are written, so only those are recorded.
+  Only objects that actually changed are written, so only those are recorded:
+  a changed program as `R3TR PROG` (the whole program, as abapGit records it),
+  a changed function module as `LIMU FUNC`, DDIC objects and transactions as
+  `R3TR`. An unchanged redeploy records nothing.
   Local packages (`$TMP`, `$…`) need no request.
 * **Locks** — objects are locked while they are written, as in the GUI. If a
   colleague holds the object (open in SE51, or locked in another request), the
@@ -407,17 +410,20 @@ problems in the code being deployed.
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.
 * Transport recording (`--transport`) uses the function modules' own request
-  parameters and `RS_CORR_INSERT`, but it has not been verified live: the
-  A4H trial's client settings were left unchanged (owner decision), so no
-  transportable package with a request was available for tests. Screen
-  deletions follow abapGit exactly: `RS_SCRP_DELETE` has no request
-  parameter, and the deletion is expected on the request through the R3TR
-  PROG entry `RS_CORR_INSERT` makes first (abapGit's
-  `ZCL_ABAPGIT_OBJECTS_PROGRAM->DESERIALIZE_DYNPROS` relies on the same) —
-  unverified as well. `test/integration_py/test_41_abapgit_transport_live.py`
-  checks all of it (first deploy, changed parts only, unchanged redeploy,
-  deleted screen, released / unknown request, colleague's lock) on a system
-  that has recording: set `SAP_TRANSPORT_PACKAGE` (#72).
+  parameters and `RS_CORR_INSERT`. Verified live on A4H (#72) in a
+  transportable package (`ZERPL_TR` under `ZCLASSIC_DEVELOPMENT`; TMS and
+  change recording were already configured, only erpl-adt's package creation
+  did not ask for recording): a first deploy records every object (R3TR); a
+  change on a second request records exactly the changed objects (R3TR PROG
+  for a program, LIMU FUNC for a function module, R3TR DOMA / TRAN); an
+  unchanged redeploy records nothing new; a screen deleted from the files is
+  recorded with its program (`RS_SCRP_DELETE` has no request parameter; the
+  R3TR PROG entry `RS_CORR_INSERT` makes first carries it, as in abapGit's
+  `ZCL_ABAPGIT_OBJECTS_PROGRAM->DESERIALIZE_DYNPROS`); a released or unknown
+  request and an object on someone else's open request exit 9. Rerun with
+  `SAP_TRANSPORT_PACKAGE=ZERPL_TR` and
+  `test/integration_py/test_41_abapgit_transport_live.py`; it deploys a renamed
+  copy of the demo (`ZERPT_*`) and releases and removes what it created.
 * A transaction update is delete + insert (there is no update API).
   `RPY_TRANSACTION_INSERT` checks little — measured on A4H, it accepts a
   `PGMNA` that does not exist — but when it fails (e.g. its `RS_CORR_INSERT`

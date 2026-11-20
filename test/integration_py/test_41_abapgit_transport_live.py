@@ -18,10 +18,10 @@ the system it needs is named:
         test_41_abapgit_transport_live.py
 
 What is recorded is read back with `erpl-adt transport show` (#76), i.e. the
-request's E071 entries as the Transport Organizer shows them. Requests the
-tests create are left modifiable for inspection (their numbers are printed),
-except the first one, which the LIMU checks must release: an object locked
-in a modifiable request cannot be recorded on a second one.
+request's E071 entries as the Transport Organizer shows them. The requests
+the tests create are released at the end (tasks first), and their objects
+deleted, so a second run starts clean: an object locked in a modifiable
+request cannot be recorded on another one.
 """
 
 import json
@@ -38,10 +38,19 @@ TRAN_AUTH = os.getenv("SAP_TRAN_AUTH_OBJ", "")
 TRAN_AUTH_PACKAGE = os.getenv("SAP_TRAN_AUTH_PACKAGE", PACKAGE)
 
 EXIT_CHECK = 8
-EXIT_LOCK = 6
+# docs/abapgit-deploy.md: "9 | transport problem (missing --transport, object
+# locked in another request)" - a CTS conflict, unlike an edit lock (6).
 EXIT_TRANSPORT = 9
 
-PROG = "ZERPL_SO_DISPLAY"
+# The tests deploy their own copy of the demo repository, renamed ZERPL_ ->
+# ZERPT_ (a second team's repository): the demo itself may be deployed in
+# $TMP on the same system, and an object cannot live in two packages.
+def N(name):
+    """The test copy's name for a demo object name."""
+    return name.replace("ZERPL_", "ZERPT_").replace("Z_ERPL_", "Z_ERPT_")
+
+
+PROG = N("ZERPL_SO_DISPLAY")
 
 
 def _entry(result, obj_type, name):
@@ -67,9 +76,31 @@ def _new_request(cli, package, purpose):
     return number
 
 
+def _release(cli, number):
+    """Release a request the way SE09 does - its open tasks first - and
+    return its status afterwards. On A4H the request's release answers
+    "Error in pre-export methods" (the trial has no export) yet leaves the
+    request released; what counts is the status, read back."""
+    data = cli.run_ok("transport", "show", number)
+    for task in data["tasks"]:
+        if task["status"] == "modifiable":
+            cli.run("transport", "release", task["number"])
+    cli.run("transport", "release", number)
+    return cli.run_ok("transport", "show", number)["status"]
+
+
 def _repo_copy(target):
-    """The demo repository as a git working copy (the drift check reads git)."""
+    """The demo repository, renamed (see N), as a git working copy (the drift
+    check reads git)."""
     shutil.copytree(FIXTURES, target)
+    for path in sorted(target.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_file():
+            text = path.read_bytes().decode("utf-8")
+            renamed = N(text).replace("zerpl_", "zerpt_").replace("z_erpl_", "z_erpt_")
+            path.write_bytes(renamed.encode("utf-8"))
+        new_name = N(path.name).replace("zerpl_", "zerpt_").replace("z_erpl_", "z_erpt_")
+        if new_name != path.name:
+            path.rename(path.with_name(new_name))
     for args in (["init", "-q"], ["add", "-A"],
                  ["-c", "user.name=pytest", "-c", "user.email=pytest@localhost",
                   "commit", "-q", "-m", "demo"]):
@@ -97,11 +128,13 @@ class TestTransportRecording:
     @pytest.fixture(scope="class")
     def ctx(self, cli, tmp_path_factory):
         repo = _repo_copy(tmp_path_factory.mktemp("tr") / "erpl_demo")
-        ctx = {"repo": repo}
+        ctx = {"repo": repo, "requests": []}
         yield ctx
         if ctx.get("last_request"):
             cli.run("abapgit", "delete", str(repo), "--package", PACKAGE,
                     "--transport", ctx["last_request"], "--force")
+        for number in ctx["requests"]:
+            _release(cli, number)
 
     @pytest.mark.order(1)
     def test_first_deploy_records_every_object(self, cli, ctx):
@@ -113,63 +146,68 @@ class TestTransportRecording:
 
         assert result.returncode == 0, result.stdout + result.stderr
         recorded = _recorded(cli, first)
-        for expected in [("R3TR", "DOMA", "ZERPL_D_SO_STATUS"),
-                         ("R3TR", "DTEL", "ZERPL_E_SO_STATUS"),
+        for expected in [("R3TR", "DOMA", N("ZERPL_D_SO_STATUS")),
+                         ("R3TR", "DTEL", N("ZERPL_E_SO_STATUS")),
                          ("R3TR", "PROG", PROG),
-                         ("R3TR", "PROG", "ZERPL_PO_REPORT"),
-                         ("R3TR", "FUGR", "ZERPL_FG"),
-                         ("R3TR", "TRAN", "ZERPL_VA03"),
-                         ("R3TR", "TRAN", "ZERPL_ME2L"),
-                         ("R3TR", "TRAN", "ZERPL_SO_LIST")]:
+                         ("R3TR", "PROG", N("ZERPL_PO_REPORT")),
+                         ("R3TR", "FUGR", N("ZERPL_FG")),
+                         ("R3TR", "TRAN", N("ZERPL_VA03")),
+                         ("R3TR", "TRAN", N("ZERPL_ME2L")),
+                         ("R3TR", "TRAN", N("ZERPL_SO_LIST"))]:
             assert expected in recorded, f"{expected} not recorded on {first}: {sorted(recorded)}"
 
     @pytest.mark.order(2)
     def test_release_of_the_first_request(self, cli, ctx):
         # Until it is released, its objects are locked in it: a change could
-        # not be recorded on another request (that is test 6's exit 6).
-        result = cli.run("transport", "release", ctx["first"])
-        assert result.returncode == 0, result.stderr
+        # not be recorded on another request. Releasing it also proves the
+        # deploy left nothing inactive (SAP refuses: "Object ... is inactive").
+        assert _release(cli, ctx["first"]) == "released"
 
     @pytest.mark.order(3)
     def test_a_change_records_exactly_the_changed_parts(self, cli, ctx):
         repo = ctx["repo"] / "src"
-        _replace(repo / "zerpl_so_display.prog.screen_0200.abap",
+        _replace(repo / "zerpt_so_display.prog.screen_0200.abap",
                  "PROCESS AFTER INPUT.", "PROCESS AFTER INPUT.\n* changed (test_41)")
-        prog_xml = repo / "zerpl_so_display.prog.xml"
+        prog_xml = repo / "zerpt_so_display.prog.xml"
         _replace(prog_xml, "<TEXT>Sales Order</TEXT>",          # a GUI title (CUA)
                  "<TEXT>Sales Order (test_41)</TEXT>")
         _replace(prog_xml, "<ENTRY>Customer</ENTRY>",            # a text symbol (TPOOL)
                  "<ENTRY>Customer (test_41)</ENTRY>")
-        _replace(repo / "zerpl_fg.fugr.z_erpl_read_order.abap",
-                 "FUNCTION z_erpl_read_order.", "FUNCTION z_erpl_read_order.\n* changed (test_41)")
-        _replace(repo / "zerpl_po_report.prog.abap",
+        _replace(repo / "zerpt_fg.fugr.z_erpt_read_order.abap",
+                 "FUNCTION z_erpt_read_order.", "FUNCTION z_erpt_read_order.\n* changed (test_41)")
+        _replace(repo / "zerpt_po_report.prog.abap",
                  "START-OF-SELECTION.", "* changed (test_41)\nSTART-OF-SELECTION.")
-        _replace(repo / "zerpl_d_so_status.doma.xml",
+        _replace(repo / "zerpt_d_so_status.doma.xml",
                  "</DDTEXT>", " (test_41)</DDTEXT>")
-        _replace(repo / "zerpl_va03.tran.xml",
+        _replace(repo / "zerpt_va03.tran.xml",
                  "<TTEXT>Display Sales Order</TTEXT>",
                  "<TTEXT>Display Sales Order (test_41)</TTEXT>")
         second = _new_request(cli, PACKAGE, "change")
         ctx["second"] = ctx["last_request"] = second
+        ctx["requests"].append(second)
 
         result = cli.run("abapgit", "deploy", str(ctx["repo"]), "--package", PACKAGE,
                          "--transport", second)
 
         assert result.returncode == 0, result.stdout + result.stderr
         recorded = _recorded(cli, second)
+        # A changed program goes on the request whole (R3TR PROG: source,
+        # screens, GUI status, text pool), as abapGit records it - the engine
+        # calls RS_CORR_INSERT for R3TR PROG before writing any part. A
+        # changed function module is recorded alone (LIMU FUNC, via ADT
+        # corrNr), DDIC objects and transactions as R3TR.
         expected = {
-            ("LIMU", "DYNP", f"{PROG} 0200"),      # one screen, not the program
-            ("LIMU", "CUAD", PROG),                # the GUI status / titles
-            ("LIMU", "REPT", PROG),                # the text pool
-            ("LIMU", "FUNC", "Z_ERPL_READ_ORDER"),  # one module, not the group
-            ("LIMU", "REPS", "ZERPL_PO_REPORT"),    # source through ADT corrNr
-            ("R3TR", "DOMA", "ZERPL_D_SO_STATUS"),
-            ("R3TR", "TRAN", "ZERPL_VA03"),
+            ("R3TR", "PROG", PROG),
+            ("R3TR", "PROG", N("ZERPL_PO_REPORT")),
+            ("LIMU", "FUNC", N("Z_ERPL_READ_ORDER")),   # one module, not the group
+            ("R3TR", "DOMA", N("ZERPL_D_SO_STATUS")),
+            ("R3TR", "TRAN", N("ZERPL_VA03")),
         }
         assert expected <= recorded, f"missing: {sorted(expected - recorded)}; got {sorted(recorded)}"
-        unchanged = {("R3TR", "DTEL", "ZERPL_E_SO_STATUS"),
-                     ("R3TR", "TRAN", "ZERPL_ME2L"),
-                     ("LIMU", "DYNP", f"{PROG} 0100")}
+        unchanged = {("R3TR", "DTEL", N("ZERPL_E_SO_STATUS")),
+                     ("R3TR", "TRAN", N("ZERPL_ME2L")),
+                     ("R3TR", "TRAN", N("ZERPL_SO_LIST")),
+                     ("R3TR", "FUGR", N("ZERPL_FG"))}
         assert not unchanged & recorded, f"unchanged parts recorded: {sorted(unchanged & recorded)}"
         ctx["after_change"] = recorded
 
@@ -183,13 +221,13 @@ class TestTransportRecording:
     @pytest.mark.order(5)
     def test_a_deleted_screen_is_recorded(self, cli, ctx):
         repo = ctx["repo"] / "src"
-        xml = repo / "zerpl_so_display.prog.xml"
+        xml = repo / "zerpt_so_display.prog.xml"
         content = xml.read_text(encoding="utf-8")
-        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>\n"
+        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPT_SO_DISPLAY</PROGRAM>\n"
                               "      <SCREEN>0300</SCREEN>")
         end = content.index("    </item>\n", start) + len("    </item>\n")
         xml.write_text(content[:start] + content[end:].lstrip(" "), encoding="utf-8")
-        (repo / "zerpl_so_display.prog.screen_0300.abap").unlink()
+        (repo / "zerpt_so_display.prog.screen_0300.abap").unlink()
 
         result = cli.run("abapgit", "deploy", str(ctx["repo"]), "--package", PACKAGE,
                          "--transport", ctx["second"], "--force")
@@ -204,7 +242,7 @@ class TestTransportRecording:
 
     @pytest.mark.order(6)
     def test_a_released_request_is_refused(self, cli, ctx):
-        _replace(ctx["repo"] / "src" / "zerpl_d_so_status.doma.xml",
+        _replace(ctx["repo"] / "src" / "zerpt_d_so_status.doma.xml",
                  " (test_41)</DDTEXT>", " (test_41 b)</DDTEXT>")
         result = cli.run("abapgit", "deploy", str(ctx["repo"]), "--package", PACKAGE,
                          "--transport", ctx["first"])
@@ -218,26 +256,31 @@ class TestTransportRecording:
         assert result.returncode == EXIT_TRANSPORT, result.stdout + result.stderr
 
     @pytest.mark.order(8)
-    def test_an_object_in_a_colleagues_request_is_a_lock_conflict(
+    def test_an_object_in_my_request_is_refused_to_a_colleague(
             self, cli, colleague_cli, ctx, tmp_path):
+        """A colleague deploys a change to the domain while it is still on my
+        open request: SAP refuses to record it on theirs, nothing is written,
+        and the refusal names my request (a CTS conflict: exit 9)."""
         if colleague_cli.run("discover", "services").returncode != 0:
             pytest.skip("no colleague user on this system (SAP_COLLEAGUE_USER)")
         theirs_request = _new_request(colleague_cli, PACKAGE, "colleague")
-        theirs = _repo_copy(tmp_path / "theirs")
-        _replace(theirs / "src" / "zerpl_d_so_status.doma.xml",
-                 "</DDTEXT>", " (colleague)</DDTEXT>")
-        colleague_cli.run_ok("abapgit", "deploy",
-                             str(theirs / "src" / "zerpl_d_so_status.doma.xml"),
-                             "--package", PACKAGE, "--transport", theirs_request, "--force")
+        try:
+            theirs = _repo_copy(tmp_path / "theirs")
+            domain = theirs / "src" / "zerpt_d_so_status.doma.xml"
+            _replace(domain, "</DDTEXT>", " (colleague)</DDTEXT>")
 
-        result = cli.run("abapgit", "deploy",
-                         str(ctx["repo"] / "src" / "zerpl_d_so_status.doma.xml"),
-                         "--package", PACKAGE, "--transport", ctx["second"], "--force")
+            result = colleague_cli.run("abapgit", "deploy", str(domain), "--package", PACKAGE,
+                                       "--transport", theirs_request, "--force")
 
-        assert result.returncode == EXIT_LOCK, result.stdout + result.stderr
-        assert ("R3TR", "DOMA", "ZERPL_D_SO_STATUS") in _recorded(colleague_cli, theirs_request)
-
-
+            assert result.returncode == EXIT_TRANSPORT, result.stdout + result.stderr
+            entry = _entry(json.loads(result.stdout), "DOMA", N("ZERPL_D_SO_STATUS"))
+            # SAP names the task the object is locked in (TK 247), part of my request.
+            mine = {ctx["second"]} | {t["number"] for t in
+                                      cli.run_ok("transport", "show", ctx["second"])["tasks"]}
+            assert any(n in entry["message"] for n in mine), (mine, entry)
+            assert _recorded(colleague_cli, theirs_request) == set()
+        finally:
+            _release(colleague_cli, theirs_request)
 # ===========================================================================
 # #73 - a transaction update must not drop its authorization check
 # ===========================================================================

@@ -343,30 +343,52 @@ TEST_CASE("GetTransport: reads the request and its task", "[adt][transport]") {
 
 TEST_CASE("GetTransport: lists the object entries of request and task",
           "[adt][transport]") {
+    // Captured from A4H: a released request after test_41 (#72). The request
+    // carries the release comment (CORR RELE) and the objects merged into it
+    // on release; tm:all_objects repeats them as an aggregate and is not read.
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
 
-    auto result = GetTransport(mock, "A4HK900156");
+    auto result = GetTransport(mock, "A4HK900260");
     REQUIRE(result.IsOk());
     const auto& tr = result.Value();
+    CHECK(tr.status == "released");
 
-    REQUIRE(tr.objects.size() == 1);
-    CHECK(tr.objects[0].pgmid == "R3TR");
-    CHECK(tr.objects[0].type == "DEVC");
-    CHECK(tr.objects[0].name == "ZERPL_TRSHOW");
+    REQUIRE(tr.objects.size() == 9);
+    CHECK(tr.objects[0].pgmid == "CORR");
+    CHECK(tr.objects[0].type == "RELE");
+    CHECK(tr.objects[0].description == "Comment Entry: Released");
+    CHECK(tr.objects[1].pgmid == "R3TR");
+    CHECK(tr.objects[1].type == "DOMA");
+    CHECK(tr.objects[1].name == "ZERPT_D_SO_STATUS");
+    CHECK(tr.objects[1].description == "Domain");
 
     REQUIRE(tr.tasks.size() == 1);
+    CHECK(tr.tasks[0].number == "A4HK900261");
+    CHECK(tr.tasks[0].status == "released");
     const auto& objs = tr.tasks[0].objects;
-    REQUIRE(objs.size() == 2);
+    REQUIRE(objs.size() == 8);
+    CHECK(objs[3].type == "PROG");
+    CHECK(objs[3].name == "ZERPT_PO_REPORT");
+}
+
+TEST_CASE("GetTransport: an entry locked on an open request says so",
+          "[adt][transport]") {
+    // Captured from A4H: a package created on a request (#72), still open.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_locked.xml")}));
+
+    auto result = GetTransport(mock, "A4HK900220");
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().tasks.size() == 1);
+    const auto& objs = result.Value().tasks[0].objects;
+    REQUIRE(objs.size() == 1);
     CHECK(objs[0].pgmid == "R3TR");
-    CHECK(objs[0].type == "CLAS");
-    CHECK(objs[0].name == "ZCL_TRSHOW_DEMO");
-    CHECK(objs[0].description == "Class");
+    CHECK(objs[0].type == "DEVC");
+    CHECK(objs[0].name == "ZERPL_TR");
     CHECK(objs[0].lock_status == "X");
-    CHECK(objs[1].pgmid == "LIMU");
-    CHECK(objs[1].type == "METH");
-    CHECK(objs[1].lock_status.empty());
 }
 
 TEST_CASE("GetTransport: a missing request is NotFound", "[adt][transport]") {

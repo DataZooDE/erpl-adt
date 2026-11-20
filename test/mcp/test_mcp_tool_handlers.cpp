@@ -435,16 +435,16 @@ TEST_CASE("adt_show_transport: request with its task", "[mcp][handlers][transpor
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_show_transport",
-                           {{"transport_number", "A4HK900156"}});
+                           {{"transport_number", "A4HK900260"}});
     CHECK_FALSE(result.is_error);
     auto j = ParseContent(result);
-    CHECK(j["number"] == "A4HK900156");
-    CHECK(j["status"] == "modifiable");
+    CHECK(j["number"] == "A4HK900260");
+    CHECK(j["status"] == "released");
     REQUIRE(j["tasks"].size() == 1);
-    CHECK(j["tasks"][0]["number"] == "A4HK900157");
-    REQUIRE(j["tasks"][0]["objects"].size() == 2);
-    CHECK(j["tasks"][0]["objects"][0]["type"] == "CLAS");
-    CHECK(j["objects"][0]["type"] == "DEVC");
+    CHECK(j["tasks"][0]["number"] == "A4HK900261");
+    REQUIRE(j["tasks"][0]["objects"].size() == 8);
+    CHECK(j["tasks"][0]["objects"][0]["type"] == "DOMA");
+    CHECK(j["objects"][0]["type"] == "RELE");
 }
 
 TEST_CASE("adt_show_transport: is read-only", "[mcp][handlers][transport]") {
