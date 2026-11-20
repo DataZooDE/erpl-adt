@@ -369,6 +369,10 @@ TEST_CASE("adt_run_atc: with findings", "[mcp][handlers][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    // No check_variant: the system variant from the customizing, checked to exist.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("checks/atc_customizing.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<chkv:checkvariant/>"}));
     // ATC workflow: POST create worklist (returns ID in body), POST run, GET results.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_001"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
@@ -383,6 +387,9 @@ TEST_CASE("adt_run_atc: with findings", "[mcp][handlers][checks]") {
     CHECK(j.contains("findings"));
     CHECK(j["findings"].is_array());
     CHECK(j["worklist_id"] == "wl_001");
+    CHECK(j["variant"] == "ZABAP_CLOUD_DEVELOPMENT");
+    CHECK(mock.PostCalls()[0].path.find("checkVariant=ZABAP_CLOUD_DEVELOPMENT") !=
+          std::string::npos);
 }
 
 TEST_CASE("adt_run_atc: missing uri param", "[mcp][handlers][checks]") {

@@ -189,3 +189,26 @@ class TestOutcomeExitCodes:
         clean = cli.run("check", uri, "--variant", ATC_VARIANT)
         assert clean.returncode == 0, clean.stderr
         assert single_json(clean)["error_count"] == 0
+
+    def test_check_without_variant_uses_the_system_variant(self, cli, test_class,
+                                                           tmp_path):
+        """No --variant: the system's own check variant, as in Eclipse. The
+        literal DEFAULT the CLI used to send does not exist on A4H, and SAP
+        silently fell back to checks that rate BREAK-POINT priority 2."""
+        uri, name = test_class["uri"], test_class["name"]
+        assert write(cli, uri, atc_error_source(name), tmp_path,
+                     "--activate").returncode == 0
+
+        result = cli.run("check", uri)
+        data = single_json(result)
+        assert data["variant"] == ATC_VARIANT, data
+        assert data["error_count"] > 0, data
+        assert result.returncode == EXIT_CHECK_ERROR, result.stderr
+
+    def test_check_with_an_unknown_variant_is_refused(self, cli, test_class):
+        """A misspelled variant ran silently with other checks; now it is
+        NotFound (exit 2) and nothing runs."""
+        result = cli.run("check", test_class["uri"], "--variant", "NOPE_XYZ_123")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "NOPE_XYZ_123" in result.stderr
+        assert not result.stdout.strip()

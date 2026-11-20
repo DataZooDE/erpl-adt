@@ -75,7 +75,7 @@ erpl-adt activate ZCL_MY_CLASS
 
 # Run unit tests and ATC checks (by name or URI)
 erpl-adt test ZCL_MY_CLASS
-erpl-adt check ZCL_MY_CLASS --variant DEFAULT
+erpl-adt check ZCL_MY_CLASS                  # the system check variant, as in Eclipse
 
 # Create a transport request and release it
 erpl-adt transport create --desc "Feature XYZ" --package ZPACKAGE
@@ -181,7 +181,7 @@ ACTIVATE — Activate inactive ABAP objects
 TEST / CHECK
   test <name-or-uri>                      Run ABAP unit tests
   check <name-or-uri>                     Run ATC quality checks
-      --variant <name>                    ATC variant (default: DEFAULT)
+      --variant <name>                    ATC variant (default: the system check variant)
 
 TRANSPORT — List, create, and release transports
   transport create --desc <text> --package <pkg>

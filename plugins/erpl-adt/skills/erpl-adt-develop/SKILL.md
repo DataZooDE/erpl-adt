@@ -3,7 +3,7 @@ name: erpl-adt-develop
 description: >
   Developing ABAP from the shell with erpl-adt: finding objects (erpl-adt search --type, package list/tree,
   object read), reading and writing source (source read --version --section, source write --file, then activate;
-  source check), activation (activate), ABAP Unit (test) and ATC (check --variant), creating objects
+  source check), activation (activate), ABAP Unit (test) and ATC (check, system check variant by default), creating objects
   (object create --type CLAS/OC, PROG/P, INTF/OI, DDLS/DF, TABL/DT, BDEF/BDO, SRVD/SRV, SRVB/SVB with binding
   flags), deleting, locks (object lock/unlock, --session-file), running console classes (object run for
   IF_OO_ADT_CLASSRUN), DDIC inspection (ddic table, ddic cds) and the ABAP Cloud rules agent-written code must
@@ -58,7 +58,7 @@ erpl-adt --json source write ZCL_MY_CLASS --file zcl_my_class.abap --transport A
 erpl-adt --json source check ZCL_MY_CLASS --version inactive   # exit 8 on a syntax error
 erpl-adt --json activate ZCL_MY_CLASS            # exit 5: failed / error_messages
 erpl-adt --json test ZCL_MY_CLASS                # exit 7: all_passed / total_failed
-erpl-adt --json check ZCL_MY_CLASS --variant DEFAULT   # exit 8 on priority 1: findings / error_count
+erpl-adt --json check ZCL_MY_CLASS                # exit 8 on priority 1: findings / error_count / variant
 ```
 
 `source edit` opens `$EDITOR` — interactive, for humans only.

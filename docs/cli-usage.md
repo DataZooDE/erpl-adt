@@ -161,14 +161,17 @@ erpl-adt source check ZCL_MY_CLASS --version inactive
 erpl-adt test ZCL_MY_CLASS
 erpl-adt --json test ZCL_MY_CLASS
 
-# Run ATC quality checks
+# Run ATC quality checks: without --variant the system check variant (ATC
+# customizing, as in Eclipse); a variant the system does not know exits 2
 erpl-adt check ZCL_MY_CLASS
 erpl-adt check ZCL_MY_CLASS --variant FUNCTIONAL_DB_ADDITION
 ```
 
+The JSON names the variant that ran (`variant`).
+
 **API:**
 - `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
-- `RunAtcCheck(session, uri, variant)` -- worklist + run + get findings
+- `RunAtcCheck(session, uri, variant)` -- variant: empty → `systemCheckVariant` from `GET /sap/bc/adt/atc/customizing` (DEFAULT if none); checked via `GET /sap/bc/adt/atc/checkvariants/{name}`; then worklist + run + get findings
 
 ### transport -- Transport management
 

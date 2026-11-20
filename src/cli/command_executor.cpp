@@ -2474,7 +2474,8 @@ int HandleCheckRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto variant = GetFlag(args, "variant", "DEFAULT");
+    // Empty: RunAtcCheck runs the system check variant, as Eclipse does.
+    auto variant = GetFlag(args, "variant", "");
     auto session = RequireSession(args, fmt);
     if (!session) {
         return 99;
@@ -2498,6 +2499,7 @@ int HandleCheckRun(const CommandArgs& args) {
     if (fmt.IsJsonMode()) {
         nlohmann::json j;
         j["worklist_id"] = atc.worklist_id;
+        j["variant"] = atc.variant;
         j["error_count"] = atc.ErrorCount();
         j["warning_count"] = atc.WarningCount();
         nlohmann::json findings = nlohmann::json::array();
@@ -2511,7 +2513,7 @@ int HandleCheckRun(const CommandArgs& args) {
         j["findings"] = findings;
         fmt.PrintJson(j.dump());
     } else {
-        std::cout << "ATC Check: " << atc.ErrorCount() << " errors, "
+        std::cout << "ATC Check (" << atc.variant << "): " << atc.ErrorCount() << " errors, "
                   << atc.WarningCount() << " warnings\n";
         for (const auto& f : atc.findings) {
             auto prio = f.priority == 1 ? "ERR" : (f.priority == 2 ? "WARN" : "INFO");
@@ -8348,7 +8350,7 @@ void RegisterAllCommands(CommandRouter& router) {
             "(the JSON still carries findings and error_count); priority 2 and 3 "
             "findings exit 0.";
         help.flags = {
-            {"variant", "<name>", "ATC variant (default: DEFAULT)", false},
+            {"variant", "<name>", "ATC check variant (default: the system check variant, as in Eclipse); an unknown name exits 2", false},
         };
         help.examples = {
             "erpl-adt check ZCL_MY_CLASS",

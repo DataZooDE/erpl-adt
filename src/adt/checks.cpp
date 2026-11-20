@@ -3,9 +3,11 @@
 #include "atom_parser.hpp"
 
 #include <erpl_adt/adt/object_exists.hpp>
+#include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -171,6 +173,57 @@ Result<std::vector<AtcFinding>, Error> GetWorklistFindings(
     return Result<std::vector<AtcFinding>, Error>::Ok(std::move(findings));
 }
 
+constexpr const char* kCustomizingPath = "/sap/bc/adt/atc/customizing";
+
+// The system check variant from the ATC customizing; DEFAULT when the
+// customizing cannot be read or names none (older releases).
+std::string ResolveSystemVariant(IAdtSession& session) {
+    HttpHeaders headers;
+    headers["Accept"] = "application/xml";
+    auto response = session.Get(kCustomizingPath, headers);
+    if (response.IsErr() || response.Value().status_code != 200) {
+        return "DEFAULT";
+    }
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(response.Value().body.data(), response.Value().body.size()) !=
+            tinyxml2::XML_SUCCESS ||
+        !doc.RootElement()) {
+        return "DEFAULT";
+    }
+    const auto* props = atom_parser::FirstChildByLocalName(doc.RootElement(), "properties");
+    for (auto* p = props ? props->FirstChildElement() : nullptr; p;
+         p = p->NextSiblingElement()) {
+        if (atom_parser::HasLocalName(p, "property") &&
+            AttrByLocalName(p, "name") == "systemCheckVariant") {
+            auto value = AttrByLocalName(p, "value");
+            if (!value.empty()) return value;
+        }
+    }
+    return "DEFAULT";
+}
+
+// A variant SAP does not know answers 404 with ExceptionResourceNotFound
+// ("Error while importing object X from the database"). A 404 without that
+// payload is a release without the resource: then the run goes ahead
+// unchecked, as it always did.
+std::optional<Error> EnsureVariantExists(IAdtSession& session,
+                                         const std::string& variant) {
+    const auto path = "/sap/bc/adt/atc/checkvariants/" + UrlEncode(variant);
+    auto response = session.Get(path, HttpHeaders{});
+    if (response.IsErr()) {
+        return std::move(response).Error();
+    }
+    const auto& http = response.Value();
+    if (http.status_code == 404 &&
+        http.body.find("ExceptionResourceNotFound") != std::string::npos) {
+        return Error{"RunAtcCheck", path, 404,
+                     "ATC check variant " + variant + " does not exist. "
+                     "Omit --variant to run the system check variant.",
+                     std::nullopt, ErrorCategory::NotFound};
+    }
+    return std::nullopt;
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -189,8 +242,14 @@ Result<AtcResult, Error> RunAtcCheck(
         return Result<AtcResult, Error>::Err(std::move(missing).Error());
     }
 
+    const auto variant = check_variant.empty() ? ResolveSystemVariant(session)
+                                               : check_variant;
+    if (auto unknown = EnsureVariantExists(session, variant)) {
+        return Result<AtcResult, Error>::Err(std::move(*unknown));
+    }
+
     // Step 1: Create worklist.
-    auto worklist_result = CreateWorklist(session, check_variant);
+    auto worklist_result = CreateWorklist(session, variant);
     if (worklist_result.IsErr()) {
         return Result<AtcResult, Error>::Err(std::move(worklist_result).Error());
     }
@@ -210,6 +269,7 @@ Result<AtcResult, Error> RunAtcCheck(
 
     AtcResult result;
     result.worklist_id = worklist_id;
+    result.variant = variant;
     result.findings = std::move(findings_result).Value();
     return Result<AtcResult, Error>::Ok(std::move(result));
 }

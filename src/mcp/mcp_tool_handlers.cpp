@@ -311,13 +311,14 @@ ToolResult HandleRunAtc(IAdtSession& session,
     auto uri = RequireString(params, "uri", err);
     if (!uri) return err;
 
-    auto variant = OptString(params, "check_variant", "DEFAULT");
+    auto variant = OptString(params, "check_variant", "");
     auto result = RunAtcCheck(session, *uri, variant);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     const auto& atc = result.Value();
     nlohmann::json j;
     j["worklist_id"] = atc.worklist_id;
+    j["variant"] = atc.variant;
     j["error_count"] = atc.ErrorCount();
     j["warning_count"] = atc.WarningCount();
     nlohmann::json findings = nlohmann::json::array();
@@ -925,7 +926,8 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         "Returns findings with severity and line numbers.",
         MakeSchema(
             {{"uri", StringProp("Object or package URI")},
-             {"check_variant", StringProp("ATC check variant (default: DEFAULT)")}},
+             {"check_variant", StringProp("ATC check variant (default: the system check "
+                                          "variant from the ATC customizing; an unknown name is an error)")}},
             {"uri"}),
         [&session](const nlohmann::json& params) {
             return HandleRunAtc(session, params);
