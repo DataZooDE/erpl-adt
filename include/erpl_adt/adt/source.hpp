@@ -87,9 +87,14 @@ struct SyntaxMessage {
 // CheckSyntax — run a syntax check on an ABAP object.
 //
 // Endpoint: POST /sap/bc/adt/checkruns?reporters=abapCheckRun
+//
+// version: "active" (default) or "inactive". Source that was written but not
+// activated yet exists only in the inactive version. Any other value is
+// refused before a request is sent.
 // ---------------------------------------------------------------------------
 [[nodiscard]] Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
     IAdtSession& session,
-    const std::string& source_uri);
+    const std::string& source_uri,
+    const std::string& version = "active");
 
 } // namespace erpl_adt

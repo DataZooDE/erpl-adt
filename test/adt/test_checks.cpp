@@ -28,6 +28,17 @@ std::string LoadFixture(const std::string& filename) {
     return ss.str();
 }
 
+// The variant is resolved before the run: from the ATC customizing when none
+// is given, then checked to exist (GET /atc/checkvariants/{name}).
+void EnqueueSystemVariant(MockAdtSession& mock) {
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("checks/atc_customizing.xml")}));
+}
+
+void EnqueueVariantExists(MockAdtSession& mock) {
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<chkv:checkvariant/>"}));
+}
+
 } // anonymous namespace
 
 // ===========================================================================
@@ -38,6 +49,7 @@ TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueVariantExists(mock);
 
     // Step 1: Create worklist -> returns ID.
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_001"}));
@@ -47,28 +59,48 @@ TEST_CASE("RunAtcCheck: full workflow with findings", "[adt][checks]") {
     auto xml = LoadFixture("checks/atc_worklist.xml");
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
-    auto result = RunAtcCheck(mock, "/sap/bc/adt/packages/ztest_pkg", "FUNCTIONAL_DB_ADDITION");
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/ztest_prb_17726",
+                              "ZABAP_CLOUD_DEVELOPMENT");
     REQUIRE(result.IsOk());
 
+    // The fixture is a worklist captured from A4H (SAP_BASIS 816): every
+    // element and attribute is namespace-prefixed (atcobject:object,
+    // atcfinding:finding, atcfinding:priority, ...). A parser that looked for
+    // unprefixed names read it as "no findings" — every live run was clean.
     auto& atc = result.Value();
     CHECK(atc.worklist_id == "wl_001");
-    REQUIRE(atc.findings.size() == 3);
+    REQUIRE(atc.findings.size() == 5);
 
     CHECK(atc.findings[0].priority == 1);
-    CHECK(atc.findings[0].message == "SELECT statement inside LOOP detected");
-    CHECK(atc.findings[0].check_title == "Functional DB Check");
+    CHECK(atc.findings[0].check_title == "ABAP Language Version (Syntax)");
+    CHECK(atc.findings[0].message_title ==
+          "Syntax error in restricted language scope (checkpoints)");
+    // There is no separate message attribute; the title is the message.
+    CHECK(atc.findings[0].message == atc.findings[0].message_title);
+    // uri is the source position an agent jumps to, not the finding id.
+    CHECK(atc.findings[0].uri ==
+          "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main#start=8,0");
 
     CHECK(atc.findings[1].priority == 2);
-    CHECK(atc.findings[2].priority == 3);
+    CHECK(atc.findings[1].message_title ==
+          "The line contains a BREAK-POINT statement.");
+    CHECK(atc.findings[2].priority == 2);
+    CHECK(atc.findings[3].priority == 1);
+    CHECK(atc.findings[3].check_title == "Usage of Released APIs");
+    CHECK(atc.findings[4].priority == 3);
+    CHECK(atc.findings[4].uri ==
+          "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main#start=10,0");
 
-    CHECK(atc.ErrorCount() == 1);
-    CHECK(atc.WarningCount() == 1);
+    CHECK(atc.ErrorCount() == 2);
+    CHECK(atc.WarningCount() == 2);
 }
 
 TEST_CASE("RunAtcCheck: clean results", "[adt][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueSystemVariant(mock);
+    EnqueueVariantExists(mock);
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_002"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     auto xml = LoadFixture("checks/atc_worklist_clean.xml");
@@ -83,6 +115,7 @@ TEST_CASE("RunAtcCheck: sends correct endpoints", "[adt][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueVariantExists(mock);
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_test"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
@@ -95,14 +128,17 @@ TEST_CASE("RunAtcCheck: sends correct endpoints", "[adt][checks]") {
     CHECK(mock.PostCalls()[0].path.find("checkVariant=MY_VARIANT") != std::string::npos);
     CHECK(mock.PostCalls()[1].path.find("worklistId=wl_test") != std::string::npos);
 
-    REQUIRE(mock.GetCallCount() == 2);
-    CHECK(mock.GetCalls()[1].path.find("atc/worklists/wl_test") != std::string::npos);
+    REQUIRE(mock.GetCallCount() == 3);
+    CHECK(mock.GetCalls()[1].path == "/sap/bc/adt/atc/checkvariants/MY_VARIANT");
+    CHECK(mock.GetCalls()[2].path.find("atc/worklists/wl_test") != std::string::npos);
 }
 
 TEST_CASE("RunAtcCheck: worklist creation failure propagated", "[adt][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueSystemVariant(mock);
+    EnqueueVariantExists(mock);
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, ""}));
 
     auto result = RunAtcCheck(mock, "/sap/bc/adt/packages/ztest");
@@ -113,6 +149,8 @@ TEST_CASE("RunAtcCheck: run creation failure propagated", "[adt][checks]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueSystemVariant(mock);
+    EnqueueVariantExists(mock);
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_test"}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, ""}));
 
@@ -149,4 +187,78 @@ TEST_CASE("RunAtcCheck: a transport failure is not reported as missing",
     auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x");
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::Connection);
+}
+
+// ===========================================================================
+// The check variant. Without one, the CLI sent the literal "DEFAULT", which
+// does not exist on A4H — SAP ran other checks without a word, and a
+// misspelled --variant did the same.
+// ===========================================================================
+
+TEST_CASE("RunAtcCheck: without a variant runs the system check variant",
+          "[adt][checks]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueSystemVariant(mock);  // captured from A4H: ZABAP_CLOUD_DEVELOPMENT
+    EnqueueVariantExists(mock);
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_sys"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("checks/atc_worklist_clean.xml")}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().variant == "ZABAP_CLOUD_DEVELOPMENT");
+    CHECK(mock.GetCalls()[1].path == "/sap/bc/adt/atc/customizing");
+    CHECK(mock.PostCalls()[0].path.find("checkVariant=ZABAP_CLOUD_DEVELOPMENT") !=
+          std::string::npos);
+}
+
+TEST_CASE("RunAtcCheck: customizing without a system variant falls back to DEFAULT",
+          "[adt][checks]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<atc:customizing xmlns:atc=\"http://www.sap.com/adt/atc\"><properties/></atc:customizing>"}));
+    EnqueueVariantExists(mock);
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_def"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("checks/atc_worklist_clean.xml")}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().variant == "DEFAULT");
+}
+
+TEST_CASE("RunAtcCheck: an unknown variant is NotFound and nothing runs",
+          "[adt][checks]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    // Captured from A4H for GET /atc/checkvariants/NOPE_XYZ_123.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {404, {}, LoadFixture("checks/atc_checkvariant_not_found.xml")}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x", "NOPE_XYZ_123");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(result.Error().message.find("NOPE_XYZ_123") != std::string::npos);
+    CHECK(mock.PostCallCount() == 0);
+}
+
+TEST_CASE("RunAtcCheck: a release without the variant resource still runs",
+          "[adt][checks]") {
+    // A 404 without SAP's resource-not-found payload means the endpoint is
+    // not there (older releases), not that the variant is missing.
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({404, {}, "<html>Not Found</html>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl_old"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("checks/atc_worklist_clean.xml")}));
+
+    auto result = RunAtcCheck(mock, "/sap/bc/adt/oo/classes/zcl_x", "MY_VARIANT");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().variant == "MY_VARIANT");
 }

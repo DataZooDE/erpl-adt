@@ -227,6 +227,53 @@ TEST_CASE("CheckSyntax: sends POST to checkruns endpoint", "[adt][source]") {
     CHECK(call.body.find("zcl_test/source/main") != std::string::npos);
 }
 
+TEST_CASE("CheckSyntax: checks the active version by default", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<chkrun:checkRunReports xmlns:chkrun=\"http://www.sap.com/adt/checkrun\"/>"}));
+
+    auto result = CheckSyntax(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main");
+    REQUIRE(result.IsOk());
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].body.find("chkrun:version=\"active\"") != std::string::npos);
+}
+
+// #75: code that was just written and not activated yet lives only in the
+// inactive version; checking "active" reports the old, clean code.
+TEST_CASE("CheckSyntax: checks the inactive version when asked", "[adt][source]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    // Captured from A4H: an undeclared variable written, not activated.
+    auto xml = LoadFixture("source/check_errors_inactive.xml");
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = CheckSyntax(mock, "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main",
+                              "inactive");
+    REQUIRE(result.IsOk());
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].body.find("chkrun:version=\"inactive\"") != std::string::npos);
+
+    auto& msgs = result.Value();
+    REQUIRE(msgs.size() == 1);
+    CHECK(msgs[0].type == "E");
+    CHECK(msgs[0].text == "Field \"LV_UNDECLARED_X\" is unknown.");
+    CHECK(msgs[0].line == 7);
+    CHECK(msgs[0].offset == 16);
+}
+
+TEST_CASE("CheckSyntax: an unknown version is refused before any request",
+          "[adt][source]") {
+    MockAdtSession mock;
+    auto result = CheckSyntax(mock, "/sap/bc/adt/oo/classes/zcl_test/source/main",
+                              "latest");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().message.find("active") != std::string::npos);
+    CHECK(result.Error().message.find("inactive") != std::string::npos);
+    CHECK(mock.GetCallCount() == 0);
+    CHECK(mock.PostCallCount() == 0);
+}
+
 TEST_CASE("CheckSyntax: HTTP error propagated", "[adt][source]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.

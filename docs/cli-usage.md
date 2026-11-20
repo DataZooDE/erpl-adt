@@ -143,14 +143,16 @@ erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001
 # Write and activate in one step
 erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001 --activate
 
-# Run syntax check
+# Run syntax check (exit 8 on an error); --version inactive checks what was
+# written but not activated yet
 erpl-adt source check ZCL_MY_CLASS
+erpl-adt source check ZCL_MY_CLASS --version inactive
 ```
 
 **API:**
 - `ReadSource(session, uri, version)` -- `GET {sourceUri}?version=active`
 - `WriteSource(session, uri, source, handle)` -- `PUT {sourceUri}?lockHandle=...`
-- `CheckSyntax(session, uri)` -- `POST /sap/bc/adt/checkruns?reporters=abapCheckRun`
+- `CheckSyntax(session, uri, version)` -- `POST /sap/bc/adt/checkruns?reporters=abapCheckRun` (`chkrun:version` active|inactive)
 
 ### test / check -- ABAP Unit and ATC
 
@@ -159,14 +161,17 @@ erpl-adt source check ZCL_MY_CLASS
 erpl-adt test ZCL_MY_CLASS
 erpl-adt --json test ZCL_MY_CLASS
 
-# Run ATC quality checks
+# Run ATC quality checks: without --variant the system check variant (ATC
+# customizing, as in Eclipse); a variant the system does not know exits 2
 erpl-adt check ZCL_MY_CLASS
 erpl-adt check ZCL_MY_CLASS --variant FUNCTIONAL_DB_ADDITION
 ```
 
+The JSON names the variant that ran (`variant`).
+
 **API:**
 - `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
-- `RunAtcCheck(session, uri, variant)` -- worklist + run + get findings
+- `RunAtcCheck(session, uri, variant)` -- variant: empty → `systemCheckVariant` from `GET /sap/bc/adt/atc/customizing` (DEFAULT if none); checked via `GET /sap/bc/adt/atc/checkvariants/{name}`; then worklist + run + get findings
 
 ### transport -- Transport management
 
@@ -437,13 +442,18 @@ The deploy workflow is an idempotent state machine: `discover → create package
 | 2 | Package / NotFound error |
 | 3 | Clone error |
 | 4 | Pull error |
-| 5 | Activation error |
+| 5 | Activation error, or activation failed (`activate`, `source write --activate`, `source edit --activate`) |
 | 6 | Lock conflict |
-| 7 | Test failure |
-| 8 | ATC check error |
+| 7 | Test failure (`test`: a method failed) |
+| 8 | ATC check error, or a priority-1 ATC finding (`check`) / an error from `source check` |
 | 9 | Transport error |
 | 10 | Timeout |
 | 99 | Internal error |
+
+5, 7 and 8 also report *outcomes*: the run worked, but what it found should stop a
+script. They are the same in text and `--json` mode, and with `--json` the result
+is still printed on stdout (`failed`/`error_messages`, `all_passed`/`total_failed`,
+`findings`/`error_count`). ATC priority 2 and 3 findings and syntax warnings exit 0.
 
 HTTP 403 is classified by what the response carries, not by the status alone: a
 403 with a SAP application error is not a token problem -- "currently

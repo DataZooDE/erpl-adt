@@ -28,10 +28,9 @@ const char* kLockXml = R"(<?xml version="1.0" encoding="UTF-8"?>
   </asx:values>
 </asx:abap>)";
 
-// Activation success response XML (chkl namespace, no errors).
-const char* kActivationXml = R"(<?xml version="1.0" encoding="utf-8"?>
-<chkl:activationResultList xmlns:chkl="http://www.sap.com/adt/checklistresult">
-</chkl:activationResultList>)";
+// Activation success response, captured from A4H: no messages, and the
+// properties say the activation ran.
+const char* kActivationXml = R"(<?xml version="1.0" encoding="utf-8"?><chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist"><chkl:properties checkExecuted="true" activationExecuted="true" generationExecuted="true"/></chkl:messages>)";
 
 const std::string kSourceUri = "/sap/bc/adt/oo/classes/zcl_test/source/main";
 const std::string kObjectUri  = "/sap/bc/adt/oo/classes/zcl_test";
@@ -158,6 +157,35 @@ TEST_CASE("RunSourceEdit: --activate calls ActivateObject after write", "[source
     // POST count: lock + unlock + activate = 3.
     CHECK(mock.PostCallCount() == 3);
     CHECK(out.str().find("Activated") != std::string::npos);
+}
+
+// A failed activation is a failure (#75): exit 5 and SAP's messages on err,
+// never "Activated". Response captured from A4H for an undeclared variable.
+TEST_CASE("RunSourceEdit: --activate reports a failed activation with exit 5",
+          "[source][edit]") {
+    std::string here = __FILE__;
+    here = here.substr(0, here.find_last_of("/\\"));            // test/adt
+    const auto test_root = here.substr(0, here.find_last_of("/\\"));  // test
+    std::ifstream in(test_root + "/testdata/activation_failed_response.xml");
+    REQUIRE(in.good());
+    std::stringstream failed_xml;
+    failed_xml << in.rdbuf();
+
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, kOriginal}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, kLockXml}));        // Lock.
+    mock.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));               // Write.
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({204, {}, ""}));              // Unlock.
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("csrf-tok")));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, failed_xml.str()}));  // Activate.
+
+    std::ostringstream out, err;
+    int rc = RunSourceEdit(mock, kSourceUri, std::nullopt, /*activate=*/true, false,
+                           ReplacingEditor(kModified), out, err);
+
+    CHECK(rc == 5);
+    CHECK(out.str().find("Activated") == std::string::npos);
+    CHECK(err.str().find("LV_UNDECLARED_X") != std::string::npos);
 }
 
 // ===========================================================================

@@ -223,7 +223,8 @@ ToolResult HandleCheckSyntax(IAdtSession& session,
     auto uri = RequireString(params, "uri", err);
     if (!uri) return err;
 
-    auto result = CheckSyntax(session, *uri);
+    auto result = CheckSyntax(session, *uri,
+                              OptString(params, "version", "active"));
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     nlohmann::json j = nlohmann::json::array();
@@ -310,13 +311,14 @@ ToolResult HandleRunAtc(IAdtSession& session,
     auto uri = RequireString(params, "uri", err);
     if (!uri) return err;
 
-    auto variant = OptString(params, "check_variant", "DEFAULT");
+    auto variant = OptString(params, "check_variant", "");
     auto result = RunAtcCheck(session, *uri, variant);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     const auto& atc = result.Value();
     nlohmann::json j;
     j["worklist_id"] = atc.worklist_id;
+    j["variant"] = atc.variant;
     j["error_count"] = atc.ErrorCount();
     j["warning_count"] = atc.WarningCount();
     nlohmann::json findings = nlohmann::json::array();
@@ -926,9 +928,12 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
     registry.Register(
         "adt_check_syntax",
         "Run a syntax check on an ABAP source object. "
-        "Returns errors and warnings with line numbers.",
+        "Returns errors and warnings with line numbers. "
+        "Source written but not activated yet exists only in the inactive "
+        "version: pass version 'inactive' to check it before activating.",
         MakeSchema(
-            {{"uri", StringProp("Source URI to check")}},
+            {{"uri", StringProp("Source URI to check")},
+             {"version", StringProp("Version: 'active' (default) or 'inactive'")}},
             {"uri"}),
         [&session](const nlohmann::json& params) {
             return HandleCheckSyntax(session, params);
@@ -964,7 +969,8 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
         "Returns findings with severity and line numbers.",
         MakeSchema(
             {{"uri", StringProp("Object or package URI")},
-             {"check_variant", StringProp("ATC check variant (default: DEFAULT)")}},
+             {"check_variant", StringProp("ATC check variant (default: the system check "
+                                          "variant from the ATC customizing; an unknown name is an error)")}},
             {"uri"}),
         [&session](const nlohmann::json& params) {
             return HandleRunAtc(session, params);

@@ -22,9 +22,10 @@ erpl-adt talks the same HTTP endpoints Eclipse ADT uses — no Eclipse, no RFC S
 2. **Never put a password on the command line.** Export it and let erpl-adt read it: `--password-env VAR`
    (default `SAP_PASSWORD`) or `ERPL_ADT_PASSWORD` for commands; `login` reads only `SAP_PASSWORD` /
    `--password-env`. The interactive `login` wizard needs a terminal — a human runs it (`! erpl-adt login`).
-3. **With `--json`, judge outcomes by fields, not exit codes.** `activate` (`failed`, `error_messages`), `test`
-   (`all_passed`, `total_failed`) and `check` (`findings`, `error_count`) exit 0 whenever the run itself
-   worked. Exit codes signal protocol, connection and transport failures.
+3. **Gate on the exit code; read the JSON for the details.** A failed activation exits 5 (`failed`,
+   `error_messages`), a failing unit test 7 (`all_passed`, `total_failed`), an ATC priority-1 finding or a
+   syntax error 8 (`findings`, `error_count`) — in `--json` mode as in text mode, with the JSON still on
+   stdout. ATC priority 2/3 findings and syntax warnings exit 0.
 4. **Precedence**: flags > `--password-env` > environment (`ERPL_ADT_*` beats `SAP_*`) > `.adt.creds` >
    defaults (`localhost:50000`, client `001`, user `DEVELOPER`). A stale `.adt.creds` loses to the environment.
 5. **`.adt.creds` is per working directory** and holds credentials — keep it out of version control.
@@ -57,14 +58,15 @@ erpl-adt logout
 | Code | Meaning | Code | Meaning |
 |---|---|---|---|
 | 0 | Success | 6 | Lock conflict |
-| 1 | Connection / authentication | 7 | Unit test run error |
-| 2 | Not found | 8 | ATC run error |
+| 1 | Connection / authentication | 7 | A unit test failed |
+| 2 | Not found | 8 | ATC priority-1 finding, or a syntax error (`source check`) |
 | 3 | Clone error | 9 | Transport error |
 | 4 | Pull error | 10 | Timeout (raise `--timeout`) |
-| 5 | Activation error (text mode, `source write --activate`) | 99 | Internal error, or a refused misspelled flag on a strict command |
+| 5 | Activation failed | 99 | Internal error, or a refused misspelled flag on a strict command |
 
-Errors go to stderr as JSON with `--json` (exception: `source write --activate` prints its activation errors as
-text — prefer `source write` followed by `--json activate`). `-v`/`-vv` log HTTP traffic at INFO/DEBUG to stderr.
+5, 7 and 8 are the same with and without `--json`; with `--json` the result is still printed on stdout.
+Errors go to stderr as JSON with `--json`. `source write --activate --json` prints one object (`written`,
+`activation`). `-v`/`-vv` log HTTP traffic at INFO/DEBUG to stderr.
 
 ## MCP server (optional)
 

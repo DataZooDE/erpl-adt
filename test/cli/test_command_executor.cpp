@@ -613,6 +613,85 @@ TEST_CASE("ReportActivationOutcome: success prints Activated label and returns 0
 }
 
 // ---------------------------------------------------------------------------
+// Outcome exit codes (#75): the same code in text and JSON mode, so an agent
+// gating on $? sees a failed activation, test or check without parsing JSON.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ActivationExitCode: 5 when any object failed, else 0",
+          "[cli][executor][outcome]") {
+    ActivationResult act;
+    act.total = 1;
+    act.activated = 1;
+    CHECK(ActivationExitCode(act) == 0);
+    // A4H answers a broken class with activated=1 and failed=1 together:
+    // the failure decides.
+    act.failed = 1;
+    CHECK(ActivationExitCode(act) == 5);
+    const ActivationResult nothing;
+    CHECK(ActivationExitCode(nothing) == 0);
+}
+
+TEST_CASE("TestRunExitCode: 7 when a method failed, else 0",
+          "[cli][executor][outcome]") {
+    TestMethodResult passed;
+    passed.name = "OK";
+    TestMethodResult failed;
+    failed.name = "KO";
+    TestAlert alert;
+    alert.kind = "failedAssertion";
+    alert.severity = "critical";
+    failed.alerts.push_back(alert);
+
+    TestClassResult cls;
+    cls.name = "ZCL_FOO";
+    cls.methods.push_back(passed);
+    TestRunResult run;
+    run.classes.push_back(cls);
+    CHECK(TestRunExitCode(run) == 0);
+
+    run.classes[0].methods.push_back(failed);
+    CHECK(TestRunExitCode(run) == 7);
+
+    // No test methods is not a failure — the JSON carries a note instead.
+    const TestRunResult empty;
+    CHECK(TestRunExitCode(empty) == 0);
+}
+
+TEST_CASE("AtcExitCode: 8 on a priority-1 finding, warnings pass",
+          "[cli][executor][outcome]") {
+    AtcResult atc;
+    CHECK(AtcExitCode(atc) == 0);
+    AtcFinding warning;
+    warning.priority = 2;
+    atc.findings.push_back(warning);
+    AtcFinding info;
+    info.priority = 3;
+    atc.findings.push_back(info);
+    CHECK(AtcExitCode(atc) == 0);
+    AtcFinding error;
+    error.priority = 1;
+    atc.findings.push_back(error);
+    CHECK(AtcExitCode(atc) == 8);
+}
+
+TEST_CASE("SyntaxCheckExitCode: 8 on an error message, warnings pass",
+          "[cli][executor][outcome]") {
+    std::vector<SyntaxMessage> msgs;
+    CHECK(SyntaxCheckExitCode(msgs) == 0);
+    SyntaxMessage w;
+    w.type = "W";
+    msgs.push_back(w);
+    CHECK(SyntaxCheckExitCode(msgs) == 0);
+    for (const char* type : {"E", "A", "X"}) {
+        std::vector<SyntaxMessage> with_error = msgs;
+        SyntaxMessage e;
+        e.type = type;
+        with_error.push_back(e);
+        CHECK(SyntaxCheckExitCode(with_error) == 8);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ReportClassRunOutcome
 // ---------------------------------------------------------------------------
 

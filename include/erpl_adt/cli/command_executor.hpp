@@ -1,8 +1,11 @@
 #pragma once
 
+#include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/adt/i_xml_codec.hpp>
+#include <erpl_adt/adt/source.hpp>
+#include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/cli/command_router.hpp>
 #include <erpl_adt/cli/output_formatter.hpp>
 #include <erpl_adt/core/result.hpp>
@@ -11,6 +14,7 @@
 #include <iosfwd>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace erpl_adt {
 
@@ -96,6 +100,18 @@ int ReportActivationOutcome(const ActivationResult& act,
                             OutputFormatter& fmt,
                             const std::string& label,
                             std::ostream& err);
+
+// Outcome exit codes. The run itself worked; these say whether its outcome
+// should stop a script or agent gating on $?. The same code applies in text
+// and JSON mode — JSON still carries the details on stdout.
+//   5 — an object failed to activate
+//   7 — a unit test method failed (no test methods at all is not a failure)
+//   8 — ATC found a priority-1 finding (priority 2/3 do not fail the run)
+//   8 — the syntax check reported an error (type E, A or X)
+[[nodiscard]] int ActivationExitCode(const ActivationResult& act);
+[[nodiscard]] int TestRunExitCode(const TestRunResult& run);
+[[nodiscard]] int AtcExitCode(const AtcResult& atc);
+[[nodiscard]] int SyntaxCheckExitCode(const std::vector<SyntaxMessage>& messages);
 
 // Report the output of a class run (object run) request.
 // Returns 99 if the output starts with "Error:", 0 otherwise.

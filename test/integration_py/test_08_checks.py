@@ -1,5 +1,7 @@
 """ATC quality check tests — validate check execution via CLI."""
 
+import os
+
 import pytest
 
 
@@ -29,11 +31,17 @@ class TestAtcChecks:
         assert isinstance(data["findings"], list)
 
     def test_check_with_variant(self, cli):
-        """check run with --variant parameter works."""
+        """check run with --variant runs that variant and says so.
+
+        It used to pass --variant DEFAULT, which does not exist on A4H: SAP
+        ran other checks without a word, and the test passed on that.
+        """
+        variant = os.getenv("SAP_ATC_VARIANT", "ZABAP_CLOUD_DEVELOPMENT")
         data = cli.run_ok("check", "run",
                           "/sap/bc/adt/oo/classes/cl_abap_random",
-                          "--variant", "DEFAULT")
+                          "--variant", variant)
         assert "worklist_id" in data
+        assert data["variant"] == variant
 
     def test_finding_has_priority(self, cli):
         """ATC findings (if any) have priority."""
