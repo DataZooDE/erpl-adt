@@ -97,6 +97,27 @@ std::optional<std::string> ExtractSapError(const std::string& body) {
     return ExtractHtmlTitle(body);
 }
 
+// The T100 message class of an ADT exception (<entry key="T100KEY-ID">),
+// if the body names one. Language-independent, unlike the message text.
+std::optional<std::string> ExtractT100Id(const std::string& body) {
+    static const std::string kKey = "key=\"T100KEY-ID\">";
+    const auto pos = body.find(kKey);
+    if (pos == std::string::npos) return std::nullopt;
+    const auto start = pos + kKey.size();
+    const auto end = body.find('<', start);
+    if (end == std::string::npos || end == start) return std::nullopt;
+    return body.substr(start, end - start);
+}
+
+// Message classes of the Change and Transport System. An ADT write with
+// ?corrNr= that the Transport Organizer refuses ("Task/request X does not
+// exist" TR 807, "Object ... is already locked in request X" CTS_WBO_API 020)
+// answers HTTP 500/400; it is a transport problem (exit 9), as the engine's
+// TK/TR/TO messages are.
+bool IsCtsMessageClass(const std::string& id) {
+    return id == "TR" || id == "TK" || id == "TO" || id == "CTS_WBO_API";
+}
+
 // SAP reports an enqueue conflict as a 403 with an application error rather
 // than a 409/423, e.g. "User DEVELOPER is currently editing ZCL_FOO".
 bool IsLockConflictText(const std::string& text) {
@@ -200,6 +221,13 @@ Error Error::FromHttpStatus(const std::string& operation,
             category = ErrorCategory::Internal;
             message = "Unexpected HTTP " + std::to_string(status_code);
             break;
+    }
+
+    if ((status_code == 400 || status_code == 500) && category == ErrorCategory::Internal) {
+        if (const auto t100 = ExtractT100Id(response_body);
+            t100.has_value() && IsCtsMessageClass(*t100)) {
+            category = ErrorCategory::TransportError;
+        }
     }
 
     Error error{operation, endpoint, status_code, message, sap_error, category};
