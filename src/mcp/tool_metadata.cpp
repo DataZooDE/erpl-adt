@@ -28,6 +28,7 @@ const std::vector<ToolMetadata>& ToolMetadataTable() {
         {"adt_read_source",        "Read source code",              Reads()},
         {"adt_check_syntax",       "Check syntax",                  Reads()},
         {"adt_list_transports",    "List transports",               Reads()},
+        {"adt_show_transport",     "Show transport tasks/objects",  Reads()},
         {"adt_read_table",         "Read table definition",         Reads()},
         {"adt_read_cds",           "Read CDS view",                 Reads()},
         {"adt_list_package",       "List package contents",         Reads()},

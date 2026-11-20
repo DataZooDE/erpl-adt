@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/mcp_tool_handlers.hpp>
 #include <erpl_adt/mcp/tool_metadata.hpp>
@@ -94,7 +96,7 @@ const std::set<std::string>& NoArgTools() {
 TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 67);
+    CHECK(registry.Tools().size() == 68);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -397,6 +399,37 @@ TEST_CASE("adt_list_transports: happy path", "[mcp][handlers][transport]") {
     REQUIRE(j.size() == 3);
     CHECK(j[0]["number"] == "NPLK900001");
     CHECK(j[0]["description"] == "Implement feature X");
+}
+
+TEST_CASE("adt_show_transport: request with its task", "[mcp][handlers][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_show_transport",
+                           {{"transport_number", "A4HK900156"}});
+    CHECK_FALSE(result.is_error);
+    auto j = ParseContent(result);
+    CHECK(j["number"] == "A4HK900156");
+    CHECK(j["status"] == "modifiable");
+    REQUIRE(j["tasks"].size() == 1);
+    CHECK(j["tasks"][0]["number"] == "A4HK900157");
+    REQUIRE(j["tasks"][0]["objects"].size() == 2);
+    CHECK(j["tasks"][0]["objects"][0]["type"] == "CLAS");
+    CHECK(j["objects"][0]["type"] == "DEVC");
+}
+
+TEST_CASE("adt_show_transport: is read-only", "[mcp][handlers][transport]") {
+    MockAdtSession mock;
+    auto registry = MakeRegistry(mock);
+    const auto& tools = registry.Tools();
+    const auto it = std::find_if(tools.begin(), tools.end(), [](const auto& t) {
+        return t.name == "adt_show_transport";
+    });
+    REQUIRE(it != tools.end());
+    CHECK(it->annotations.read_only);
+    CHECK_FALSE(it->annotations.destructive);
 }
 
 TEST_CASE("adt_list_transports: with user param", "[mcp][handlers][transport]") {
@@ -1199,7 +1232,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 67);
+    CHECK(tools.size() == 68);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
