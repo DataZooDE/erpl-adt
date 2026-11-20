@@ -97,11 +97,16 @@ class TestRedGreenCycle:
             "Red source should have rv_result = 0"
         # Run tests — on systems with activation, tests should fail;
         # on systems without, test runner may find 0 methods (inactive code).
-        test_data = ctx["cli"].run_ok("test", "run", ctx["uri"])
+        result = ctx["cli"].run("test", "run", ctx["uri"])
+        test_data = json.loads(result.stdout)
         if test_data.get("total_methods", 0) > 0:
             assert test_data["all_passed"] is False, \
                 f"Expected test failure: {json.dumps(test_data, indent=2)}"
             assert test_data["total_failed"] > 0
+            # A failing test closes the gate: exit 7, JSON still on stdout.
+            assert result.returncode == 7, result.stderr
+        else:
+            assert result.returncode == 0, result.stderr
         ctx["red_test_data"] = test_data
 
     @pytest.mark.order(4)

@@ -215,12 +215,13 @@ BW, CATALOG, MCP, LOGIN — see the sections below and `erpl-adt <command> --hel
 
 EXIT CODES
   0  Success           1  Connection/auth     2  Not found
-  3  Clone error       4  Pull error          5  Activation error (text mode)
-  6  Lock conflict     7  Test run error      8  ATC run error
+  3  Clone error       4  Pull error          5  Activation failed
+  6  Lock conflict     7  Unit test failed    8  ATC / syntax error
   9  Transport error   10 Timeout             99 Internal error
 
-  With --json, judge activate / test / check by their fields (failed, all_passed,
-  findings): they exit 0 whenever the run itself worked.
+  5, 7 and 8 are outcomes, the same in text and --json mode: activate (failed > 0),
+  test (a method failed) and check (a priority-1 finding) or source check (an error
+  message) exit non-zero, and the JSON on stdout still says what failed.
 ```
 
 ## MCP server

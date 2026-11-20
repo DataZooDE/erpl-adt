@@ -91,8 +91,8 @@ class TestAbapUnit:
         # surfacing later as a silently empty test run.
         cli.run_ok("activate", uri)
 
-        # Run tests.
-        data = cli.run_ok("test", "run", uri)
+        # Run tests. A failing test method ends the run with exit 7.
+        data = cli.run_exit("test", "run", uri, exit_code=7)
         # We just wrote and activated a class with one FOR TESTING method that
         # asserts 1 == 2. The test runner MUST detect it. A silently-zero
         # total_methods would mean the runner is skipping methods it should

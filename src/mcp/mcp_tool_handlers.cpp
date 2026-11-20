@@ -223,7 +223,8 @@ ToolResult HandleCheckSyntax(IAdtSession& session,
     auto uri = RequireString(params, "uri", err);
     if (!uri) return err;
 
-    auto result = CheckSyntax(session, *uri);
+    auto result = CheckSyntax(session, *uri,
+                              OptString(params, "version", "active"));
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     nlohmann::json j = nlohmann::json::array();
@@ -883,9 +884,12 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
     registry.Register(
         "adt_check_syntax",
         "Run a syntax check on an ABAP source object. "
-        "Returns errors and warnings with line numbers.",
+        "Returns errors and warnings with line numbers. "
+        "Source written but not activated yet exists only in the inactive "
+        "version: pass version 'inactive' to check it before activating.",
         MakeSchema(
-            {{"uri", StringProp("Source URI to check")}},
+            {{"uri", StringProp("Source URI to check")},
+             {"version", StringProp("Version: 'active' (default) or 'inactive'")}},
             {"uri"}),
         [&session](const nlohmann::json& params) {
             return HandleCheckSyntax(session, params);

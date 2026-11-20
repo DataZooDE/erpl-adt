@@ -111,6 +111,23 @@ class CliRunner:
             return {}
         return json.loads(stdout)
 
+    def run_exit(self, *args, exit_code, **kwargs):
+        """Run a CLI command, assert the given exit code, return parsed JSON.
+
+        For outcome codes (5 failed activation, 7 failed test, 8 ATC/syntax
+        error): the run worked, its outcome closes the gate, and stdout still
+        carries the JSON describing what failed.
+        """
+        result = self.run(*args, **kwargs)
+        assert result.returncode == exit_code, (
+            f"expected exit {exit_code}, got {result.returncode}:\n"
+            f"  cmd: {' '.join(shlex.quote(a) for a in _mask_password(result.args))}\n"
+            f"  stdout: {result.stdout}\n"
+            f"  stderr: {result.stderr}"
+        )
+        stdout = result.stdout.strip()
+        return json.loads(stdout) if stdout else {}
+
     def run_fail(self, *args, **kwargs):
         """Run a CLI command, assert exit code != 0, return CompletedProcess."""
         result = self.run(*args, **kwargs)

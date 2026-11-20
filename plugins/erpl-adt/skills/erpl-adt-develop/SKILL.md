@@ -24,10 +24,11 @@ with `search … --type` (or `source read --type`) and pass the URI.
    `--json activate`. Writing replaces the whole section.
 2. **Transportable packages need `--transport`.** `$TMP` objects do not; anything else fails without a request
    (`erpl-adt-transport`).
-3. **Activation failures are in the JSON, not the exit code.** `--json activate` exits 0 with `failed > 0`
-   and `error_messages` when activation fails; the inactive version is saved — read it with
-   `--version inactive`, fix, write again. `source check` checks the *active* version only, so it cannot gate
-   code you have just written.
+3. **A failed activation exits 5.** `--json activate` (and `source write --activate`, which prints one object
+   with `written` and `activation`) carries `failed` and `error_messages`; the inactive version is saved —
+   read it with `--version inactive`, fix, write again. Check what you have just written, before activating,
+   with `source check <name> --version inactive` (exit 8 on a syntax error); without `--version` it checks
+   the *active* version.
 4. **Lock conflicts (exit 6)**: someone (or an earlier aborted run) holds the lock. Commands lock and unlock
    automatically. A manual `object lock` → `source write --handle` → `object unlock --handle` sequence must
    share one private `--session-file` (a global flag; the file holds session cookies — keep it outside the
@@ -54,9 +55,10 @@ erpl-adt source read ZCL_MY_CLASS > zcl_my_class.abap
 erpl-adt source read ZCL_MY_CLASS --section testclasses > zcl_my_class.testclasses.abap
 # … edit …
 erpl-adt --json source write ZCL_MY_CLASS --file zcl_my_class.abap --transport A4HK900001
-erpl-adt --json activate ZCL_MY_CLASS            # failed / error_messages
-erpl-adt --json test ZCL_MY_CLASS                # all_passed / total_failed
-erpl-adt --json check ZCL_MY_CLASS --variant DEFAULT   # findings / error_count
+erpl-adt --json source check ZCL_MY_CLASS --version inactive   # exit 8 on a syntax error
+erpl-adt --json activate ZCL_MY_CLASS            # exit 5: failed / error_messages
+erpl-adt --json test ZCL_MY_CLASS                # exit 7: all_passed / total_failed
+erpl-adt --json check ZCL_MY_CLASS --variant DEFAULT   # exit 8 on priority 1: findings / error_count
 ```
 
 `source edit` opens `$EDITOR` — interactive, for humans only.

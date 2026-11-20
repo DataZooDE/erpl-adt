@@ -292,7 +292,14 @@ Result<void, Error> WriteSourceOptimistic(
 // ---------------------------------------------------------------------------
 Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
     IAdtSession& session,
-    const std::string& source_uri) {
+    const std::string& source_uri,
+    const std::string& version) {
+    if (version != "active" && version != "inactive") {
+        return Result<std::vector<SyntaxMessage>, Error>::Err(Error{
+            "CheckSyntax", source_uri, std::nullopt,
+            "Invalid version '" + version + "'. Valid values: active, inactive",
+            std::nullopt, ErrorCategory::Internal});
+    }
     // A check run against an object that is not there answers with an empty
     // message list, which reads as "no syntax errors". Same trap as the ATC
     // and test runs: establish that the object exists first.
@@ -316,7 +323,7 @@ Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<chkrun:checkObjectList xmlns:chkrun=\"http://www.sap.com/adt/checkrun\"\n"
         "  xmlns:adtcore=\"http://www.sap.com/adt/core\">\n"
-        "  <chkrun:checkObject adtcore:uri=\"" + adt_utils::XmlEscape(source_uri) + "\" chkrun:version=\"active\"/>\n"
+        "  <chkrun:checkObject adtcore:uri=\"" + adt_utils::XmlEscape(source_uri) + "\" chkrun:version=\"" + version + "\"/>\n"
         "</chkrun:checkObjectList>\n";
 
     auto response = session.Post(

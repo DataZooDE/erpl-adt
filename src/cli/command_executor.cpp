@@ -2170,20 +2170,54 @@ int HandleSourceWrite(const CommandArgs& args) {
         obj_uri_for_activate = std::move(write_result).Value();
     }
 
-    fmt.PrintSuccess("Source written: " + source_uri);
+    const std::string written_message = "Source written: " + source_uri;
+    const bool activate = HasFlag(args, "activate") && !obj_uri_for_activate.empty();
+
+    // JSON mode emits one object for the whole command — the write and, with
+    // --activate, its activation — so a caller parses one document from
+    // stdout and finds activation errors in it rather than as text on stderr.
+    nlohmann::json out;
+    out["success"] = true;
+    out["message"] = written_message;
+    out["written"] = source_uri;
+
+    if (!fmt.IsJsonMode()) {
+        fmt.PrintSuccess(written_message);
+    }
 
     // Optional activation after successful write.
-    if (HasFlag(args, "activate") && !obj_uri_for_activate.empty()) {
+    if (activate) {
         auto act_params = ActivationParamsFromObjectUri(obj_uri_for_activate);
         auto act_result = ActivateObject(*session, act_params);
         if (act_result.IsErr()) {
+            if (fmt.IsJsonMode()) {
+                // The write happened; say so on stdout. The activation error
+                // goes to stderr as structured JSON, like every error.
+                out["success"] = false;
+                fmt.PrintJson(out.dump());
+            }
             fmt.PrintError(act_result.Error());
             return act_result.Error().ExitCode();
         }
-        const int act_exit = ReportActivationOutcome(act_result.Value(), fmt, obj_uri_for_activate, std::cerr);
-        if (act_exit != 0) return act_exit;
+        const auto& act = act_result.Value();
+        if (fmt.IsJsonMode()) {
+            nlohmann::json msgs = nlohmann::json::array();
+            for (const auto& m : act.error_messages) {
+                msgs.push_back(m);
+            }
+            out["activation"] = {{"activated", act.activated},
+                                 {"failed", act.failed},
+                                 {"error_messages", msgs}};
+            out["success"] = ActivationExitCode(act) == 0;
+            fmt.PrintJson(out.dump());
+            return ActivationExitCode(act);
+        }
+        return ReportActivationOutcome(act, fmt, obj_uri_for_activate, std::cerr);
     }
 
+    if (fmt.IsJsonMode()) {
+        fmt.PrintJson(out.dump());
+    }
     return 0;
 }
 
@@ -2217,7 +2251,8 @@ int HandleSourceCheck(const CommandArgs& args) {
         source_uri = resolved.Value() + "/source/main";
     }
 
-    auto result = CheckSyntax(*session, source_uri);
+    auto result = CheckSyntax(*session, source_uri,
+                              GetFlag(args, "version", "active"));
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -2246,7 +2281,7 @@ int HandleSourceCheck(const CommandArgs& args) {
             fmt.PrintTable(headers, rows);
         }
     }
-    return 0;
+    return SyntaxCheckExitCode(messages);
 }
 
 // ---------------------------------------------------------------------------
@@ -2298,10 +2333,9 @@ int HandleActivateRun(const CommandArgs& args) {
         }
         j["error_messages"] = msgs;
         fmt.PrintJson(j.dump());
-    } else {
-        return ReportActivationOutcome(act, fmt, args.positional[0], std::cerr);
+        return ActivationExitCode(act);
     }
-    return 0;
+    return ReportActivationOutcome(act, fmt, args.positional[0], std::cerr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2399,7 +2433,7 @@ int HandleTestRun(const CommandArgs& args) {
             }
         }
     }
-    return 0;
+    return TestRunExitCode(tr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2484,7 +2518,7 @@ int HandleCheckRun(const CommandArgs& args) {
             std::cout << "  [" << prio << "] " << f.message << "\n";
         }
     }
-    return 0;
+    return AtcExitCode(atc);
 }
 
 // ---------------------------------------------------------------------------
@@ -6992,6 +7026,26 @@ int HandleBwJob(const CommandArgs& args) {
 // Outcome reporters — exposed outside anonymous namespace for unit testing.
 // ---------------------------------------------------------------------------
 
+int ActivationExitCode(const ActivationResult& act) {
+    return act.failed > 0 ? 5 : 0;
+}
+
+int TestRunExitCode(const TestRunResult& run) {
+    return run.AllPassed() ? 0 : 7;
+}
+
+int AtcExitCode(const AtcResult& atc) {
+    return atc.ErrorCount() > 0 ? 8 : 0;
+}
+
+int SyntaxCheckExitCode(const std::vector<SyntaxMessage>& messages) {
+    const bool has_error = std::any_of(
+        messages.begin(), messages.end(), [](const SyntaxMessage& m) {
+            return m.type == "E" || m.type == "A" || m.type == "X";
+        });
+    return has_error ? 8 : 0;
+}
+
 int ReportActivationOutcome(const ActivationResult& act,
                             OutputFormatter& fmt,
                             const std::string& label,
@@ -7009,7 +7063,7 @@ int ReportActivationOutcome(const ActivationResult& act,
         for (const auto& m : act.error_messages) {
             err << "  " << m << "\n";
         }
-        return 5;
+        return ActivationExitCode(act);
     }
     fmt.PrintSuccess("Activated: " + label);
     return 0;
@@ -7138,7 +7192,7 @@ int RunSourceEdit(IAdtSession& session,
             fmt.PrintError(act_result.Error());
             return act_result.Error().ExitCode();
         }
-        fmt.PrintSuccess("Activated: " + obj_uri);
+        return ReportActivationOutcome(act_result.Value(), fmt, obj_uri, err);
     }
 
     return 0;
@@ -7973,7 +8027,8 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage = "erpl-adt activate <name-or-uri> [flags]";
         help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
         help.long_description = "Activates inactive ABAP objects. Accepts an object name or URI. "
-            "Names are resolved via search. Exit code 5 indicates activation failure.";
+            "Names are resolved via search. Exits 5 when an object fails to "
+            "activate, with --json too (the JSON still lists failed and error_messages).";
         help.examples = {
             "erpl-adt activate ZCL_MY_CLASS",
             "erpl-adt activate /sap/bc/adt/oo/classes/zcl_my_class",
@@ -8241,10 +8296,19 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt source check <name-or-uri>";
+        help.usage = "erpl-adt source check <name-or-uri> [--version active|inactive]";
         help.args_description = "<name-or-uri>    Object name or source URI";
+        help.long_description =
+            "Exits 8 when the check reports an error (type E, A or X); "
+            "warnings and infos exit 0. Source that was written but not "
+            "activated yet exists only in the inactive version: check it "
+            "with --version inactive before activating.";
+        help.flags = {
+            {"version", "<version>", "Version to check: active (default) or inactive", false},
+        };
         help.examples = {
             "erpl-adt source check ZCL_MY_CLASS",
+            "erpl-adt source check ZCL_MY_CLASS --version inactive",
             "erpl-adt source check /sap/bc/adt/oo/classes/zcl_test/source/main",
             "erpl-adt --json source check /sap/bc/adt/oo/classes/zcl_test/source/main",
         };
@@ -8260,7 +8324,8 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage = "erpl-adt test <name-or-uri> [flags]";
         help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
         help.long_description = "Accepts an object name or URI. Names are resolved via search. "
-            "Exit code 7 indicates test failures.";
+            "Exits 7 when a test method fails, with --json too (the JSON still "
+            "carries all_passed and total_failed). No test methods at all exits 0.";
         help.examples = {
             "erpl-adt test ZCL_MY_TEST_CLASS",
             "erpl-adt test run /sap/bc/adt/oo/classes/ZCL_TEST",
@@ -8279,7 +8344,9 @@ void RegisterAllCommands(CommandRouter& router) {
         help.usage = "erpl-adt check <name-or-uri> [flags]";
         help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
         help.long_description = "Accepts an object name or URI. Names are resolved via search. "
-            "Exit code 8 indicates ATC errors.";
+            "Exits 8 when ATC reports a priority-1 finding, with --json too "
+            "(the JSON still carries findings and error_count); priority 2 and 3 "
+            "findings exit 0.";
         help.flags = {
             {"variant", "<name>", "ATC variant (default: DEFAULT)", false},
         };

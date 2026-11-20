@@ -281,6 +281,26 @@ TEST_CASE("adt_check_syntax: with errors", "[mcp][handlers][source]") {
     CHECK(j[0].contains("line"));
 }
 
+TEST_CASE("adt_check_syntax: checks the inactive version when asked",
+          "[mcp][handlers][source]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    auto xml = LoadFixture("source/check_errors_inactive.xml");
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_check_syntax",
+                           {{"uri", "/sap/bc/adt/oo/classes/ztest_prb_17726/source/main"},
+                            {"version", "inactive"}});
+    CHECK_FALSE(result.is_error);
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].body.find("chkrun:version=\"inactive\"") != std::string::npos);
+    auto j = ParseContent(result);
+    REQUIRE(j.is_array());
+    REQUIRE(j.size() == 1);
+    CHECK(j[0]["type"] == "E");
+}
+
 TEST_CASE("adt_check_syntax: missing uri param", "[mcp][handlers][source]") {
     MockAdtSession mock;
     // The call probes that the object exists before acting.

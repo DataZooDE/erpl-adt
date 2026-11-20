@@ -68,11 +68,16 @@ def _active_source(adt, uri):
 
 
 def _write_and_activate(cli, uri, path):
-    """Run `source write --activate`; JSON mode prints one document per step."""
+    """Run `source write --activate`; JSON mode prints one object for the
+    write and its activation (#75), and asserts both succeeded."""
     result = cli.run("source", "write", f"{uri}/source/main", "--file", str(path),
                      "--activate", timeout=300)
     assert result.returncode == 0, result.stderr + result.stdout
-    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    data = json.loads(result.stdout)
+    assert data["written"] == f"{uri}/source/main", data
+    assert data["success"] is True, data
+    assert data["activation"]["failed"] == 0, data
+    return data
 
 
 def _delete_group(cli):
@@ -151,8 +156,7 @@ class TestSourceWriteActivateFunctionGroupParts:
         )
         path = tmp_path / "fm.abap"
         path.write_text(source)
-        steps = _write_and_activate(cli, FM_URI, path)
-        assert steps[-1]["message"] == f"Activated: {FM_URI}"
+        _write_and_activate(cli, FM_URI, path)
         assert "erpl-adt fm v2" in _active_source(adt, FM_URI)
 
     def test_function_group_include_source_is_activated(self, cli, adt, function_group,
@@ -165,8 +169,7 @@ class TestSourceWriteActivateFunctionGroupParts:
         )
         path = tmp_path / "incl.abap"
         path.write_text(source)
-        steps = _write_and_activate(cli, INCLUDE_URI, path)
-        assert steps[-1]["message"] == f"Activated: {INCLUDE_URI}"
+        _write_and_activate(cli, INCLUDE_URI, path)
         assert "erpl-adt include v2" in _active_source(adt, INCLUDE_URI)
 
     def test_activates_only_the_module_not_its_group(self, cli, adt, function_group, tmp_path):
@@ -181,7 +184,6 @@ class TestSourceWriteActivateFunctionGroupParts:
         path = tmp_path / "fm.abap"
         path.write_text(f"FUNCTION {FM.lower()}.\n  DATA lv_marker TYPE string.\n"
                         "  lv_marker = 'erpl-adt fm v3'.\nENDFUNCTION.\n")
-        steps = _write_and_activate(cli, FM_URI, path)
-        assert steps[-1]["message"] == f"Activated: {FM_URI}"
+        _write_and_activate(cli, FM_URI, path)
         assert "erpl-adt fm v3" in _active_source(adt, FM_URI)
         assert "this is not abap" not in _active_source(adt, FM_BROKEN_URI)
