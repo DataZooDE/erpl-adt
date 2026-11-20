@@ -184,6 +184,21 @@ class TestGuardRails:
         assert _entry(json.loads(strict.stdout), "DOMA", "ZERPL_D_SO_STATUS")["action"] == \
             "refused"
 
+    def test_status_accepts_a_request_of_this_system(self, cli):
+        # A4H's requests are A4HK9xxxxx: a system ID with a digit. --transport
+        # refused them as malformed, so no deploy here could ever be recorded.
+        number = cli.run_ok("transport", "create", "--desc",
+                            "pytest abapgit --transport", "--package",
+                            "ZCLASSIC_DEVELOPMENT")["transport_number"]
+        try:
+            result = cli.run("abapgit", "status", str(self.FILE), "--package",
+                             "ZCLASSIC_DEVELOPMENT", "--transport", number)
+            assert result.returncode == 0, result.stderr
+            entry = _entry(json.loads(result.stdout), "DOMA", "ZERPL_D_SO_STATUS")
+            assert not any("--transport" in n for n in entry.get("notes", [])), entry
+        finally:
+            cli.run("transport", "release", number)
+
     def test_sap_object_is_refused(self, cli, tmp_path):
         sap_file = tmp_path / "xfeld.doma.xml"
         sap_file.write_bytes(self.FILE.read_bytes().replace(

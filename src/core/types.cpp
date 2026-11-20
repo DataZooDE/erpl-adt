@@ -193,12 +193,15 @@ Result<TransportId, std::string> TransportId::Create(std::string_view id) {
             "Transport ID must be exactly 10 characters (e.g. NPLK900001), got " +
             std::to_string(id.size()));
     }
-    // First 4 characters: uppercase letters
-    for (size_t i = 0; i < 4; ++i) {
-        if (id[i] < 'A' || id[i] > 'Z') {
-            return Result<TransportId, std::string>::Err(
-                "Transport ID must start with 4 uppercase letters");
-        }
+    // <SID><type><6 digits>: the system ID starts with an uppercase letter
+    // and may then hold digits (A4H, S4D); the request type is a letter (K).
+    const auto is_upper = [](char c) { return c >= 'A' && c <= 'Z'; };
+    const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (!is_upper(id[0]) || !(is_upper(id[1]) || is_digit(id[1])) ||
+        !(is_upper(id[2]) || is_digit(id[2])) || !is_upper(id[3])) {
+        return Result<TransportId, std::string>::Err(
+            "Transport ID must start with a system ID (a letter, then two "
+            "letters or digits) and a request type letter, e.g. A4HK900001");
     }
     // Last 6 characters: digits
     for (size_t i = 4; i < 10; ++i) {
