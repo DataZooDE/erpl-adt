@@ -1,10 +1,12 @@
 #pragma once
 
+#include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace erpl_adt {
 
@@ -32,5 +34,13 @@ namespace erpl_adt {
 [[nodiscard]] Result<void, Error> CreateFunctionGroupInclude(
     IAdtSession& session, const std::string& group, const std::string& include,
     const std::string& description, const std::optional<std::string>& transport);
+
+// What activates a function group's main program SAPL<fg> (`main_program`):
+// the group (FUGR/F) and the main program as the object ADT lists it - FUGR/I
+// named SAPL<fg> at <group>/source/main - in one request. The group alone
+// leaves REPS SAPL<fg> inactive; the main program alone is answered with a
+// pre-audit list naming the group (both measured on A4H).
+[[nodiscard]] std::vector<ActivateObjectParams> FunctionGroupMainProgramActivation(
+    const std::string& group, const std::string& main_program);
 
 }  // namespace erpl_adt

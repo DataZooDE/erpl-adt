@@ -207,9 +207,17 @@ CLASS zcl_erpl_classic_engine IMPLEMENTATION.
         OTHERS              = 4.
     IF sy-subrc <> 0.
       DATA(rc) = sy-subrc.
+      DATA(cts_msgid) = sy-msgid.
       emit_symsg( ).
-      " The verdict for the exit code comes from the exception, not the text.
-      emit( kind = 'KIND' text = COND string( WHEN rc = 2 THEN `AUTH` ELSE `CTS` ) ).
+      " The verdict for the exit code comes from the exception and the
+      " message class, not the text. permission_failure (2) also reports an
+      " object locked in another user's request (TK 247/130 "Object ...
+      " locked for request/task ... (owner ...)"): a CTS conflict, not a
+      " missing authorization (#72, measured on A4H).
+      emit( kind = 'KIND'
+            text = COND string( WHEN rc = 2 AND cts_msgid <> 'TK' AND cts_msgid <> 'TR'
+                                     AND cts_msgid <> 'TO' THEN `AUTH`
+                                ELSE `CTS` ) ).
       emit_rc( rc ).
       RETURN.
     ENDIF.

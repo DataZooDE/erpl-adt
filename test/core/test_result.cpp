@@ -2,7 +2,9 @@
 
 #include <erpl_adt/core/result.hpp>
 
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -599,3 +601,58 @@ TEST_CASE("Error: equality includes hint", "[error]") {
     CHECK(e1 != e3);
     CHECK(e1 != e4);
 }
+
+// ===========================================================================
+// Transport Organizer errors answered by ADT writes are classified by their
+// T100 message class, not by HTTP status or (translated) text. Writing a
+// function module's source with ?corrNr= answered HTTP 500 for both bodies
+// below (captured on A4H), and both read as "internal" (exit 99) - #72.
+// ===========================================================================
+
+namespace {
+std::string LoadErrorFixture(const std::string& name) {
+    std::string here = __FILE__;
+    here = here.substr(0, here.find_last_of("/\\"));            // test/core
+    const auto root = here.substr(0, here.find_last_of("/\\"));  // test
+    std::ifstream in(root + "/testdata/errors/" + name);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+}  // namespace
+
+TEST_CASE("FromHttpStatus: a request that does not exist is a transport error",
+          "[error]") {
+    // T100 TR 807: "Task/request A4HK999999 does not exist in system A4H".
+    const auto body = LoadErrorFixture("adt_request_does_not_exist.xml");
+    REQUIRE_FALSE(body.empty());
+    auto e = Error::FromHttpStatus("WriteSource", "/sap/bc/adt/x", 500, body);
+    CHECK(e.category == ErrorCategory::TransportError);
+    CHECK(e.ExitCode() == 9);
+    CHECK(e.message.find("A4HK999999 does not exist") != std::string::npos);
+}
+
+TEST_CASE("FromHttpStatus: an object locked in another request is a transport error",
+          "[error]") {
+    // T100 CTS_WBO_API 020: "Object LIMU FUNC ... is already locked in request
+    // A4HK900236 of user DEVELOPER". A CTS conflict, not an edit lock - the
+    // documented exit code is 9, as for the engine's TK/TR messages.
+    const auto body = LoadErrorFixture("adt_object_locked_in_other_request.xml");
+    REQUIRE_FALSE(body.empty());
+    auto e = Error::FromHttpStatus("WriteSource", "/sap/bc/adt/x", 500, body);
+    CHECK(e.category == ErrorCategory::TransportError);
+    CHECK(e.ExitCode() == 9);
+    CHECK(e.message.find("already locked in request A4HK900236") != std::string::npos);
+}
+
+TEST_CASE("FromHttpStatus: other T100 classes keep their HTTP classification",
+          "[error]") {
+    const std::string body =
+        R"(<exc:exception xmlns:exc="http://www.sap.com/abapxml/types/communicationframework">)"
+        R"(<message lang="EN">Something else</message><properties>)"
+        R"(<entry key="T100KEY-ID">SEO</entry><entry key="T100KEY-NO">001</entry>)"
+        R"(</properties></exc:exception>)";
+    auto e = Error::FromHttpStatus("Op", "/ep", 500, body);
+    CHECK(e.category == ErrorCategory::Internal);
+}
+

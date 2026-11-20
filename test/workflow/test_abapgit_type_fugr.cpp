@@ -390,6 +390,31 @@ TEST_CASE("Function group URIs escape namespaces", "[workflow][abapgit_fugr]") {
           "/sap/bc/adt/functions/groups/%2facme%2ffg/includes/%2facme%2flfgtop");
 }
 
+// The main program SAPL<fg> is its own object for activation: ADT lists it as
+// FUGR/I named SAPL<fg> at .../source/main under the group. Activating only
+// the group (FUGR/F) - with the includes and modules - answers
+// activationExecuted="true" and leaves REPS SAPL<fg> inactive, which then
+// blocks the release of the request it is recorded on (#72; traffic and
+// DWINACTIV measured on A4H). Both references go in one request: the main
+// program alone is answered with a pre-audit list naming the group.
+TEST_CASE("Function group main program is activated as itself, with its group",
+          "[workflow][abapgit_fugr]") {
+    const auto refs = FunctionGroupMainProgramActivation("ZERPL_FG", "SAPLZERPL_FG");
+    REQUIRE(refs.size() == 2);
+    CHECK(refs[0].type == "FUGR/F");
+    CHECK(refs[0].name == "ZERPL_FG");
+    CHECK(refs[0].uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(refs[1].type == "FUGR/I");
+    CHECK(refs[1].name == "SAPLZERPL_FG");
+    CHECK(refs[1].uri == "/sap/bc/adt/functions/groups/zerpl_fg/source/main");
+    CHECK(refs[1].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+
+    const auto ns = FunctionGroupMainProgramActivation("/ACME/FG", "/ACME/SAPLFG");
+    REQUIRE(ns.size() == 2);
+    CHECK(ns[1].uri == "/sap/bc/adt/functions/groups/%2facme%2ffg/source/main");
+    CHECK(ns[1].name == "/ACME/SAPLFG");
+}
+
 // ---------------------------------------------------------------------------
 // Engine failures are classified by T100 id/number or the engine's KIND
 // line, never by (translated) message text.

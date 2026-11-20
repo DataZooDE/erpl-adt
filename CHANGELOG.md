@@ -5,6 +5,15 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** `transport release` (and the MCP tool `adt_release_transport`) said "Released" when SAP had refused
+  the release: SAP answers HTTP 200 either way and puts the outcome in a release report. A report other than
+  `released` - an open task, an inactive object, a failed export step - is now a transport error (exit 9) with
+  SAP's reason, e.g. "Referencing task A4HK900227 not yet released".
+- **[fix]** A Transport Organizer refusal had the wrong exit code: a request that does not exist (T100 TR 807) or
+  an object already locked in another request (CTS_WBO_API 020, TK 247) came back as `internal` (99) or
+  `authorization` (1). They are transport errors (exit 9), as documented, classified by T100 message class.
+- **[fix]** `abapgit deploy` of a function group left its main program `SAPL<fg>` inactive, which blocks the
+  release of the request it was recorded on. The main program is now activated with its group.
 - **[fix]** `object create --type DEVC/K --software-component HOME --transport <req>` was refused by SAP with
   "Change recording must be activated for package ...": the package payload never asked for change recording,
   so no transportable package could be created. A package with a software component other than `LOCAL` now
