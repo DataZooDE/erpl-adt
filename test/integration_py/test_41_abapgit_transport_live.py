@@ -272,8 +272,13 @@ class TestTransactionWithAuthorizationObject:
 
         assert result.returncode == EXIT_CHECK, result.stdout + result.stderr
         entry = _entry(json.loads(result.stdout), "TRAN", TRAN_AUTH)
-        assert entry["action"] == "refused", entry
+        # A part the handler cannot write is rejected before anything is
+        # written; the deploy reports that as "failed" with category "check"
+        # for every type (`refused` is its word for drift and guard rails).
+        assert entry["action"] == "failed", entry
+        assert entry["category"] == "check", entry
         assert "authorization-object check" in entry["message"], entry
+        assert "nothing was written" in entry["message"], entry
         # Unchanged in the system: TSTC, TSTCA and the CINFO flags all come
         # back byte for byte in a fresh export.
         assert self._export(cli, tmp_path / "after") == before
