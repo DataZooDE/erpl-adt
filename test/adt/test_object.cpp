@@ -274,6 +274,10 @@ TEST_CASE("CreateObject: package uses the requested software component", "[adt][
     auto& body = mock.PostCalls()[0].body;
     CHECK(body.find("pak:name=\"HOME\"") != std::string::npos);
     CHECK(body.find("pak:name=\"LOCAL\"") == std::string::npos);
+    // A transportable package records its objects' changes on requests;
+    // without the flag SAP refuses it ("Change recording must be activated
+    // for package ZJR_ODP", measured on A4H).
+    CHECK(body.find("pak:recordChanges=\"true\"") != std::string::npos);
 }
 
 TEST_CASE("CreateObject: package defaults to the LOCAL software component", "[adt][object]") {
@@ -295,6 +299,8 @@ TEST_CASE("CreateObject: package defaults to the LOCAL software component", "[ad
     auto result = CreateObject(mock, params);
     REQUIRE(result.IsOk());
     CHECK(mock.PostCalls()[0].body.find("pak:name=\"LOCAL\"") != std::string::npos);
+    // A local package records nothing; the payload stays as it always was.
+    CHECK(mock.PostCalls()[0].body.find("recordChanges") == std::string::npos);
 }
 
 // Regression guard, not a bug fix: for a DEVC/K the "package" argument names the PARENT,

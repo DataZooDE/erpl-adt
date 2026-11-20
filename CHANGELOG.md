@@ -5,6 +5,10 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** `object create --type DEVC/K --software-component HOME --transport <req>` was refused by SAP with
+  "Change recording must be activated for package ...": the package payload never asked for change recording,
+  so no transportable package could be created. A package with a software component other than `LOCAL` now
+  records changes (`pak:recordChanges="true"`); local packages are created as before.
 - **[feature]** `transport show <number>` (MCP: `adt_show_transport`) lists a request's tasks and the object
   entries recorded on the request and on each task (`pgmid`, `type`, `name`, `description`, `lock_status`),
   so a release can be reviewed from erpl-adt (#76). A task number shows that task; a number that does not

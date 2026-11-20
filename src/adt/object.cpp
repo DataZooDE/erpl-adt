@@ -148,6 +148,12 @@ std::string BuildCreateXml(const CreateObjectParams& params,
     if (params.object_type == "DEVC/K") {
         auto* attrs = doc.NewElement("pak:attributes");
         attrs->SetAttribute("pak:packageType", "development");
+        // A transportable package (any component but LOCAL) records its
+        // objects' changes on requests; without the flag SAP refuses it:
+        // "Change recording must be activated for package ...".
+        if (!params.software_component.empty() && params.software_component != "LOCAL") {
+            attrs->SetAttribute("pak:recordChanges", "true");
+        }
         root->InsertEndChild(attrs);
 
         auto* super_pkg = doc.NewElement("pak:superPackage");
