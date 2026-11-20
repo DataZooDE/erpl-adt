@@ -8,6 +8,7 @@
 #include <erpl_adt/core/url.hpp>
 #include <tinyxml2.h>
 
+#include <optional>
 #include <string>
 
 namespace erpl_adt {
@@ -257,6 +258,66 @@ Result<TransportDetail, Error> ParseTransportDetail(std::string_view xml,
         });
 }
 
+// Every chkrun:checkReport anywhere below `el`, in document order.
+void CollectCheckReports(const tinyxml2::XMLElement* el,
+                         std::vector<const tinyxml2::XMLElement*>& out) {
+    for (auto* child = el->FirstChildElement(); child; child = child->NextSiblingElement()) {
+        if (atom_parser::HasLocalName(child, "checkReport")) {
+            out.push_back(child);
+        }
+        CollectCheckReports(child, out);
+    }
+}
+
+void CollectErrorMessages(const tinyxml2::XMLElement* el, std::vector<std::string>& out) {
+    for (auto* child = el->FirstChildElement(); child; child = child->NextSiblingElement()) {
+        if (atom_parser::HasLocalName(child, "checkMessage")) {
+            const auto type = xml_utils::AttrAny(child, "chkrun:type", "type");
+            const auto text = xml_utils::AttrAny(child, "chkrun:shortText", "shortText");
+            if ((type == "E" || type == "A") && !text.empty()) {
+                out.push_back(text);
+            }
+        }
+        CollectErrorMessages(child, out);
+    }
+}
+
+// The release report SAP returns with HTTP 200 whether the release worked or
+// not: success is a report with status "released" and no error message.
+// Anything else - "abortrelapifail" (an open task), "abortrelinacobj" (an
+// inactive object), a pre-export error - is the release failing. An empty
+// body (older releases) carries no report and stays accepted.
+std::optional<std::string> ReleaseFailure(std::string_view body) {
+    if (body.empty()) {
+        return std::nullopt;
+    }
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(body.data(), body.size()) != tinyxml2::XML_SUCCESS || !doc.RootElement()) {
+        return std::nullopt;
+    }
+    std::vector<const tinyxml2::XMLElement*> reports;
+    CollectCheckReports(doc.RootElement(), reports);
+    std::string failure;
+    for (const auto* report : reports) {
+        const auto status = xml_utils::AttrAny(report, "chkrun:status", "status");
+        std::vector<std::string> errors;
+        CollectErrorMessages(report, errors);
+        if (status == "released" && errors.empty()) {
+            continue;
+        }
+        auto text = xml_utils::AttrAny(report, "chkrun:statusText", "statusText");
+        if (text.empty()) text = "Release failed (" + status + ")";
+        for (const auto& e : errors) {
+            text += "; " + e;
+        }
+        failure += (failure.empty() ? "" : " | ") + text;
+    }
+    if (failure.empty()) {
+        return std::nullopt;
+    }
+    return failure;
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -394,6 +455,11 @@ Result<void, Error> ReleaseTransport(
     if (http.status_code != 200 && http.status_code != 204) {
         return Result<void, Error>::Err(
             Error::FromHttpStatus("ReleaseTransport", url, http.status_code, http.body));
+    }
+    if (auto failure = ReleaseFailure(http.body)) {
+        return Result<void, Error>::Err(Error{
+            "ReleaseTransport", url, http.status_code, *failure, std::nullopt,
+            ErrorCategory::TransportError});
     }
 
     return Result<void, Error>::Ok();

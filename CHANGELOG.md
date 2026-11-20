@@ -5,6 +5,12 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** `transport release` (and the MCP tool `adt_release_transport`) said "Released" when SAP had refused
+  the release: SAP answers HTTP 200 either way and puts the outcome in a release report. A report other than
+  `released` - an open task, an inactive object, a failed export step - is now a transport error (exit 9) with
+  SAP's reason, e.g. "Referencing task A4HK900227 not yet released".
+- **[fix]** `abapgit deploy` of a function group left its main program `SAPL<fg>` inactive, which blocks the
+  release of the request it was recorded on. The main program is now activated with its group.
 - **[fix]** `object create --type DEVC/K --software-component HOME --transport <req>` was refused by SAP with
   "Change recording must be activated for package ...": the package payload never asked for change recording,
   so no transportable package could be created. A package with a software component other than `LOCAL` now

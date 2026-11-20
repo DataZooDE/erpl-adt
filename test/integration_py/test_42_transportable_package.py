@@ -43,6 +43,15 @@ class TestTransportablePackage:
                        "--package", package, "--description", "erpl-adt test",
                        "--transport", request)
             assert ("R3TR", "CLAS", clas) in _entries(cli, request)
+
+            # Its task is still open, so SAP refuses to release the request -
+            # with HTTP 200 and the reason in the release report. That must
+            # not read as "Released" (#72).
+            task = cli.run_ok("transport", "show", request)["tasks"][0]["number"]
+            release = cli.run("transport", "release", request)
+            assert release.returncode == 9, release.stdout + release.stderr
+            assert task in release.stderr, release.stderr
+            assert cli.run_ok("transport", "show", request)["status"] == "modifiable"
         finally:
             cli.run("object", "delete", f"/sap/bc/adt/oo/classes/{clas.lower()}",
                     "--transport", request)

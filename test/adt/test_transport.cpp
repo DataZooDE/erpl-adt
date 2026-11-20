@@ -266,6 +266,48 @@ TEST_CASE("ReleaseTransport: a missing transport is not reported as released",
     CHECK(mock.PostCallCount() == 0);
 }
 
+// A release answers HTTP 200 whether it worked or not; the outcome is the
+// release report inside (chkrun:checkReport, status + messages). Reading only
+// the status code, `transport release` said "Released" for a request SAP had
+// refused (#72; all three answers captured from A4H).
+TEST_CASE("ReleaseTransport: a released task is success", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900227");
+    REQUIRE(result.IsOk());
+}
+
+TEST_CASE("ReleaseTransport: a refused release is a transport error with SAP's reason",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_not_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900226");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::TransportError);
+    CHECK(result.Error().ExitCode() == 9);
+    CHECK(result.Error().message.find("Referencing task A4HK900227 not yet released") !=
+          std::string::npos);
+}
+
+TEST_CASE("ReleaseTransport: an export failure is not reported as released",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_pre_export_error.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900226");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::TransportError);
+    CHECK(result.Error().message.find("Error in pre-export methods") != std::string::npos);
+}
+
 // ===========================================================================
 // GetTransport — review a request before releasing it (#76)
 // ===========================================================================
