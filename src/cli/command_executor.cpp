@@ -8191,7 +8191,7 @@ void RegisterAllCommands(CommandRouter& router) {
             {"description", "<text>", "Object description", false},
             {"transport", "<id>", "Transport request number", false},
             {"responsible", "<user>", "Person responsible (defaults to the logon user)", false},
-            {"software-component", "<name>", "DEVC/K only: software component (default LOCAL, which is not transportable)", false},
+            {"software-component", "<name>", "DEVC/K only: software component (default LOCAL, which is not transportable; any other records changes on requests)", false},
             {"binding-type", "<type>", "SRVB/SVB: required binding type, e.g. ODATA", false},
             {"binding-version", "<version>", "SRVB/SVB: required binding version, e.g. V2 or V4", false},
             {"binding-category", "<category>", "SRVB/SVB: required SAP binding category (0 or 1)", false},

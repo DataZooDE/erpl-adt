@@ -5,6 +5,10 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** `object create --type DEVC/K --software-component HOME --transport <req>` was refused by SAP with
+  "Change recording must be activated for package ...": the package payload never asked for change recording,
+  so no transportable package could be created. A package with a software component other than `LOCAL` now
+  records changes (`pak:recordChanges="true"`); local packages are created as before.
 - **[fix]** The MCP HTTP server (`mcp --http`, `catalog webui`) could lose its own 403: it refuses a foreign
   Host or Origin before reading the request body, and closing the socket with that body unread made TCP send
   a reset, so the client saw a dropped connection instead of the message naming `--allowed-hosts` /
