@@ -115,6 +115,26 @@ def run_checks(base_url: str) -> None:
         "a refused request still carried an Access-Control-Allow-Origin header"
     )
 
+    # A refusal must reach the client whole, whatever the request carried.
+    # The server decides before it reads the body; replying and closing the
+    # socket with that body unread makes TCP send a reset, and the client
+    # loses the 403 that tells it what to allow. Windows showed it with the
+    # small body above (CI, 2026-11-20); a 2 MB body shows it on Linux too.
+    big = '{"jsonrpc":"2.0","id":1,"method":"tools/list","pad":"' + "x" * 2_000_000 + '"}'
+    for what, headers, hint in (
+            ("rebound Host", {"Host": "rebind.evil.example",
+                              "Origin": "http://rebind.evil.example"}, "--allowed-hosts"),
+            ("foreign Origin", {"Origin": "http://evil.example"}, "--cors-origin")):
+        for attempt in range(20):
+            try:
+                status, _, body = post(f"{base_url}/mcp", big, headers)
+            except (ConnectionResetError, BrokenPipeError, urllib.error.URLError) as e:
+                raise AssertionError(
+                    f"refusing a {what} with a 2 MB body reset the connection "
+                    f"(attempt {attempt + 1}/20): {e!r}") from e
+            assert status == 403, f"{what} with a 2 MB body answered {status}, expected 403"
+            assert hint in body, f"{what}: the 403 lost its explanation: {body[:200]!r}"
+
     # And the developer on loopback is untouched, which is the whole point of
     # scoping the rule to hosts rather than to browsers in general.
     status, _, _ = post(f"{base_url}/mcp", call, {})

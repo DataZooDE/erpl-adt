@@ -9,12 +9,21 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
   the release: SAP answers HTTP 200 either way and puts the outcome in a release report. A report other than
   `released` - an open task, an inactive object, a failed export step - is now a transport error (exit 9) with
   SAP's reason, e.g. "Referencing task A4HK900227 not yet released".
+- **[fix]** A Transport Organizer refusal had the wrong exit code: a request that does not exist (T100 TR 807) or
+  an object already locked in another request (CTS_WBO_API 020, TK 247) came back as `internal` (99) or
+  `authorization` (1). They are transport errors (exit 9), as documented, classified by T100 message class.
 - **[fix]** `abapgit deploy` of a function group left its main program `SAPL<fg>` inactive, which blocks the
   release of the request it was recorded on. The main program is now activated with its group.
 - **[fix]** `object create --type DEVC/K --software-component HOME --transport <req>` was refused by SAP with
   "Change recording must be activated for package ...": the package payload never asked for change recording,
   so no transportable package could be created. A package with a software component other than `LOCAL` now
   records changes (`pak:recordChanges="true"`); local packages are created as before.
+- **[fix]** The MCP HTTP server (`mcp --http`, `catalog webui`) could lose its own 403: it refuses a foreign
+  Host or Origin before reading the request body, and closing the socket with that body unread made TCP send
+  a reset, so the client saw a dropped connection instead of the message naming `--allowed-hosts` /
+  `--cors-origin`. Measured with a 2 MB body on Linux (16 of 20 refusals lost); on Windows it happened with a
+  small one and failed the web UI smoke test in CI. A refused request with a body is now answered after the
+  body is read, still before any handler runs.
 - **[feature]** `transport show <number>` (MCP: `adt_show_transport`) lists a request's tasks and the object
   entries recorded on the request and on each task (`pgmid`, `type`, `name`, `description`, `lock_status`),
   so a release can be reviewed from erpl-adt (#76). A task number shows that task; a number that does not

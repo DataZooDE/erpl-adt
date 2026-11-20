@@ -402,10 +402,12 @@ problems in the code being deployed.
   (`CINFO` x'10') and translated short texts. Because an update is delete +
   insert, an existing transaction whose system version has such a check, a
   variant flag or an OO type (x'08') is refused as well (exit 8, also with
-  `--force`): the re-insert would silently drop it. On A4H no such
-  transaction can be set up without direct table writes, so this refusal is
-  unit-tested there; `test_41_abapgit_transport_live.py` checks it live on a
-  system with such a transaction (`SAP_TRAN_AUTH_OBJ`, set up in SE93; #73).
+  `--force`): the re-insert would silently drop it. Verified live on A4H
+  (#73) with `ZERPL_AUTH_TEST`, a report transaction on `ZERPL_PO_REPORT`
+  with authorization object `S_CARRID` created in SE93 (no workbench API
+  creates one): both deploys exit 8 (`failed`, category `check`) and a
+  fresh export is byte-identical. `test_41_abapgit_transport_live.py` runs
+  it with `SAP_TRAN_AUTH_OBJ=ZERPL_AUTH_TEST SAP_TRAN_AUTH_PACKAGE='$TMP'`.
 * The drift check needs `git` on the PATH to consult file history (the last
   20 commits of each file); without it, only parts provably last changed by
   you count as safe — screens and transactions then always need `--force`.
