@@ -64,6 +64,18 @@ class _AdtReader:
         except urllib.error.HTTPError as err:
             return err.code, err.read().decode("utf-8", "replace")
 
+    def inactive(self, *names):
+        """This system's inactive objects among `names` (and their parts:
+        SAPL<fg>, L<fg>... includes), as ADT's activation list shows them."""
+        status, body = self.get("/sap/bc/adt/activation/inactiveobjects")
+        assert status == 200, body[:500]
+        wanted = {n.upper() for n in names}
+        found = re.findall(r'adtcore:name="([^"]*)"', body)
+        return sorted({n for n in found
+                       if n.upper() in wanted
+                       or any(n.upper() in (f"SAPL{w}",) or n.upper().startswith(f"L{w}")
+                              for w in wanted)})
+
 
 @pytest.fixture(scope="module")
 def adt(sap_config):
@@ -200,6 +212,11 @@ class TestFunctionGroup:
         assert status == 200
         assert re.search(r"iv_with_contacts\s+TYPE\s+abap_bool\s+DEFAULT\s+abap_false", body, re.I)
         assert re.search(r"RAISING\s+cx_sy_itab_line_not_found", body, re.I)
+        # Nothing of the group is left inactive - in particular not its main
+        # program SAPL<fg>: an inactive part blocks the release of the
+        # request the deploy recorded it on ("Object REPS SAPL... is
+        # inactive", #72), and the module cannot run what it does not see.
+        assert adt.inactive(FUGR, "Z_ERPL_READ_ORDER", "Z_ERPL_READ_PARTNER") == []
 
     def test_redeploy_unchanged_changes_nothing(self, cli):
         result = cli.run_ok("abapgit", "deploy", str(FUGR_FILE), "--package", PACKAGE)

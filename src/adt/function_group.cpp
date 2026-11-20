@@ -78,6 +78,21 @@ std::string FunctionGroupUri(const std::string& group) {
     return kGroups + UriSegment(group);
 }
 
+std::vector<ActivateObjectParams> FunctionGroupMainProgramActivation(
+    const std::string& group, const std::string& main_program) {
+    const auto group_uri = FunctionGroupUri(group);
+    ActivateObjectParams group_ref;
+    group_ref.uri = group_uri;
+    group_ref.type = "FUGR/F";
+    group_ref.name = group;
+    ActivateObjectParams main_ref;
+    main_ref.uri = group_uri + "/source/main";
+    main_ref.type = "FUGR/I";
+    main_ref.name = main_program;
+    main_ref.parent_uri = group_uri;
+    return {group_ref, main_ref};
+}
+
 std::string FunctionModuleUri(const std::string& group, const std::string& name) {
     return FunctionGroupUri(group) + "/fmodules/" + UriSegment(name);
 }
