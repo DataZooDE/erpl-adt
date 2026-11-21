@@ -97,6 +97,10 @@ struct ActivationResult {
     // True when chkl:properties activationExecuted="true" is present in the
     // SAP Cloud response format (chkl:messages as root element).
     bool activation_executed = false;
+
+    // The outcome rule: an object failed to activate. The CLI exits 5 on it,
+    // MCP reports passed=false (#84).
+    [[nodiscard]] bool Failed() const { return failed > 0; }
 };
 
 // Poll: parsed from async operation poll responses (202 follow-up).

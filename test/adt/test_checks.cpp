@@ -262,3 +262,17 @@ TEST_CASE("RunAtcCheck: a release without the variant resource still runs",
     REQUIRE(result.IsOk());
     CHECK(result.Value().variant == "MY_VARIANT");
 }
+
+// #84: a priority-1 finding is an error; 2 and 3 are not.
+TEST_CASE("AtcResult::HasErrors: priority 1 only", "[adt][checks]") {
+    AtcResult atc;
+    CHECK_FALSE(atc.HasErrors());
+    AtcFinding warning;
+    warning.priority = 2;
+    atc.findings.push_back(warning);
+    CHECK_FALSE(atc.HasErrors());
+    AtcFinding error;
+    error.priority = 1;
+    atc.findings.push_back(error);
+    CHECK(atc.HasErrors());
+}

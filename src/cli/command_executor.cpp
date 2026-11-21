@@ -7170,24 +7170,16 @@ int HandleBwJob(const CommandArgs& args) {
 // Outcome reporters — exposed outside anonymous namespace for unit testing.
 // ---------------------------------------------------------------------------
 
-int ActivationExitCode(const ActivationResult& act) {
-    return act.failed > 0 ? 5 : 0;
-}
+// The outcome rules live on the ADT result types (#84); these map them to the
+// CLI's exit codes.
+int ActivationExitCode(const ActivationResult& act) { return act.Failed() ? 5 : 0; }
 
-int TestRunExitCode(const TestRunResult& run) {
-    return run.AllPassed() ? 0 : 7;
-}
+int TestRunExitCode(const TestRunResult& run) { return run.AllPassed() ? 0 : 7; }
 
-int AtcExitCode(const AtcResult& atc) {
-    return atc.ErrorCount() > 0 ? 8 : 0;
-}
+int AtcExitCode(const AtcResult& atc) { return atc.HasErrors() ? 8 : 0; }
 
 int SyntaxCheckExitCode(const std::vector<SyntaxMessage>& messages) {
-    const bool has_error = std::any_of(
-        messages.begin(), messages.end(), [](const SyntaxMessage& m) {
-            return m.type == "E" || m.type == "A" || m.type == "X";
-        });
-    return has_error ? 8 : 0;
+    return SyntaxHasError(messages) ? 8 : 0;
 }
 
 int ReportActivationOutcome(const ActivationResult& act,

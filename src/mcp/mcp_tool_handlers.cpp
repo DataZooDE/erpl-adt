@@ -235,7 +235,12 @@ ToolResult HandleCheckSyntax(IAdtSession& session,
                       {"line", m.line},
                       {"offset", m.offset}});
     }
-    return MakeOkResult(j);
+    // The text block stays the bare list (existing clients); the structured
+    // content carries it with the verdict (#84).
+    return ToolResult(false,
+                      nlohmann::json::array({{{"type", "text"}, {"text", j.dump()}}}),
+                      nlohmann::json{{"result", j},
+                                     {"passed", !SyntaxHasError(result.Value())}});
 }
 
 // adt_run_tests
@@ -254,6 +259,7 @@ ToolResult HandleRunTests(IAdtSession& session,
     j["total_failed"] = tr.TotalFailed();
     j["total_skipped"] = tr.TotalSkipped();
     j["all_passed"] = tr.AllPassed();
+    j["passed"] = tr.AllPassed();  // the rule the CLI's exit 7 uses (#84)
     nlohmann::json classes = nlohmann::json::array();
     for (const auto& c : tr.classes) {
         nlohmann::json class_alerts = nlohmann::json::array();
@@ -321,6 +327,7 @@ ToolResult HandleRunAtc(IAdtSession& session,
     j["variant"] = atc.variant;
     j["error_count"] = atc.ErrorCount();
     j["warning_count"] = atc.WarningCount();
+    j["passed"] = !atc.HasErrors();  // the rule the CLI's exit 8 uses (#84)
     nlohmann::json findings = nlohmann::json::array();
     for (const auto& f : atc.findings) {
         findings.push_back({{"uri", f.uri},
@@ -898,6 +905,7 @@ ToolResult HandleActivateObject(IAdtSession& session,
         msgs.push_back(m);
     }
     j["error_messages"] = msgs;
+    j["passed"] = !act.Failed();  // the rule the CLI's exit 5 uses (#84)
     return MakeOkResult(j);
 }
 

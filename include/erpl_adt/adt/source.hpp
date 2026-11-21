@@ -83,6 +83,11 @@ struct SyntaxMessage {
     int offset = 0;
 };
 
+// The outcome rule of a syntax check: a message of type E (error), A (abort)
+// or X (exception) is an error; W and I are not. The CLI exits 8 on it, MCP
+// reports passed=false (#84).
+[[nodiscard]] bool SyntaxHasError(const std::vector<SyntaxMessage>& messages);
+
 // ---------------------------------------------------------------------------
 // CheckSyntax — run a syntax check on an ABAP object.
 //

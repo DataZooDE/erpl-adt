@@ -169,3 +169,21 @@ class TestMcpTransportReview:
             assert tool_error(missing) is not None
         finally:
             release_with_tasks(cli, number)
+
+
+class TestMcpOutcomeVerdict:
+    """MCP carries the verdict the CLI turns into an exit code (#84)."""
+
+    def test_run_atc_passed_follows_priority_one_findings(self, cli, test_class, tmp_path):
+        from test_40_outcome_exit_codes import ATC_VARIANT, atc_error_source, clean_source
+
+        uri, name = test_class["uri"], test_class["name"]
+        for source, expected in ((atc_error_source(name), False), (clean_source(name), True)):
+            path = tmp_path / "src.abap"
+            path.write_text(source)
+            cli.run_ok("source", "write", uri + "/source/main", "--file", str(path), "--activate")
+            [resp] = mcp_call(cli, [("adt_run_atc", {"uri": uri, "check_variant": ATC_VARIANT})])
+            assert tool_error(resp) is None, tool_error(resp)
+            data = resp["result"]["structuredContent"]
+            assert data["passed"] is expected, data
+            assert (data["error_count"] > 0) is (not expected), data

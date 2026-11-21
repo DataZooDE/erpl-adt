@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <optional>
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -285,6 +286,12 @@ Result<void, Error> WriteSourceOptimistic(
     }
 
     return Result<void, Error>::Ok();
+}
+
+bool SyntaxHasError(const std::vector<SyntaxMessage>& messages) {
+    return std::any_of(messages.begin(), messages.end(), [](const SyntaxMessage& m) {
+        return m.type == "E" || m.type == "A" || m.type == "X";
+    });
 }
 
 // ---------------------------------------------------------------------------
