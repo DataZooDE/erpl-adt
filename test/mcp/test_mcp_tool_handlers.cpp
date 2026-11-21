@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <erpl_adt/adt/transport.hpp>
+#include <erpl_adt/adt/dumps.hpp>
 
 #include <algorithm>
 
@@ -97,7 +98,7 @@ const std::set<std::string>& NoArgTools() {
 TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 68);
+    CHECK(registry.Tools().size() == 70);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -1111,6 +1112,74 @@ TEST_CASE("adt_check_syntax: passed is false on an error; the text block stays t
     }
 }
 
+// #90: adt_activate names the broken place of a multi-object activation.
+TEST_CASE("adt_activate: messages name class, include and line", "[mcp][handlers][activation]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("activation_failed_testclasses.xml")}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_activate",
+                           {{"uris", nlohmann::json::array({"/sap/bc/adt/oo/classes/zcl_erpl_ord_11111",
+                                                            "/sap/bc/adt/oo/classes/zcl_erpl_prc_11111"})}});
+    auto j = ParseContent(result);
+    CHECK(j["passed"] == false);
+    CHECK(j["error_messages"].size() == 2);
+    REQUIRE(j["messages"].size() == 2);
+    CHECK(j["messages"][1]["object"] == "ZCL_ERPL_PRC_11111");
+    CHECK(j["messages"][1]["include"] == "testclasses");
+    CHECK(j["messages"][1]["line"] == 9);
+}
+
+// #89: the agent's way to a short dump.
+TEST_CASE("adt_list_dumps and adt_show_dump: read the captured dump", "[mcp][handlers][dumps]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture("dumps/dump_feed.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture("dumps/dump_detail.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture("dumps/dump_unformatted.txt")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture("dumps/dump_formatted.txt")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture("dumps/dump_summary.html")}));
+    auto registry = MakeRegistry(mock);
+
+    auto listed = CallTool(registry, "adt_list_dumps", {{"owner", "DEVELOPER"}});
+    REQUIRE_FALSE(listed.is_error);
+    auto dumps = ParseContent(listed);
+    REQUIRE(dumps.size() == 2);
+    CHECK(dumps[0]["error"] == "COMPUTE_INT_ZERODIVIDE");
+
+    auto shown = CallTool(registry, "adt_show_dump", {{"id", dumps[0]["id"]}});
+    REQUIRE_FALSE(shown.is_error);
+    auto d = ParseContent(shown);
+    CHECK(d["line"] == 9);
+    CHECK(d["uri"] == "/sap/bc/adt/oo/classes/zcl_erpl_dump_probe/source/main");
+    CHECK(d["include_line"] == 3);
+    CHECK_FALSE(d.contains("text"));
+}
+
+TEST_CASE("adt_run_class: a short dump is named in the error", "[mcp][handlers][dumps]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));  // exists
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({500, {}, "Application Server Error"}));
+    // The newest dump of the logon user; the fixture's are from 2026, so
+    // only a "since" before them matches - the feed answer stands in for
+    // the one the server would give for "since the run started".
+    auto feed = LoadFixture("dumps/dump_feed.xml");
+    const auto now = DumpTime(std::chrono::system_clock::now());
+    for (const char* t : {"2026-11-21T16:12:14Z", "2026-11-21T16:11:07Z"}) {
+        const auto at = feed.find(t);
+        REQUIRE(at != std::string::npos);
+        feed.replace(at, std::string(t).size(), now);
+    }
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, feed}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_run_class", {{"class_name", "ZCL_ERPL_DUMP_PROBE"}});
+    REQUIRE(result.is_error);
+    const auto text = result.content[0]["text"].get<std::string>();
+    CHECK(text.find("\"category\":\"runtime_dump\"") != std::string::npos);
+    CHECK(text.find("COMPUTE_INT_ZERODIVIDE") != std::string::npos);
+    CHECK(text.find("dump show") != std::string::npos);
+}
+
 TEST_CASE("adt_activate: missing uri", "[mcp][handlers][activation]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
@@ -1385,7 +1454,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 68);
+    CHECK(tools.size() == 70);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
@@ -1557,7 +1626,7 @@ TEST_CASE("The most-parsed tools declare an outputSchema",
     RegisterAdtTools(registry, session);
 
     const std::set<std::string> want_schema = {
-        "adt_run_tests", "adt_run_atc", "adt_check_syntax", "adt_read_table"};
+        "adt_run_tests", "adt_run_atc", "adt_check_syntax", "adt_read_table", "adt_activate"};
 
     size_t found = 0;
     for (const auto& tool : registry.Tools()) {

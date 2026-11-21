@@ -1,4 +1,5 @@
 #include <erpl_adt/adt/xml_codec.hpp>
+#include <erpl_adt/adt/activation.hpp>
 
 #include <tinyxml2.h>
 
@@ -405,6 +406,8 @@ Result<ActivationResult, Error> XmlCodec::ParseActivationResponse(
                 const auto* txt = short_text->FirstChildElement("txt");
                 if (txt && txt->GetText()) {
                     result.error_messages.push_back(txt->GetText());
+                    result.messages.push_back(ActivationMessageFrom(
+                        msg_type, txt->GetText(), Attr(msg, "href"), Attr(msg, "objDescr")));
                 }
             }
 

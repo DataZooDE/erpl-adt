@@ -205,8 +205,10 @@ static constexpr const char* kIssueHint =
 // ...except where nothing unexpected happened. A read timeout is a limit the
 // caller configured and can raise, and the error already says how; inviting a
 // bug report for it sends people to the tracker for working software (#42).
+// Nor does a short dump in the user's own ABAP code (#89).
 static bool WorthReporting(const Error& error) {
-    return error.category != ErrorCategory::Timeout;
+    return error.category != ErrorCategory::Timeout &&
+           error.category != ErrorCategory::RuntimeDump;
 }
 
 void OutputFormatter::PrintError(const Error& error) const {

@@ -186,6 +186,12 @@ public:
             return R::Err(want.Error());
         }
         const auto& def = want.Value();
+        // Field lengths measured on A4H (DD03L): TLIBT-AREAT, TFTIT-STEXT.
+        auto texts = CheckTextLimits("Function group " + key.name, desired.at(main_file),
+                                     {{"values", "AREAT", 40}, {"FUNCTIONS", "SHORT_TEXT", 74}});
+        if (texts.IsErr()) {
+            return texts;
+        }
         for (const auto& fm : def.functions) {
             if (!fm.update_task.empty()) {
                 return R::Err(FugrError(

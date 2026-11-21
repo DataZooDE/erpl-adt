@@ -1,0 +1,60 @@
+----------------------------------------------------------------------------------------------------
+Category               ABAP programming error                                                                                                                                                                                                                                                       
+Runtime Errors         COMPUTE_INT_ZERODIVIDE                                                                                                                                                                                                                                                       
+Except.                CX_SY_ZERODIVIDE                                                                                                                                                                                                                                                             
+ABAP: Program          ZCL_ERPL_DUMP_PROBE===========CP                                                                                                                                                                                                                                             
+Application Component  Not assigned                                                                                                                                                                                                                                                                 
+Date and Time          21.11.2026 16:12:14 (UTC)                                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------
+|Short Text                                                                                        |
+|    Division by 0 (type I or INT8)                                                                |
+----------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------
+|What happened?                                                                                    |
+|    Error in the ABAP application program.                                                        |
+|                                                                                                  |
+|    The current ABAP program "ZCL_ERPL_DUMP_PROBE===========CP" had to be                         |
+|     terminated because it found a                                                                |
+|    statement that could not be executed.                                                         |
+----------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------
+|What can you do?                                                                                  |
+|    Note which actions and entries caused the error to occur.                                     |
+|                                                                                                  |
+|    Consult your SAP administrator.                                                               |
+|                                                                                                  |
+|    Using transaction ST22 for ABAP dump analysis, you can view, manage,                          |
+|    and retain termination messages for longer periods.                                           |
+|    Note which actions and entries caused the error to occur.                                     |
+|                                                                                                  |
+|    Consult your SAP administrator.                                                               |
+|                                                                                                  |
+|    Using transaction ST22 for ABAP dump analysis, you can view, manage,                          |
+|    and retain termination messages for longer periods.                                           |
+----------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------
+|Error analysis                                                                                    |
+|    An exception has occurred in class "CX_SY_ZERODIVIDE". This exception was not                 |
+|     caught                                                                                       |
+|    in procedure "IF_OO_ADT_CLASSRUN~MAIN" "(METHOD)" or propagated by a RAISING                  |
+|     clause.                                                                                      |
+|    Since the caller of the procedure could not have anticipated this                             |
+|    exception, the current program was terminated.                                                |
+|    The reason for the exception occurring was:                                                   |
+|    The reason for the exception is:                                                              |
+|    In the current program "ZCL_ERPL_DUMP_PROBE===========CP", a division                         |
+|     ('DIVIDE', '/', 'DIV' or 'MOD')                                                              |
+|    attempted to use operands of type I or INT8 to divide by 0.                                   |
+|    by 0.                                                                                         |
+----------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------
+|How to correct the error                                                                          |
+|    If the exception cannot be prevented, "CX_SY_ZERODIVIDE" must be caught within                |
+|    procedure "IF_OO_ADT_CLASSRUN~MAIN" "(METHOD)" or declared in the procedure's                 |
+|     RAISING clause.                                                                              |

@@ -96,6 +96,28 @@ json CheckSyntaxSchema() {
                {"result", "passed"});
 }
 
+// -- adt_activate -----------------------------------------------------------
+// After a multi-object activation the agent has to fix the right place:
+// messages say which object, include and line (#90).
+json ActivateSchema() {
+    const json message =
+        Obj({{"type", Str("Message type: E or A are errors, W and I are not")},
+             {"text", Str("Message text")},
+             {"description", Str("SAP's description of the place, free text")},
+             {"object", Str("Object the message is about, e.g. ZCL_PRICING")},
+             {"include", Str("Include: main, testclasses, definitions, implementations, ...")},
+             {"uri", Str("ADT URI of the source the message points into")},
+             {"line", Int("1-based line in that include")},
+             {"column", Int("Column in that line")}},
+            {"type", "text"});
+    return Obj({{"activated", Int("Messages that are not errors")},
+                {"failed", Int("Errors plus objects left inactive")},
+                {"error_messages", ArrayOf(Str("Message text"), "The message texts, in order")},
+                {"messages", ArrayOf(message, "The same messages with type and place")},
+                {"passed", Bool("The verdict: false when activation failed (the CLI exits 5)")}},
+               {"activated", "failed", "error_messages", "messages", "passed"});
+}
+
 // -- adt_read_table ---------------------------------------------------------
 json ReadTableSchema() {
     const json field =
@@ -210,6 +232,7 @@ size_t ApplyToolOutputSchemas(ToolRegistry& registry) {
         {"adt_run_tests", RunTestsSchema()},
         {"adt_run_atc", RunAtcSchema()},
         {"adt_check_syntax", CheckSyntaxSchema()},
+        {"adt_activate", ActivateSchema()},
         {"adt_read_table", ReadTableSchema()},
         {"catalog_search", CatalogSearchSchema()},
         {"catalog_lineage", CatalogLineageSchema()},

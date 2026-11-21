@@ -25,7 +25,8 @@ with `search … --type` (or `source read --type`) and pass the URI.
 2. **Transportable packages need `--transport`.** `$TMP` objects do not; anything else fails without a request
    (`erpl-adt-transport`).
 3. **A failed activation exits 5.** `--json activate` (and `source write --activate`, which prints one object
-   with `written` and `activation`) carries `failed` and `error_messages`; the inactive version is saved —
+   with `written` and `activation`) carries `failed`, `error_messages` and `messages` (each error's `object`,
+   `include` such as `testclasses`, `line`, `column`); the inactive version is saved —
    read it with `--version inactive`, fix, write again. Check what you have just written, before activating,
    with `source check <name> --version inactive` (exit 8 on a syntax error); without `--version` it checks
    the *active* version.
@@ -55,12 +56,13 @@ with `search … --type` (or `source read --type`) and pass the URI.
    expression or offset directly on a method result (`get( )[ key ]`, `get( )+4(2)` — assign it first); a
    positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); a
    `LOOP ... ASSIGNING <fs> WHERE` condition that uses `<fs>`; ABAP Doc (`"!`) before a chained `TYPES:`.
-10. **Find where an activation error is.** `--json activate` lists the texts without object or line (#90);
-    `--json source check <name> --version inactive` returns `line`, `offset` and the include in `uri`
-    (`.../includes/testclasses#start=70,4`) for each error — run it on each failed class.
-11. **Keep short texts within SAP's field lengths.** A function group text (`AREAT`) holds 40 characters: a longer
-    one is cut on create, and every later `abapgit deploy` of the same files is refused ("changing the short text
-    ... is not supported"); only deleting the group helps (#92). Function module texts: 74.
+10. **Find where an activation error is.** `--json activate` gives each message's `object`, `include`
+    (`main`, `testclasses`, ...), `line` and `column` in `messages`; text mode prints
+    `ZCL_X testclasses:70:4: <text>`. Before activating, `--json source check <name> --version inactive` finds
+    the same errors in what was just written.
+11. **Keep short texts within SAP's field lengths.** `abapgit deploy` refuses the object before writing it
+    (exit 8, naming the field and the limit): function group text (`AREAT`) 40, function module text 74, program
+    title 70, data element labels 10/20/40 (`SCRTEXT_S/M/L`), short texts 60.
 12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write
     /sap/bc/adt/ddic/structures/<name>/source/main` with a `define structure` source and `--activate`. RFC modules
     pass everything by value and need dictionary types (no local types, no `TYPE REF TO`).
@@ -111,6 +113,14 @@ erpl-adt --json object run ZCL_MY_RUNNER     # IF_OO_ADT_CLASSRUN~MAIN output
 ```
 
 Useful for seeding test data or probing the system — the erpl test harnesses use it this way.
+
+When the class short-dumps, the run exits 99 with category `runtime_dump`, and the hint names the dump. Read it,
+fix the line it points at, and run again:
+
+```bash
+erpl-adt --json dump list --owner DEVELOPER --max 3   # id, error (e.g. COMPUTE_INT_ZERODIVIDE), program, time
+erpl-adt --json dump show <id>                        # exception, include/include_line, and uri + line in the source
+```
 
 ## Delete
 

@@ -1,6 +1,7 @@
 #include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/function_group.hpp>
 
+#include "adt_utils.hpp"
 #include "atom_parser.hpp"
 #include "protocol_kernel.hpp"
 
@@ -139,6 +140,10 @@ ActivationResult ParseActivationResultXml(std::string_view xml) {
                 const auto* txt = short_text->FirstChildElement("txt");
                 if (txt && txt->GetText()) {
                     result.error_messages.push_back(txt->GetText());
+                    const char* href = msg->Attribute("href");
+                    const char* descr = msg->Attribute("objDescr");
+                    result.messages.push_back(ActivationMessageFrom(
+                        type_str, txt->GetText(), href ? href : "", descr ? descr : ""));
                 }
             }
 
@@ -243,6 +248,8 @@ ActivationResult ResolvePreaudit(IAdtSession& session,
         "; MCP: adt_activate with uris)." +
         (unknown.empty() ? "" : " (SAP listed these; could not read the inactive objects: " +
                                     unknown + ")"));
+    // messages holds every text error_messages does (crew F2).
+    result.messages.push_back(ActivationMessageFrom("E", result.error_messages.back(), "", ""));
     return result;
 }
 
@@ -440,6 +447,70 @@ std::string FirstSegment(const std::string& path) {
 }
 
 }  // namespace
+
+ActivationMessage ActivationMessageFrom(std::string type, std::string text,
+                                        std::string_view href, std::string description) {
+    ActivationMessage m;
+    m.type = std::move(type);
+    m.text = std::move(text);
+    m.description = std::move(description);
+    const std::string path(href.substr(0, href.find('#')));
+    if (path.empty()) {
+        return m;
+    }
+    m.uri = path;
+    if (const auto position = adt_utils::ParseUriStartPosition(href)) {
+        m.line = position->first;
+        m.column = position->second;
+    }
+    // The object is the segment before /source/... or /includes/...; for a
+    // plain object URI it is the last segment.
+    std::string object_path = path;
+    // A function group include is an include of its group:
+    // .../functions/groups/zfg/includes/lzfgtop/source/main -> ZFG, lzfgtop.
+    if (const auto groups = path.find("/functions/groups/"); groups != std::string::npos) {
+        const auto inc = path.find("/includes/", groups);
+        if (inc != std::string::npos) {
+            const auto rest = path.substr(inc + 10);
+            m.include = rest.substr(0, rest.find('/'));
+            const auto group = path.substr(groups + 18, inc - groups - 18);
+            if (!group.empty()) m.object = SegmentToName(group);
+            return m;
+        }
+    }
+    for (const char* marker : {"/source/", "/includes/"}) {
+        const auto at = path.find(marker);
+        if (at == std::string::npos) continue;
+        object_path = path.substr(0, at);
+        const auto rest = path.substr(at + std::string(marker).size());
+        m.include = std::string(marker) == "/source/" ? "main" : rest.substr(0, rest.find('/'));
+        break;
+    }
+    const auto slash = object_path.find_last_of('/');
+    const auto segment = object_path.substr(slash == std::string::npos ? 0 : slash + 1);
+    if (!segment.empty()) {
+        m.object = SegmentToName(segment);
+    }
+    return m;
+}
+
+nlohmann::json ActivationResultToJson(const ActivationResult& act) {
+    nlohmann::json messages = nlohmann::json::array();
+    for (const auto& m : act.messages) {
+        nlohmann::json j = {{"type", m.type}, {"text", m.text}};
+        if (!m.description.empty()) j["description"] = m.description;
+        if (m.object) j["object"] = *m.object;
+        if (m.include) j["include"] = *m.include;
+        if (m.uri) j["uri"] = *m.uri;
+        if (m.line) j["line"] = *m.line;
+        if (m.column) j["column"] = *m.column;
+        messages.push_back(std::move(j));
+    }
+    return {{"activated", act.activated},
+            {"failed", act.failed},
+            {"error_messages", act.error_messages},
+            {"messages", std::move(messages)}};
+}
 
 ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri) {
     ActivateObjectParams params;

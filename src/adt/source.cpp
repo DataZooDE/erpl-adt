@@ -33,23 +33,9 @@ namespace {
 
 // Parse "start=42,5" from a URI fragment like "/path#start=42,5"
 void ParsePosition(const std::string& uri, int& line, int& offset) {
-    line = 0;
-    offset = 0;
-    auto hash = uri.find('#');
-    if (hash == std::string::npos) return;
-
-    auto fragment = uri.substr(hash + 1);
-    auto start_pos = fragment.find("start=");
-    if (start_pos == std::string::npos) return;
-
-    auto nums = fragment.substr(start_pos + 6); // after "start="
-    auto comma = nums.find(',');
-    if (comma != std::string::npos) {
-        line = std::atoi(nums.substr(0, comma).c_str());
-        offset = std::atoi(nums.substr(comma + 1).c_str());
-    } else {
-        line = std::atoi(nums.c_str());
-    }
+    const auto position = adt_utils::ParseUriStartPosition(uri);
+    line = position ? position->first : 0;
+    offset = position ? position->second : 0;
 }
 
 Result<std::vector<SyntaxMessage>, Error> ParseCheckResponse(

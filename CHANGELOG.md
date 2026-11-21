@@ -5,6 +5,19 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** `abapgit deploy` refuses an object whose short text is longer than its SAP field before writing it
+  (#92) - like every other refused object; the rest of the repository deploys as usual: exit 8, naming the field
+  and the limit (function group text 40, function module text 74, program title 70, data
+  element labels 10/20/40 and texts 60/55, domain texts 60; translations too, counted in characters). Before, SAP
+  cut the text on create, and every later deploy of the same files was refused.
+- **[feature]** Runtime errors (short dumps, ST22) without SAP GUI (#89): `dump list [--owner U] [--since T]
+  [--max N]` and `dump show <id> [--full]` (error, exception, short text, where it terminated, and the source
+  `uri` + `line` to fix), MCP `adt_list_dumps` / `adt_show_dump`. When `object run` or `adt_run_class` ends in a
+  short dump, the error is category `runtime_dump` (exit 99 as before) and its hint names the dump.
+- **[feature]** A failed activation says where each error is (#90): `activate --json`, `source write --activate`
+  and MCP `adt_activate` add `messages` (type, text, object, include, line, column, uri) beside the unchanged
+  `error_messages`; text mode prints `ZCL_X testclasses:9:23: <text>`. Useful when several objects are
+  activated together.
 - **[feature]** `object create --type TABL/DS` creates dictionary structures (then `source write` the `define structure`
   source, as for TABL/DT); BAPI-like function module interfaces need them.
 - **[feature]** `abapgit deploy` deploys remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`), which it
