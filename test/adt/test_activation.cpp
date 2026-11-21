@@ -737,20 +737,20 @@ TEST_CASE("ActivationParamsFromObjectUri: other object types", "[adt][activation
 // (FUGR/F), SAP answered activationExecuted="true" and left it inactive.
 TEST_CASE("ActivationParamsFromObjectUri: a function group's main program is FUGR/I SAPL<fg>",
           "[adt][activation]") {
-    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fg/source/main");
+    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main");
     CHECK(p.type == "FUGR/I");
-    CHECK(p.name == "SAPLZERPL_FG");
-    CHECK(p.uri == "/sap/bc/adt/functions/groups/zerpl_fg/source/main");
-    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(p.name == "SAPLZERPL_FX_FG");
+    CHECK(p.uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main");
+    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg");
 
     auto ns = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/%2facme%2ffg/source/main");
     CHECK(ns.type == "FUGR/I");
     CHECK(ns.name == "/ACME/SAPLFG");
 
     // The group itself stays the group.
-    auto group = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fg");
+    auto group = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fx_fg");
     CHECK(group.type == "FUGR/F");
-    CHECK(group.name == "ZERPL_FG");
+    CHECK(group.name == "ZERPL_FX_FG");
 }
 
 // Crew review F1: the pre-audit list names the group and its main program

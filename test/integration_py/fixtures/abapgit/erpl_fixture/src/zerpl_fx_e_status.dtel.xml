@@ -3,9 +3,9 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <DD04V>
-    <ROLLNAME>ZERPL_E_SO_STATUS</ROLLNAME>
+    <ROLLNAME>ZERPL_FX_E_STATUS</ROLLNAME>
     <DDLANGUAGE>E</DDLANGUAGE>
-    <DOMNAME>ZERPL_D_SO_STATUS</DOMNAME>
+    <DOMNAME>ZERPL_FX_D_STATUS</DOMNAME>
     <HEADLEN>06</HEADLEN>
     <SCRLEN1>10</SCRLEN1>
     <SCRLEN2>20</SCRLEN2>
@@ -35,7 +35,7 @@
     <item>
      <DOKIL>
       <ID>DE</ID>
-      <OBJECT>ZERPL_E_SO_STATUS</OBJECT>
+      <OBJECT>ZERPL_FX_E_STATUS</OBJECT>
       <LANGU>D</LANGU>
       <TYP>E</TYP>
       <VERSION>0001</VERSION>
@@ -43,7 +43,7 @@
      </DOKIL>
      <HEAD>
       <TDOBJECT>DOKU</TDOBJECT>
-      <TDNAME>ZERPL_E_SO_STATUS</TDNAME>
+      <TDNAME>ZERPL_FX_E_STATUS</TDNAME>
       <TDID>DE</TDID>
       <TDSPRAS>D</TDSPRAS>
       <TDFORM>S_DOCU_SHOW</TDFORM>
@@ -73,14 +73,14 @@
       </TLINE>
       <TLINE>
        <TDFORMAT>AS</TDFORMAT>
-       <TDLINE>Anzeige des Kundenauftrags (Transaktion ZERPL_VA03).</TDLINE>
+       <TDLINE>Anzeige des Kundenauftrags (Transaktion ZERPL_FX_DYN).</TDLINE>
       </TLINE>
      </LINES>
     </item>
     <item>
      <DOKIL>
       <ID>DE</ID>
-      <OBJECT>ZERPL_E_SO_STATUS</OBJECT>
+      <OBJECT>ZERPL_FX_E_STATUS</OBJECT>
       <LANGU>E</LANGU>
       <TYP>E</TYP>
       <VERSION>0001</VERSION>
@@ -89,7 +89,7 @@
      </DOKIL>
      <HEAD>
       <TDOBJECT>DOKU</TDOBJECT>
-      <TDNAME>ZERPL_E_SO_STATUS</TDNAME>
+      <TDNAME>ZERPL_FX_E_STATUS</TDNAME>
       <TDID>DE</TDID>
       <TDSPRAS>E</TDSPRAS>
       <TDFORM>S_DOCU_SHOW</TDFORM>
@@ -119,7 +119,7 @@
       </TLINE>
       <TLINE>
        <TDFORMAT>AS</TDFORMAT>
-       <TDLINE>Shown on the sales order display (transaction ZERPL_VA03).</TDLINE>
+       <TDLINE>Shown on the sales order display (transaction ZERPL_FX_DYN).</TDLINE>
       </TLINE>
      </LINES>
     </item>

@@ -10,13 +10,13 @@ RS_CHANGE_CREATED_VARIANT_255, after the program is active (a variant is
 checked against the generated selection screen). User variants (names
 without SAP&/CUS&) are not part of abapGit's format and are refused.
 
-Realistic case: the ME2L look-alike ZERPL_PO_REPORT ships a variant
+Realistic case: the report ZERPL_FX_REPORT ships a variant
 CUS&OPEN_POS "Purchase orders in progress" (lifecycle status P, at most 200
 items) - the kind of default selection a team keeps in git next to the report.
 
-The fixture fixtures/abapgit/erpl_varis/zerpl_po_report.prog.xml is the
-erpl_demo program plus that VARIS section; the erpl_demo files stay without
-variants, and every test leaves the system at the erpl_demo version.
+The fixture fixtures/abapgit/erpl_varis/zerpl_fx_report.prog.xml is the
+erpl_fixture program plus that VARIS section; the erpl_fixture files stay without
+variants, and every test leaves the system at the erpl_fixture version.
 
 Every result is checked independently of the engine under test: the variant
 tables in client 000 (HANA, read-only) and the variant's values as SAP's
@@ -33,11 +33,11 @@ import pytest
 from hana_oracle import oracle as hana_oracle
 
 FIXTURES = Path(__file__).parent / "fixtures" / "abapgit"
-DEMO = FIXTURES / "erpl_demo" / "src"
-VARIS_XML = FIXTURES / "erpl_varis" / "zerpl_po_report.prog.xml"
+DEMO = FIXTURES / "erpl_fixture" / "src"
+VARIS_XML = FIXTURES / "erpl_varis" / "zerpl_fx_report.prog.xml"
 PACKAGE = "$TMP"
-PROG = "ZERPL_PO_REPORT"
-STEM = "zerpl_po_report"
+PROG = "ZERPL_FX_REPORT"
+STEM = "zerpl_fx_report"
 VARIANT = "CUS&OPEN_POS"
 CHECK_CLASS = "ZERPL_VARIS_CHECK"
 
@@ -52,7 +52,7 @@ CLASS zerpl_varis_check IMPLEMENTATION.
     DATA values TYPE STANDARD TABLE OF rsparamsl_255 WITH DEFAULT KEY.
     DATA objects TYPE STANDARD TABLE OF vanz WITH DEFAULT KEY.
     CALL FUNCTION 'RS_VARIANT_CONTENTS_255'
-      EXPORTING report = 'ZERPL_PO_REPORT' variant = 'CUS&OPEN_POS' execute_direct = abap_true
+      EXPORTING report = 'ZERPL_FX_REPORT' variant = 'CUS&OPEN_POS' execute_direct = abap_true
       TABLES valutab = values objects = objects
       EXCEPTIONS OTHERS = 1.
     out->write( |rc={ sy-subrc }| ).
@@ -93,7 +93,7 @@ def _git(repo, *args):
 
 
 def _work(target, xml=VARIS_XML):
-    """The report (erpl_demo source) with `xml`, committed in a fresh git work tree."""
+    """The report (erpl_fixture source) with `xml`, committed in a fresh git work tree."""
     shutil.copy(DEMO / f"{STEM}.prog.abap", target / f"{STEM}.prog.abap")
     shutil.copy(xml, target / f"{STEM}.prog.xml")
     _git(target, "init", "-q")
@@ -120,7 +120,7 @@ def _variant_values(cli, tmp_path):
 
 @pytest.fixture(scope="module", autouse=True)
 def demo_version(cli):
-    """Start from - and always end at - the erpl_demo version (no variants)."""
+    """Start from - and always end at - the erpl_fixture version (no variants)."""
     xml = DEMO / f"{STEM}.prog.xml"
     cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE, "--force")
     yield

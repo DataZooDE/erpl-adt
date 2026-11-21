@@ -44,7 +44,7 @@ std::string Between(const std::string& s, const std::string& from, const std::st
 // ---------------------------------------------------------------------------
 
 TEST_CASE("Engine source: class name placeholder is replaced everywhere", "[classic_engine]") {
-    auto src = BuildEngineSource("ZCL_ERPLHLP_1A2B3C4D", {DomaGetOp("ZERPL_D_SO_STATUS", "E")});
+    auto src = BuildEngineSource("ZCL_ERPLHLP_1A2B3C4D", {DomaGetOp("ZERPL_FX_D_STATUS", "E")});
     CHECK(src.find("zcl_erpl_classic_engine") == std::string::npos);
     CHECK(src.find("CLASS zcl_erplhlp_1a2b3c4d DEFINITION") != std::string::npos);
     CHECK(src.find("CLASS zcl_erplhlp_1a2b3c4d IMPLEMENTATION") != std::string::npos);

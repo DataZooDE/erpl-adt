@@ -3,21 +3,24 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <TSTC>
-    <TCODE>ZERPL_VA03</TCODE>
-    <PGMNA>ZERPL_SO_DISPLAY</PGMNA>
-    <DYPNO>0100</DYPNO>
+    <TCODE>ZERPL_FX_PARAM</TCODE>
+    <CINFO>Ag==</CINFO>
    </TSTC>
    <TSTCC>
-    <TCODE>ZERPL_VA03</TCODE>
+    <TCODE>ZERPL_FX_PARAM</TCODE>
     <S_WEBGUI>1</S_WEBGUI>
     <S_WIN32>X</S_WIN32>
     <S_PLATIN>X</S_PLATIN>
    </TSTCC>
    <TSTCT>
     <SPRSL>E</SPRSL>
-    <TCODE>ZERPL_VA03</TCODE>
-    <TTEXT>Display Sales Order</TTEXT>
+    <TCODE>ZERPL_FX_PARAM</TCODE>
+    <TTEXT>Sales Order Table</TTEXT>
    </TSTCT>
+   <TSTCP>
+    <TCODE>ZERPL_FX_PARAM</TCODE>
+    <PARAM>/*SE16 DATABROWSE-TABLENAME=SNWD_SO;</PARAM>
+   </TSTCP>
   </asx:values>
  </asx:abap>
 </abapGit>

@@ -1,11 +1,11 @@
 *&---------------------------------------------------------------------*
-*& Report ZERPL_PO_REPORT - Purchase orders by supplier
+*& Report ZERPL_FX_REPORT - Purchase orders by supplier
 *&---------------------------------------------------------------------*
 *& An ME2L-style list on the EPM demo model (SNWD_PO / SNWD_PO_I /
 *& SNWD_BPA), shown as ALV grid (CL_SALV_TABLE).
-*& Started by report transaction ZERPL_ME2L.
+*& Started by report transaction ZERPL_FX_REP.
 *&---------------------------------------------------------------------*
-REPORT zerpl_po_report.
+REPORT zerpl_fx_report.
 
 TYPES: BEGIN OF ty_line,
          bp_id          TYPE snwd_bpa-bp_id,

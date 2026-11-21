@@ -9,25 +9,25 @@ erpl-adt from CI — all on the same files.
 
 ```bash
 # What would change? (changes no object — use it in pull-request checks)
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit status ./erpl-sap-demo --package ZERPL_DEMO
 
 # Create/update everything in dependency order, then activate
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit deploy ./erpl-sap-demo --package ZERPL_DEMO --transport A4HK900146
 
 # One object only (any of its files)
-erpl-adt abapgit deploy ./erpl-demo/src/zerpl_so_display.prog.xml --package '$TMP'
+erpl-adt abapgit deploy ./erpl-sap-demo/src/zerpl_so_display.prog.xml --package '$TMP'
 
 # Pull changes made in SE51/SE41/SE93 back into git (refreshes the files in place)
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit export ./erpl-sap-demo --package ZERPL_DEMO
 
 # Pull one object back (lands in the folder of its package)
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO --object PROG:ZERPL_SO_DISPLAY
+erpl-adt abapgit export ./erpl-sap-demo --package ZERPL_DEMO --object PROG:ZERPL_SO_DISPLAY
 
 # Start a repository from objects that already exist
 erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03
 
 # Remove what the files describe (reverse dependency order)
-erpl-adt abapgit delete ./erpl-demo --package '$TMP'
+erpl-adt abapgit delete ./erpl-sap-demo --package '$TMP'
 ```
 
 `<path>` is either the root of an abapGit repository (the folder holding
@@ -353,6 +353,20 @@ When several objects fail, the most severe category decides the exit code:
 1 > 99 > 10 > 9 > 6 > 5 > 8 > 2 — environment and guard-rail problems first,
 then problems that need a human (CTS, someone else's lock or change), then
 problems in the code being deployed.
+
+## Demo repository
+
+The examples above use [DataZooDE/erpl-sap-demo](https://github.com/DataZooDE/erpl-sap-demo).
+It is an abapGit repository of look-alikes of SAP transactions, rebuilt on the
+EPM demo model that every ABAP trial system ships:
+
+* VA03 and VA02: display a sales order, and change it through the EPM BAPIs;
+* ME2L, MD04 and MD01;
+* ME6H (supplier evaluation) and MC94 (forecast).
+
+It has its own live tests, run through erpl-adt. The live tests of erpl-adt
+itself deploy a separate small fixture (`test/integration_py/fixtures/abapgit/erpl_fixture`,
+objects `ZERPL_FX_*`), so the demo and the tests can share a system.
 
 ## Limitations
 

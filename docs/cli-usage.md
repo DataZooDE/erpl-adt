@@ -365,22 +365,22 @@ warns on stderr; `/healthz` never requires the token so liveness probes keep wor
 # Show what a deploy would change (no writes). Exit 0 when it could run - refusals
 # are reported, not fatal - unless --strict; a file that cannot be loaded or a
 # system that cannot be read always exits non-zero
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --strict   # PR check: refusals fail
+erpl-adt abapgit status ./erpl-sap-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit status ./erpl-sap-demo --package ZERPL_DEMO --strict   # PR check: refusals fail
 
 # Deploy a whole repository (folder with .abapgit.xml) or a single object file
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
-erpl-adt abapgit deploy ./erpl-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'
+erpl-adt abapgit deploy ./erpl-sap-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit deploy ./erpl-sap-demo/src/zerpl_d_so_status.doma.xml --package '$TMP'
 
 # Overwrite objects that were changed in the system outside git
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146 --force
+erpl-adt abapgit deploy ./erpl-sap-demo --package ZERPL_DEMO --transport A4HK900146 --force
 
 # Export: refresh the objects already in <dir>, or name them explicitly
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit export ./erpl-sap-demo --package ZERPL_DEMO
 erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03
 
 # Delete what the files describe (reverse dependency order)
-erpl-adt abapgit delete ./erpl-demo --package '$TMP'
+erpl-adt abapgit delete ./erpl-sap-demo --package '$TMP'
 
 # Remove your own helper classes left by interrupted runs (default: older than 60 min)
 erpl-adt abapgit cleanup --older-than 10

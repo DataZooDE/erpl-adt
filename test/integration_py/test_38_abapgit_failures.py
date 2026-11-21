@@ -21,7 +21,7 @@ import pytest
 
 from hana_oracle import oracle as hana_oracle
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 PACKAGE = "$TMP"
 
 OK = "ZERPL_T4_OK"

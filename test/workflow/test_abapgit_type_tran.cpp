@@ -29,10 +29,10 @@ public:
 };
 
 const char* kVa03Values =
-    "<TSTC><TCODE>ZERPL_VA03</TCODE><PGMNA>ZERPL_SO_DISPLAY</PGMNA><DYPNO>0100</DYPNO></TSTC>"
-    "<TSTCC><TCODE>ZERPL_VA03</TCODE><S_WEBGUI>1</S_WEBGUI><S_WIN32>X</S_WIN32>"
+    "<TSTC><TCODE>ZERPL_FX_DYN</TCODE><PGMNA>ZERPL_FX_DIALOG</PGMNA><DYPNO>0100</DYPNO></TSTC>"
+    "<TSTCC><TCODE>ZERPL_FX_DYN</TCODE><S_WEBGUI>1</S_WEBGUI><S_WIN32>X</S_WIN32>"
     "<S_PLATIN>X</S_PLATIN></TSTCC>"
-    "<TSTCT><SPRSL>E</SPRSL><TCODE>ZERPL_VA03</TCODE><TTEXT>Display Sales Order</TTEXT></TSTCT>";
+    "<TSTCT><SPRSL>E</SPRSL><TCODE>ZERPL_FX_DYN</TCODE><TTEXT>Display Sales Order</TTEXT></TSTCT>";
 
 std::string TranFile(const std::string& values) {
     AbapGitXml xml;
@@ -46,12 +46,12 @@ struct Fixture {
     MockAdtSession session;
     RecordingEngine engine;
     std::shared_ptr<const IClassicTypeHandler> handler = DefaultTypeHandlers().at("TRAN");
-    AbapGitObjectKey key{"TRAN", "ZERPL_VA03"};
+    AbapGitObjectKey key{"TRAN", "ZERPL_FX_DYN"};
     TypeContext Ctx(const std::string& transport = "") {
         return TypeContext{session, engine, "ZERPL_DEMO", transport, "E"};
     }
     ObjectFileSet Files(const std::string& values) {
-        return {{"zerpl_va03.tran.xml", TranFile(values)}};
+        return {{"zerpl_fx_dyn.tran.xml", TranFile(values)}};
     }
     std::string ReplaceText(const std::string& from, const std::string& to) {
         std::string v = kVa03Values;
@@ -72,7 +72,7 @@ TEST_CASE("TRAN handler: reads through one tran_get operation", "[workflow][abap
     Fixture f;
     auto ops = f.handler->ReadOps(f.key, "E");
     REQUIRE(ops.size() == 1);
-    CHECK(ops[0].call == "tran_get( name = 'ZERPL_VA03' language = 'E' ).");
+    CHECK(ops[0].call == "tran_get( name = 'ZERPL_FX_DYN' language = 'E' ).");
     CHECK(ops[0].payload.empty());
 }
 
@@ -119,10 +119,10 @@ TEST_CASE("TRAN handler: create inserts with the transport and all four parts",
     CHECK(f.engine.runs.empty());  // planned for the write run, not run here
     CHECK(plan.Value().activate.empty());
     REQUIRE(plan.Value().writes.size() == 1);
-    CHECK(plan.Value().writes[0].what == "Writing transaction ZERPL_VA03");
+    CHECK(plan.Value().writes[0].what == "Writing transaction ZERPL_FX_DYN");
     const auto& op = plan.Value().writes[0].op;
     CHECK(op.call ==
-          "tran_put( name = 'ZERPL_VA03' language = 'E' devclass = 'ZERPL_DEMO' "
+          "tran_put( name = 'ZERPL_FX_DYN' language = 'E' devclass = 'ZERPL_DEMO' "
           "trkorr = 'A4HK900042' ).");
     // TSTCP is absent in a dialog transaction's file; the engine still gets
     // an (empty) element so its transformation finds every part.
@@ -147,14 +147,14 @@ TEST_CASE("TRAN handler: an update reports only the parts that differ",
 TEST_CASE("TRAN handler: parameter transaction passes TSTCP through",
           "[workflow][abapgit_tran]") {
     Fixture f;
-    AbapGitObjectKey key{"TRAN", "ZERPL_SO_LIST"};
+    AbapGitObjectKey key{"TRAN", "ZERPL_FX_PARAM"};
     const std::string values =
-        "<TSTC><TCODE>ZERPL_SO_LIST</TCODE><CINFO>Ag==</CINFO></TSTC>"
-        "<TSTCT><SPRSL>E</SPRSL><TCODE>ZERPL_SO_LIST</TCODE><TTEXT>Sales Order Table</TTEXT>"
-        "</TSTCT><TSTCP><TCODE>ZERPL_SO_LIST</TCODE>"
+        "<TSTC><TCODE>ZERPL_FX_PARAM</TCODE><CINFO>Ag==</CINFO></TSTC>"
+        "<TSTCT><SPRSL>E</SPRSL><TCODE>ZERPL_FX_PARAM</TCODE><TTEXT>Sales Order Table</TTEXT>"
+        "</TSTCT><TSTCP><TCODE>ZERPL_FX_PARAM</TCODE>"
         "<PARAM>/*SE16 DATABROWSE-TABLENAME=SNWD_SO;</PARAM></TSTCP>";
     auto ctx = f.Ctx();
-    auto plan = f.handler->Plan(key, {{"zerpl_so_list.tran.xml", TranFile(values)}},
+    auto plan = f.handler->Plan(key, {{"zerpl_fx_param.tran.xml", TranFile(values)}},
                                 ObjectState{}, ctx);
     REQUIRE(plan.IsOk());
     CHECK(plan.Value().parts == std::vector<std::string>{"TSTC", "TSTCT", "TSTCP"});
@@ -171,7 +171,7 @@ TEST_CASE("TRAN handler: parts only reachable by table writes are refused, not d
 
     SECTION("authorization objects (TSTCA)") {
         auto desired = f.Files(std::string(kVa03Values) +
-                               "<AUTHORIZATIONS><TSTCA><TCODE>ZERPL_VA03</TCODE><OBJCT>S_TCODE"
+                               "<AUTHORIZATIONS><TSTCA><TCODE>ZERPL_FX_DYN</TCODE><OBJCT>S_TCODE"
                                "</OBJCT></TSTCA></AUTHORIZATIONS>");
         auto r = f.handler->Plan(f.key, desired, ObjectState{}, ctx);
         REQUIRE(r.IsErr());
@@ -202,7 +202,7 @@ TEST_CASE("TRAN handler: parts only reachable by table writes are refused, not d
         CHECK(r.Error().message.find("I18N_TPOOL") != std::string::npos);
     }
     SECTION("a file whose TCODE is another transaction") {
-        auto desired = f.Files(f.ReplaceText("<TCODE>ZERPL_VA03</TCODE><PGMNA>",
+        auto desired = f.Files(f.ReplaceText("<TCODE>ZERPL_FX_DYN</TCODE><PGMNA>",
                                              "<TCODE>SE38</TCODE><PGMNA>"));
         auto r = f.handler->Plan(f.key, desired, ObjectState{}, ctx);
         REQUIRE(r.IsErr());
@@ -218,14 +218,14 @@ TEST_CASE("TRAN handler: delete runs tran_delete with the transport",
     REQUIRE(f.handler->Delete(f.key, ctx).IsOk());
     REQUIRE(f.engine.runs.size() == 1);
     CHECK(f.engine.runs[0].at(0).call ==
-          "tran_delete( name = 'ZERPL_VA03' trkorr = 'A4HK900042' ).");
+          "tran_delete( name = 'ZERPL_FX_DYN' trkorr = 'A4HK900042' ).");
 }
 
 TEST_CASE("TRAN handler: Validate reports unsupported parts without writing",
           "[workflow][abapgit_tran][status]") {
     Fixture f;
     const auto files = f.Files(std::string(kVa03Values) +
-                               "<AUTHORIZATIONS><TSTCA><TCODE>ZERPL_VA03</TCODE><OBJCT>S_TCODE"
+                               "<AUTHORIZATIONS><TSTCA><TCODE>ZERPL_FX_DYN</TCODE><OBJCT>S_TCODE"
                                "</OBJCT></TSTCA></AUTHORIZATIONS>");
     auto checked = f.handler->Validate(f.key, files, ObjectState{}, "E");
     REQUIRE(checked.IsErr());
@@ -249,8 +249,8 @@ TEST_CASE("TRAN handler: an existing transaction with parts the insert cannot re
     };
     const std::vector<Case> cases = {
         {std::string(kVa03Values) +
-             "<AUTHORIZATIONS><item><TCODE>ZERPL_VA03</TCODE><OBJCT>S_TCODE</OBJCT>"
-             "<FIELD>TCD</FIELD><VALUE>ZERPL_VA03</VALUE></item></AUTHORIZATIONS>",
+             "<AUTHORIZATIONS><item><TCODE>ZERPL_FX_DYN</TCODE><OBJCT>S_TCODE</OBJCT>"
+             "<FIELD>TCD</FIELD><VALUE>ZERPL_FX_DYN</VALUE></item></AUTHORIZATIONS>",
          "AUTHORIZATIONS"},
         {f.ReplaceText("<DYPNO>0100</DYPNO>", "<DYPNO>0100</DYPNO><CINFO>BA==</CINFO>"),
          "authorization-object check"},

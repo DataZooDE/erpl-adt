@@ -1023,14 +1023,14 @@ TEST_CASE("adt_activate: uris go into one activation request, typed from the URI
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_activate",
-                           {{"uris", {"/sap/bc/adt/functions/groups/zerpl_fg/source/main",
-                                      "/sap/bc/adt/functions/groups/zerpl_fg"}}});
+                           {{"uris", {"/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main",
+                                      "/sap/bc/adt/functions/groups/zerpl_fx_fg"}}});
     CHECK_FALSE(result.is_error);
     REQUIRE(mock.PostCallCount() == 1);
     const auto& body = mock.PostCalls()[0].body;
-    CHECK(body.find("adtcore:type=\"FUGR/I\" adtcore:name=\"SAPLZERPL_FG\"") !=
+    CHECK(body.find("adtcore:type=\"FUGR/I\" adtcore:name=\"SAPLZERPL_FX_FG\"") !=
           std::string::npos);
-    CHECK(body.find("adtcore:type=\"FUGR/F\" adtcore:name=\"ZERPL_FG\"") != std::string::npos);
+    CHECK(body.find("adtcore:type=\"FUGR/F\" adtcore:name=\"ZERPL_FX_FG\"") != std::string::npos);
 }
 
 // #84: MCP results carry the verdict the CLI turns into an exit code -

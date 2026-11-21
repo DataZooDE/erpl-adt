@@ -41,7 +41,7 @@ FugrDefinition ParseFile(const fs::path& path) {
 
 const fs::path kAbapGitTests = TestRoot() / "testdata" / "abapgit" / "FUGR_with_parameters" / "src";
 const fs::path kErplDemo =
-    TestRoot() / "integration_py" / "fixtures" / "abapgit" / "erpl_demo" / "src";
+    TestRoot() / "integration_py" / "fixtures" / "abapgit" / "erpl_fixture" / "src";
 
 class FakeEngine final : public IEngineRunner {
 public:
@@ -105,14 +105,14 @@ TEST_CASE("FUGR: abapGit-tests function module becomes ADT signature source",
 
 TEST_CASE("FUGR: erpl demo read-order module (VALUE, STRUCTURE, EXCEPTIONS)",
           "[workflow][abapgit_fugr]") {
-    auto def = ParseFile(kErplDemo / "zerpl_fg.fugr.xml");
+    auto def = ParseFile(kErplDemo / "zerpl_fx_fg.fugr.xml");
     CHECK(def.areat == "erpl demo: order access");
     REQUIRE(def.functions.size() == 2);
     const auto& fm = def.functions[0];
-    REQUIRE(fm.name == "Z_ERPL_READ_ORDER");
+    REQUIRE(fm.name == "Z_ERPL_FX_READ_ORDER");
 
     CHECK(BuildFmSignatureLines(fm) == std::vector<std::string>{
-                                           "FUNCTION z_erpl_read_order",
+                                           "FUNCTION z_erpl_fx_read_order",
                                            "  IMPORTING",
                                            "    VALUE(iv_so_id) TYPE snwd_so_id",
                                            "  EXPORTING",
@@ -123,7 +123,7 @@ TEST_CASE("FUGR: erpl demo read-order module (VALUE, STRUCTURE, EXCEPTIONS)",
                                            "    not_found.",
                                        });
 
-    auto source = ReadBytes(kErplDemo / "zerpl_fg.fugr.z_erpl_read_order.abap");
+    auto source = ReadBytes(kErplDemo / "zerpl_fx_fg.fugr.z_erpl_fx_read_order.abap");
     auto sig = BuildFmSignatureSource(fm, source);
     REQUIRE(sig.IsOk());
     // 12 header lines vs. 9 signature lines: 3 padding lines, then the
@@ -136,13 +136,13 @@ TEST_CASE("FUGR: erpl demo read-order module (VALUE, STRUCTURE, EXCEPTIONS)",
 
 TEST_CASE("FUGR: erpl demo read-partner module (REFERENCE, DEFAULT, OPTIONAL, LIKE, RAISING)",
           "[workflow][abapgit_fugr]") {
-    auto def = ParseFile(kErplDemo / "zerpl_fg.fugr.xml");
+    auto def = ParseFile(kErplDemo / "zerpl_fx_fg.fugr.xml");
     const auto& fm = def.functions[1];
-    REQUIRE(fm.name == "Z_ERPL_READ_PARTNER");
+    REQUIRE(fm.name == "Z_ERPL_FX_READ_PARTNER");
     CHECK(fm.class_based_exceptions);
     CHECK(BuildFmSignatureLines(fm) ==
           std::vector<std::string>{
-              "FUNCTION z_erpl_read_partner",
+              "FUNCTION z_erpl_fx_read_partner",
               "  IMPORTING",
               "    VALUE(iv_bp_id) TYPE snwd_partner_id",
               "    iv_with_contacts TYPE abap_bool DEFAULT ABAP_FALSE",
@@ -154,7 +154,7 @@ TEST_CASE("FUGR: erpl demo read-partner module (REFERENCE, DEFAULT, OPTIONAL, LI
               "  RAISING",
               "    cx_sy_itab_line_not_found.",
           });
-    auto source = ReadBytes(kErplDemo / "zerpl_fg.fugr.z_erpl_read_partner.abap");
+    auto source = ReadBytes(kErplDemo / "zerpl_fx_fg.fugr.z_erpl_fx_read_partner.abap");
     auto sig = BuildFmSignatureSource(fm, source);
     REQUIRE(sig.IsOk());
     // 14 header lines vs. 11 signature lines; the body starts right after.
@@ -230,7 +230,7 @@ TEST_CASE("FUGR: source without FUNCTION statement is rejected", "[workflow][aba
 }
 
 TEST_CASE("FUGR: sub-object file name parts", "[workflow][abapgit_fugr]") {
-    CHECK(FugrPartName("LZERPL_FGTOP") == "lzerpl_fgtop");
+    CHECK(FugrPartName("LZERPL_FX_FGTOP") == "lzerpl_fx_fgtop");
     CHECK(FugrPartName("/ACME/SAPLFG") == "#acme#saplfg");
 }
 
@@ -238,11 +238,11 @@ TEST_CASE("FUGR handler: engine data becomes abapGit files", "[workflow][abapgit
     auto handlers = DefaultTypeHandlers();
     REQUIRE(handlers.count("FUGR") == 1);
     const auto& handler = *handlers.at("FUGR");
-    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
 
     auto ops = handler.ReadOps(key, "E");
     REQUIRE(ops.size() == 1);
-    CHECK(ops[0].call == "fugr_get( name = 'ZERPL_FG' language = 'E' ).");
+    CHECK(ops[0].call == "fugr_get( name = 'ZERPL_FX_FG' language = 'E' ).");
 
     EngineOpResult r;
     r.rc = 0;
@@ -251,11 +251,11 @@ TEST_CASE("FUGR handler: engine data becomes abapGit files", "[workflow][abapgit
     r.data["XML"] =
         "<?xml version=\"1.0\" encoding=\"utf-16\"?><asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" "
         "version=\"1.0\"><asx:values><AREAT>demo</AREAT></asx:values></asx:abap>";
-    r.data["FM:Z_ERPL_READ_ORDER"] = "FUNCTION z_erpl_read_order.\nENDFUNCTION.\n";
-    r.data["SRC:LZERPL_FGTOP"] = "FUNCTION-POOL ZERPL_FG.\n";
-    r.data["DIR:LZERPL_FGTOP"] =
+    r.data["FM:Z_ERPL_FX_READ_ORDER"] = "FUNCTION z_erpl_fx_read_order.\nENDFUNCTION.\n";
+    r.data["SRC:LZERPL_FX_FGTOP"] = "FUNCTION-POOL ZERPL_FX_FG.\n";
+    r.data["DIR:LZERPL_FX_FGTOP"] =
         "<asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\"><asx:values>"
-        "<PROGDIR><NAME>LZERPL_FGTOP</NAME></PROGDIR></asx:values></asx:abap>";
+        "<PROGDIR><NAME>LZERPL_FX_FGTOP</NAME></PROGDIR></asx:values></asx:abap>";
 
     MockAdtSession session;
     FakeEngine engine;
@@ -264,61 +264,61 @@ TEST_CASE("FUGR handler: engine data becomes abapGit files", "[workflow][abapgit
     REQUIRE(state.IsOk());
     const auto& files = state.Value().files;
     REQUIRE(files.size() == 4);
-    CHECK(files.at("zerpl_fg.fugr.z_erpl_read_order.abap") ==
-          "FUNCTION z_erpl_read_order.\nENDFUNCTION.\n");
-    CHECK(files.at("zerpl_fg.fugr.lzerpl_fgtop.abap") == "FUNCTION-POOL ZERPL_FG.\n");
-    CHECK(files.at("zerpl_fg.fugr.xml").find("serializer=\"LCL_OBJECT_FUGR\"") != std::string::npos);
-    const auto& incl = files.at("zerpl_fg.fugr.lzerpl_fgtop.xml");
+    CHECK(files.at("zerpl_fx_fg.fugr.z_erpl_fx_read_order.abap") ==
+          "FUNCTION z_erpl_fx_read_order.\nENDFUNCTION.\n");
+    CHECK(files.at("zerpl_fx_fg.fugr.lzerpl_fx_fgtop.abap") == "FUNCTION-POOL ZERPL_FX_FG.\n");
+    CHECK(files.at("zerpl_fx_fg.fugr.xml").find("serializer=\"LCL_OBJECT_FUGR\"") != std::string::npos);
+    const auto& incl = files.at("zerpl_fx_fg.fugr.lzerpl_fx_fgtop.xml");
     CHECK(incl.find("<abapGit version=\"v1.0.0\">") != std::string::npos);
-    CHECK(incl.find("<NAME>LZERPL_FGTOP</NAME>") != std::string::npos);
+    CHECK(incl.find("<NAME>LZERPL_FX_FGTOP</NAME>") != std::string::npos);
 }
 
 TEST_CASE("FUGR handler: last changer per include, not the main program's",
           "[workflow][abapgit_fugr][drift]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
-    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
     EngineOpResult r;
     r.rc = 0;
     r.exists = true;
-    r.changed_by = "DEVELOPER";  // SAPLZERPL_FG: untouched by an SE37 edit
+    r.changed_by = "DEVELOPER";  // SAPLZERPL_FX_FG: untouched by an SE37 edit
     r.data["XML"] =
         "<?xml version=\"1.0\" encoding=\"utf-16\"?><asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" "
         "version=\"1.0\"><asx:values><AREAT>demo</AREAT></asx:values></asx:abap>";
-    r.data["FM:Z_ERPL_READ_ORDER"] = "FUNCTION z_erpl_read_order.\nENDFUNCTION.\n";
-    r.data["FM:Z_ERPL_READ_PARTNER"] = "FUNCTION z_erpl_read_partner.\nENDFUNCTION.\n";
-    r.data["SRC:LZERPL_FGTOP"] = "FUNCTION-POOL ZERPL_FG.\n";
-    r.values["CHANGED"] = {"MAIN DEVELOPER", "FM:Z_ERPL_READ_ORDER COLLEAGUE",
-                           "FM:Z_ERPL_READ_PARTNER DEVELOPER", "SRC:LZERPL_FGTOP ?"};
+    r.data["FM:Z_ERPL_FX_READ_ORDER"] = "FUNCTION z_erpl_fx_read_order.\nENDFUNCTION.\n";
+    r.data["FM:Z_ERPL_FX_READ_PARTNER"] = "FUNCTION z_erpl_fx_read_partner.\nENDFUNCTION.\n";
+    r.data["SRC:LZERPL_FX_FGTOP"] = "FUNCTION-POOL ZERPL_FX_FG.\n";
+    r.values["CHANGED"] = {"MAIN DEVELOPER", "FM:Z_ERPL_FX_READ_ORDER COLLEAGUE",
+                           "FM:Z_ERPL_FX_READ_PARTNER DEVELOPER", "SRC:LZERPL_FX_FGTOP ?"};
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
     auto state = handler.BuildState(key, {r}, ctx);
     REQUIRE(state.IsOk());
     const auto& by = state.Value().part_changed_by;
-    CHECK(by.at("zerpl_fg.fugr.z_erpl_read_order.abap") == "COLLEAGUE");
-    CHECK(by.at("zerpl_fg.fugr.z_erpl_read_partner.abap") == "DEVELOPER");
-    CHECK(by.at("zerpl_fg.fugr.lzerpl_fgtop.abap").empty());
-    CHECK(by.at("zerpl_fg.fugr.lzerpl_fgtop.xml").empty());
+    CHECK(by.at("zerpl_fx_fg.fugr.z_erpl_fx_read_order.abap") == "COLLEAGUE");
+    CHECK(by.at("zerpl_fx_fg.fugr.z_erpl_fx_read_partner.abap") == "DEVELOPER");
+    CHECK(by.at("zerpl_fx_fg.fugr.lzerpl_fx_fgtop.abap").empty());
+    CHECK(by.at("zerpl_fx_fg.fugr.lzerpl_fx_fgtop.xml").empty());
     // Interfaces live in the main XML: changed by different users -> unknown.
-    CHECK(by.at("zerpl_fg.fugr.xml#FUNCTIONS").empty());
-    CHECK(by.at("zerpl_fg.fugr.xml#INCLUDES") == "DEVELOPER");
-    CHECK(by.at("zerpl_fg.fugr.xml").empty());  // AREAT: no changer recorded
+    CHECK(by.at("zerpl_fx_fg.fugr.xml#FUNCTIONS").empty());
+    CHECK(by.at("zerpl_fx_fg.fugr.xml#INCLUDES") == "DEVELOPER");
+    CHECK(by.at("zerpl_fx_fg.fugr.xml").empty());  // AREAT: no changer recorded
 }
 
 TEST_CASE("FUGR handler: RFC modules are refused before anything is written",
           "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
-    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
     AbapGitXml xml;
     xml.serializer = "LCL_OBJECT_FUGR";
     xml.serializer_version = "v1.0.0";
     xml.values_xml =
         "<AREAT>demo</AREAT><FUNCTIONS><item><FUNCNAME>Z_RFC</FUNCNAME>"
         "<REMOTE_CALL>R</REMOTE_CALL></item></FUNCTIONS>";
-    ObjectFileSet desired{{"zerpl_fg.fugr.xml", RenderAbapGitXml(xml)},
-                          {"zerpl_fg.fugr.z_rfc.abap", "FUNCTION z_rfc.\nENDFUNCTION.\n"}};
+    ObjectFileSet desired{{"zerpl_fx_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fx_fg.fugr.z_rfc.abap", "FUNCTION z_rfc.\nENDFUNCTION.\n"}};
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
@@ -333,16 +333,16 @@ TEST_CASE("DTEL handler: reads and writes through the DDIF function modules",
           "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("DTEL");
-    AbapGitObjectKey key{"DTEL", "ZERPL_E_SO_STATUS"};
+    AbapGitObjectKey key{"DTEL", "ZERPL_FX_E_STATUS"};
     auto ops = handler.ReadOps(key, "E");
     REQUIRE(ops.size() == 4);  // + translations, documentation, supplement
-    CHECK(ops[0].call == "dtel_get( name = 'ZERPL_E_SO_STATUS' language = 'E' ).");
+    CHECK(ops[0].call == "dtel_get( name = 'ZERPL_FX_E_STATUS' language = 'E' ).");
 
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
-    ObjectFileSet desired{{"zerpl_e_so_status.dtel.xml",
-                           ReadBytes(kErplDemo / "zerpl_e_so_status.dtel.xml")}};
+    ObjectFileSet desired{{"zerpl_fx_e_status.dtel.xml",
+                           ReadBytes(kErplDemo / "zerpl_fx_e_status.dtel.xml")}};
     auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
     REQUIRE(plan.IsOk());
     // The fixture carries German labels and documentation (E and D).
@@ -353,8 +353,8 @@ TEST_CASE("DTEL handler: reads and writes through the DDIF function modules",
     REQUIRE(plan.Value().ddic.size() == 3);
     const auto& put = plan.Value().ddic[0].op;
     CHECK(put.call ==
-          "dtel_put( name = 'ZERPL_E_SO_STATUS' language = 'E' devclass = '$TMP' trkorr = '' ).");
-    CHECK(put.payload.find("<ROLLNAME>ZERPL_E_SO_STATUS</ROLLNAME>") != std::string::npos);
+          "dtel_put( name = 'ZERPL_FX_E_STATUS' language = 'E' devclass = '$TMP' trkorr = '' ).");
+    CHECK(put.payload.find("<ROLLNAME>ZERPL_FX_E_STATUS</ROLLNAME>") != std::string::npos);
     CHECK(engine.runs.empty());
 }
 
@@ -365,12 +365,12 @@ TEST_CASE("ActivateObjects: one request holds every object reference", "[workflo
         {200, {}, "<chkl:messages xmlns:chkl=\"http://www.sap.com/abapxml/checklist\">"
                   "<chkl:properties activationExecuted=\"true\"/></chkl:messages>"}));
     ActivateObjectParams include;
-    include.uri = "/sap/bc/adt/functions/groups/zerpl_fg/includes/lzerpl_fgtop";
+    include.uri = "/sap/bc/adt/functions/groups/zerpl_fx_fg/includes/lzerpl_fx_fgtop";
     include.type = "FUGR/I";
     ActivateObjectParams fm;
-    fm.uri = "/sap/bc/adt/functions/groups/zerpl_fg/fmodules/z_erpl_read_order";
+    fm.uri = "/sap/bc/adt/functions/groups/zerpl_fx_fg/fmodules/z_erpl_fx_read_order";
     fm.type = "FUGR/FF";
-    fm.parent_uri = "/sap/bc/adt/functions/groups/zerpl_fg";
+    fm.parent_uri = "/sap/bc/adt/functions/groups/zerpl_fx_fg";
 
     auto result = ActivateObjects(session, {include, fm});
 
@@ -378,14 +378,14 @@ TEST_CASE("ActivateObjects: one request holds every object reference", "[workflo
     CHECK(result.Value().activation_executed);
     REQUIRE(session.PostCallCount() == 1);
     const auto& body = session.PostCalls()[0].body;
-    CHECK(body.find("lzerpl_fgtop\" adtcore:type=\"FUGR/I\"") != std::string::npos);
-    CHECK(body.find("adtcore:parentUri=\"/sap/bc/adt/functions/groups/zerpl_fg\"") !=
+    CHECK(body.find("lzerpl_fx_fgtop\" adtcore:type=\"FUGR/I\"") != std::string::npos);
+    CHECK(body.find("adtcore:parentUri=\"/sap/bc/adt/functions/groups/zerpl_fx_fg\"") !=
           std::string::npos);
 }
 
 TEST_CASE("Function group URIs escape namespaces", "[workflow][abapgit_fugr]") {
-    CHECK(FunctionModuleUri("ZERPL_FG", "Z_ERPL_READ_ORDER") ==
-          "/sap/bc/adt/functions/groups/zerpl_fg/fmodules/z_erpl_read_order");
+    CHECK(FunctionModuleUri("ZERPL_FX_FG", "Z_ERPL_FX_READ_ORDER") ==
+          "/sap/bc/adt/functions/groups/zerpl_fx_fg/fmodules/z_erpl_fx_read_order");
     CHECK(FunctionGroupIncludeUri("/ACME/FG", "/ACME/LFGTOP") ==
           "/sap/bc/adt/functions/groups/%2facme%2ffg/includes/%2facme%2flfgtop");
 }
@@ -399,15 +399,15 @@ TEST_CASE("Function group URIs escape namespaces", "[workflow][abapgit_fugr]") {
 // program alone is answered with a pre-audit list naming the group.
 TEST_CASE("Function group main program is activated as itself, with its group",
           "[workflow][abapgit_fugr]") {
-    const auto refs = FunctionGroupMainProgramActivation("ZERPL_FG", "SAPLZERPL_FG");
+    const auto refs = FunctionGroupMainProgramActivation("ZERPL_FX_FG", "SAPLZERPL_FX_FG");
     REQUIRE(refs.size() == 2);
     CHECK(refs[0].type == "FUGR/F");
-    CHECK(refs[0].name == "ZERPL_FG");
-    CHECK(refs[0].uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(refs[0].name == "ZERPL_FX_FG");
+    CHECK(refs[0].uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg");
     CHECK(refs[1].type == "FUGR/I");
-    CHECK(refs[1].name == "SAPLZERPL_FG");
-    CHECK(refs[1].uri == "/sap/bc/adt/functions/groups/zerpl_fg/source/main");
-    CHECK(refs[1].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(refs[1].name == "SAPLZERPL_FX_FG");
+    CHECK(refs[1].uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main");
+    CHECK(refs[1].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg");
 
     const auto ns = FunctionGroupMainProgramActivation("/ACME/FG", "/ACME/SAPLFG");
     REQUIRE(ns.size() == 2);
@@ -472,23 +472,23 @@ TEST_CASE("FUGR: the plan names the parts before anything is written",
           "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
-    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
     AbapGitXml xml;
     xml.serializer = "LCL_OBJECT_FUGR";
     xml.serializer_version = "v1.0.0";
     xml.values_xml =
-        "<AREAT>demo</AREAT><INCLUDES><SOBJ_NAME>LZERPL_FGTOP</SOBJ_NAME></INCLUDES>"
+        "<AREAT>demo</AREAT><INCLUDES><SOBJ_NAME>LZERPL_FX_FGTOP</SOBJ_NAME></INCLUDES>"
         "<FUNCTIONS><item><FUNCNAME>Z_ERPL_A</FUNCNAME><SHORT_TEXT>A</SHORT_TEXT></item>"
         "</FUNCTIONS>";
-    ObjectFileSet desired{{"zerpl_fg.fugr.xml", RenderAbapGitXml(xml)},
-                          {"zerpl_fg.fugr.lzerpl_fgtop.abap", "FUNCTION-POOL zerpl_fg.\n"},
-                          {"zerpl_fg.fugr.z_erpl_a.abap", "FUNCTION z_erpl_a.\nENDFUNCTION.\n"}};
+    ObjectFileSet desired{{"zerpl_fx_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fx_fg.fugr.lzerpl_fx_fgtop.abap", "FUNCTION-POOL zerpl_fx_fg.\n"},
+                          {"zerpl_fx_fg.fugr.z_erpl_a.abap", "FUNCTION z_erpl_a.\nENDFUNCTION.\n"}};
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
     auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
     REQUIRE(plan.IsOk());
-    CHECK(plan.Value().parts == std::vector<std::string>{"function group", "include LZERPL_FGTOP",
+    CHECK(plan.Value().parts == std::vector<std::string>{"function group", "include LZERPL_FX_FGTOP",
                                                          "function module Z_ERPL_A"});
     CHECK(session.PostCallCount() == 0);
 

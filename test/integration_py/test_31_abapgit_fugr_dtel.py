@@ -11,7 +11,7 @@ it the way Eclipse ADT does — the source in signature form
 (`FUNCTION z_x IMPORTING VALUE(iv) TYPE t ...`) — and SAP regenerates exactly
 the include abapGit serialized, which the export checks byte for byte.
 
-Fixtures: fixtures/abapgit/erpl_demo/src (EPM demo model SNWD_SO / SNWD_SO_I /
+Fixtures: fixtures/abapgit/erpl_fixture/src (EPM demo model SNWD_SO / SNWD_SO_I /
 SNWD_BPA, which exists on the A4H trial).
 """
 
@@ -21,18 +21,18 @@ from pathlib import Path
 
 import pytest
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 SRC = FIXTURES / "src"
 PACKAGE = "$TMP"
 
-DOMA_FILE = SRC / "zerpl_d_so_status.doma.xml"
-DTEL = "ZERPL_E_SO_STATUS"
-DTEL_FILE = SRC / "zerpl_e_so_status.dtel.xml"
+DOMA_FILE = SRC / "zerpl_fx_d_status.doma.xml"
+DTEL = "ZERPL_FX_E_STATUS"
+DTEL_FILE = SRC / "zerpl_fx_e_status.dtel.xml"
 
-FUGR = "ZERPL_FG"
-FUGR_FILE = SRC / "zerpl_fg.fugr.xml"
-FUGR_FILES = sorted(SRC.glob("zerpl_fg.fugr.*"))
-FM_ORDER_FILE = SRC / "zerpl_fg.fugr.z_erpl_read_order.abap"
+FUGR = "ZERPL_FX_FG"
+FUGR_FILE = SRC / "zerpl_fx_fg.fugr.xml"
+FUGR_FILES = sorted(SRC.glob("zerpl_fx_fg.fugr.*"))
+FM_ORDER_FILE = SRC / "zerpl_fx_fg.fugr.z_erpl_fx_read_order.abap"
 CALL_CLASS = "ZCL_ERPL_FUGR_CALL"
 
 
@@ -110,20 +110,20 @@ class TestDataElement:
         result = cli.run_ok("abapgit", "deploy", str(repo), "--package", PACKAGE)
 
         order = [(o["type"], o["name"]) for o in result["objects"]]
-        assert order == [("DOMA", "ZERPL_D_SO_STATUS"), ("DTEL", DTEL)], order
-        assert _entry(result, "DOMA", "ZERPL_D_SO_STATUS")["action"] in (
+        assert order == [("DOMA", "ZERPL_FX_D_STATUS"), ("DTEL", DTEL)], order
+        assert _entry(result, "DOMA", "ZERPL_FX_D_STATUS")["action"] in (
             "created", "updated", "unchanged")
         assert _entry(result, "DTEL", DTEL)["action"] == "created"
         status, body = _data_element(adt)
         assert status == 200, body[:800]
-        assert "ZERPL_D_SO_STATUS" in body.upper()
+        assert "ZERPL_FX_D_STATUS" in body.upper()
         assert "Sales Order Status" in body
         assert "Order Status" in body
 
     def test_redeploy_unchanged_changes_nothing(self, cli, tmp_path):
         repo = _repo_with(tmp_path, DOMA_FILE, DTEL_FILE)
         result = cli.run_ok("abapgit", "deploy", str(repo), "--package", PACKAGE)
-        assert _entry(result, "DOMA", "ZERPL_D_SO_STATUS")["action"] == "unchanged"
+        assert _entry(result, "DOMA", "ZERPL_FX_D_STATUS")["action"] == "unchanged"
         assert _entry(result, "DTEL", DTEL)["action"] == "unchanged"
 
     def test_changed_label_updates_in_place(self, cli, adt, tmp_path):
@@ -174,7 +174,7 @@ CLASS @CLASS@ IMPLEMENTATION.
       ORDER BY so~so_id
       INTO @DATA(so_id) UP TO 1 ROWS.
     ENDSELECT.
-    CALL FUNCTION 'Z_ERPL_READ_ORDER'
+    CALL FUNCTION 'Z_ERPL_FX_READ_ORDER'
       EXPORTING
         iv_so_id  = so_id
       IMPORTING
@@ -201,14 +201,14 @@ class TestFunctionGroup:
 
         entry = _entry(result, "FUGR", FUGR)
         assert entry["action"] == "created"
-        assert "function module Z_ERPL_READ_ORDER" in entry["parts"]
-        assert "function module Z_ERPL_READ_PARTNER" in entry["parts"]
-        status, body = _fm_source(adt, "Z_ERPL_READ_ORDER")
+        assert "function module Z_ERPL_FX_READ_ORDER" in entry["parts"]
+        assert "function module Z_ERPL_FX_READ_PARTNER" in entry["parts"]
+        status, body = _fm_source(adt, "Z_ERPL_FX_READ_ORDER")
         assert status == 200, body[:800]
         # ADT shows the interface in signature form, derived from the deploy.
         assert re.search(r"VALUE\(iv_so_id\)\s+TYPE\s+snwd_so_id", body, re.I), body[:800]
         assert re.search(r"et_items\s+LIKE\s+snwd_so_i", body, re.I), body[:800]
-        status, body = _fm_source(adt, "Z_ERPL_READ_PARTNER")
+        status, body = _fm_source(adt, "Z_ERPL_FX_READ_PARTNER")
         assert status == 200
         assert re.search(r"iv_with_contacts\s+TYPE\s+abap_bool\s+DEFAULT\s+abap_false", body, re.I)
         assert re.search(r"RAISING\s+cx_sy_itab_line_not_found", body, re.I)
@@ -216,7 +216,7 @@ class TestFunctionGroup:
         # program SAPL<fg>: an inactive part blocks the release of the
         # request the deploy recorded it on ("Object REPS SAPL... is
         # inactive", #72), and the module cannot run what it does not see.
-        assert adt.inactive(FUGR, "Z_ERPL_READ_ORDER", "Z_ERPL_READ_PARTNER") == []
+        assert adt.inactive(FUGR, "Z_ERPL_FX_READ_ORDER", "Z_ERPL_FX_READ_PARTNER") == []
 
     def test_redeploy_unchanged_changes_nothing(self, cli):
         result = cli.run_ok("abapgit", "deploy", str(FUGR_FILE), "--package", PACKAGE)
@@ -226,7 +226,7 @@ class TestFunctionGroup:
         cli.run("object", "delete", f"/sap/bc/adt/oo/classes/{CALL_CLASS.lower()}")
         try:
             cli.run_ok("object", "create", "--type", "CLAS/OC", "--name", CALL_CLASS,
-                       "--package", PACKAGE, "--description", "erpl demo: call Z_ERPL_READ_ORDER")
+                       "--package", PACKAGE, "--description", "erpl fixture: call Z_ERPL_FX_READ_ORDER")
             source = tmp_path / "call.abap"
             source.write_text(CALL_SOURCE.replace("@CLASS@", CALL_CLASS.lower()))
             # `source write --activate` prints one JSON line per step.
@@ -254,8 +254,8 @@ class TestFunctionGroup:
 
         entry = _entry(result, "FUGR", FUGR)
         assert entry["action"] == "updated"
-        assert entry["parts"] == ["function module Z_ERPL_READ_ORDER"]
-        status, body = _fm_source(adt, "Z_ERPL_READ_ORDER")
+        assert entry["parts"] == ["function module Z_ERPL_FX_READ_ORDER"]
+        status, body = _fm_source(adt, "Z_ERPL_FX_READ_ORDER")
         assert status == 200
         assert "so_item_pos DESCENDING" in body
 

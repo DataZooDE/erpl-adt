@@ -1,7 +1,7 @@
 """The abapgit_* MCP tools over stdio JSON-RPC, the way an agent calls them.
 
 `erpl-adt mcp --abapgit-root <fixtures>` serves abapgit_status / _deploy /
-_export / _delete. The test deploys the DOMA fixture ZERPL_D_SO_STATUS through
+_export / _delete. The test deploys the DOMA fixture ZERPL_FX_D_STATUS through
 the tools, checks the domain independently over ADT REST, checks that the
 structured result is the CLI's `--json` report, and that paths outside the
 root are refused. It deletes the domain again only if it did not exist before.
@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
-FILE = "src/zerpl_d_so_status.doma.xml"
-DOMA = "ZERPL_D_SO_STATUS"
+ROOT = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
+FILE = "src/zerpl_fx_d_status.doma.xml"
+DOMA = "ZERPL_FX_D_STATUS"
 PACKAGE = "$TMP"
 
 pytestmark = pytest.mark.abapgit_deploy
