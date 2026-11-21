@@ -90,6 +90,19 @@ public:
         if (payload.IsErr()) {
             return Result<void, Error>::Err(payload.Error());
         }
+        // DD04T field lengths, measured on A4H (DD03L); translations alike.
+        std::vector<TextLimit> limits;
+        for (const char* container : {"DD04V", "DD04_TEXTS"}) {
+            limits.push_back({container, "DDTEXT", 60});
+            limits.push_back({container, "REPTEXT", 55});
+            limits.push_back({container, "SCRTEXT_S", 10});
+            limits.push_back({container, "SCRTEXT_M", 20});
+            limits.push_back({container, "SCRTEXT_L", 40});
+        }
+        auto texts = CheckTextLimits("Data element " + key.name, desired.at(FileName(key, "xml")), limits);
+        if (texts.IsErr()) {
+            return texts;
+        }
         return CheckDocuIdentity(key, desired, FileName(key, "xml"), kDocu);
     }
 

@@ -1,5 +1,7 @@
 #include "abapgit_types.hpp"
 
+#include <tinyxml2.h>
+
 #include <algorithm>
 #include <cctype>
 #include <set>
@@ -147,6 +149,102 @@ Result<std::string, Error> RenderFromEngine(const std::string& asxml,
     xml.serializer_version = "v1.0.0";
     xml.values_xml = values.Value();
     return Result<std::string, Error>::Ok(RenderAbapGitXml(xml));
+}
+
+namespace {
+
+std::string_view LocalName(const char* name) {
+    std::string_view n(name ? name : "");
+    const auto colon = n.find(':');
+    return colon == std::string_view::npos ? n : n.substr(colon + 1);
+}
+
+size_t Utf8Chars(std::string_view s) {
+    return static_cast<size_t>(std::count_if(s.begin(), s.end(), [](char c) {
+        return (static_cast<unsigned char>(c) & 0xC0) != 0x80;
+    }));
+}
+
+std::string SiblingText(const tinyxml2::XMLElement* el, const char* name) {
+    const auto* parent = el->Parent() ? el->Parent()->ToElement() : nullptr;
+    if (!parent) return "";
+    for (auto* s = parent->FirstChildElement(); s; s = s->NextSiblingElement()) {
+        if (LocalName(s->Name()) == name) return s->GetText() ? s->GetText() : "";
+    }
+    return "";
+}
+
+void CollectTooLong(const tinyxml2::XMLElement* el, std::vector<std::string_view>& path,
+                    const std::vector<TextLimit>& limits, std::vector<std::string>& problems) {
+    const auto name = LocalName(el->Name());
+    for (const auto& rule : limits) {
+        if (name != rule.field) continue;
+        if (std::find(path.begin(), path.end(), std::string_view(rule.container)) == path.end()) {
+            continue;
+        }
+        if (rule.id && SiblingText(el, "ID") != rule.id) continue;
+        const std::string value = el->GetText() ? el->GetText() : "";
+        const size_t chars = Utf8Chars(value);
+        if (chars <= rule.limit) continue;
+        std::string what = rule.label ? rule.label : rule.field;
+        const auto fm = SiblingText(el, "FUNCNAME");
+        if (!fm.empty()) what = "function module " + fm + " " + what;
+        // Inside a translation section, say which language.
+        const bool translation = std::any_of(path.begin(), path.end(), [](std::string_view p) {
+            return p.rfind("I18N", 0) == 0 ||
+                   (p.size() > 6 && p.compare(p.size() - 6, 6, "_TEXTS") == 0);
+        });
+        if (translation) {
+            std::string language = SiblingText(el, "DDLANGUAGE");
+            if (language.empty()) language = SiblingText(el, "LANGU");
+            if (language.empty()) {
+                // I18N_TPOOL: <item><LANGUAGE>D</LANGUAGE><TEXTPOOL><item>...
+                for (const auto* up = el->Parent(); up && language.empty(); up = up->Parent()) {
+                    const auto* e = up->ToElement();
+                    if (!e) break;
+                    for (auto* s = e->FirstChildElement(); s; s = s->NextSiblingElement()) {
+                        if (LocalName(s->Name()) == "LANGUAGE" && s->GetText()) {
+                            language = s->GetText();
+                        }
+                    }
+                }
+            }
+            if (!language.empty()) what += " (language " + language + ")";
+        }
+        problems.push_back(what + " '" + value + "' has " + std::to_string(chars) +
+                           " characters; SAP's field holds " + std::to_string(rule.limit));
+    }
+    path.push_back(name);
+    for (auto* child = el->FirstChildElement(); child; child = child->NextSiblingElement()) {
+        CollectTooLong(child, path, limits, problems);
+    }
+    path.pop_back();
+}
+
+}  // namespace
+
+Result<void, Error> CheckTextLimits(const std::string& object, const std::string& xml,
+                                    const std::vector<TextLimit>& limits) {
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS || !doc.RootElement()) {
+        return Result<void, Error>::Ok();  // the payload checks report unreadable files
+    }
+    std::vector<std::string_view> path;
+    std::vector<std::string> problems;
+    CollectTooLong(doc.RootElement(), path, limits, problems);
+    if (problems.empty()) return Result<void, Error>::Ok();
+    std::string message = object + ": ";
+    for (size_t i = 0; i < problems.size(); ++i) {
+        if (i) message += "; ";
+        message += problems[i];
+    }
+    message += ". Shorten it in the files - SAP would cut it, and every later deploy would see "
+               "a change. Nothing was changed.";
+    Error error;
+    error.operation = "abapGit";
+    error.message = std::move(message);
+    error.category = ErrorCategory::CheckError;
+    return Result<void, Error>::Err(std::move(error));
 }
 
 }  // namespace erpl_adt

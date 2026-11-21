@@ -60,9 +60,9 @@ with `search … --type` (or `source read --type`) and pass the URI.
     (`main`, `testclasses`, ...), `line` and `column` in `messages`; text mode prints
     `ZCL_X testclasses:70:4: <text>`. Before activating, `--json source check <name> --version inactive` finds
     the same errors in what was just written.
-11. **Keep short texts within SAP's field lengths.** A function group text (`AREAT`) holds 40 characters: a longer
-    one is cut on create, and every later `abapgit deploy` of the same files is refused ("changing the short text
-    ... is not supported"); only deleting the group helps (#92). Function module texts: 74.
+11. **Keep short texts within SAP's field lengths.** `abapgit deploy` refuses a longer one before writing anything
+    (exit 8, naming the field and the limit): function group text (`AREAT`) 40, function module text 74, program
+    title 70, data element labels 10/20/40 (`SCRTEXT_S/M/L`), short texts 60.
 12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write
     /sap/bc/adt/ddic/structures/<name>/source/main` with a `define structure` source and `--activate`. RFC modules
     pass everything by value and need dictionary types (no local types, no `TYPE REF TO`).

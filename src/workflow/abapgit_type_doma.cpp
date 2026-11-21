@@ -88,6 +88,15 @@ public:
         if (payload.IsErr()) {
             return Result<void, Error>::Err(payload.Error());
         }
+        // DD01T-DDTEXT and DD07T-DDTEXT hold 60 (A4H, DD03L); translations alike.
+        auto texts = CheckTextLimits("Domain " + key.name, desired.at(FileName(key, "xml")),
+                                     {{"DD01V", "DDTEXT", 60},
+                                      {"DD07V", "DDTEXT", 60},
+                                      {"DD01_TEXTS", "DDTEXT", 60},
+                                      {"DD07_TEXTS", "DDTEXT", 60}});
+        if (texts.IsErr()) {
+            return texts;
+        }
         return CheckDocuIdentity(key, desired, FileName(key, "xml"), kDocu);
     }
 

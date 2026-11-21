@@ -531,3 +531,16 @@ TEST_CASE("PROG: Validate finds file problems without touching the system",
     ProgFiles fine;
     CHECK(Handler()->Validate(kKey, fine.Build(), ObjectState{}, "E").IsOk());
 }
+
+// #92: the program title (text pool entry R) holds 70 characters.
+TEST_CASE("PROG: a title over 70 characters is refused before anything runs",
+          "[workflow][abapgit_prog][text_limits]") {
+    ProgFiles files;
+    files.tpool = "<TPOOL><item><ID>R</ID><ENTRY>" + std::string(71, 't') +
+                  "</ENTRY><LENGTH>71</LENGTH></item></TPOOL>";
+    auto checked = Handler()->Validate(kKey, files.Build(), ObjectState{}, "E");
+    REQUIRE(checked.IsErr());
+    CHECK(checked.Error().category == ErrorCategory::CheckError);
+    CHECK(checked.Error().message.find("title") != std::string::npos);
+    CHECK(checked.Error().message.find("holds 70") != std::string::npos);
+}

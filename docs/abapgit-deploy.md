@@ -368,6 +368,23 @@ objects `ZERPL_FX_*`), so the demo and the tests can share a system.
 
 ## Limitations
 
+* Short texts longer than their SAP field are refused before anything is
+  written (exit 8, category `check`, naming the field and its limit): SAP
+  would cut them, and every later deploy would compare the cut text with the
+  file and refuse. Counted in characters, translations included. Field
+  lengths, measured on A4H (`DD03L`):
+
+  | Object | Field | Characters |
+  |---|---|---|
+  | FUGR | `AREAT` (group text) | 40 |
+  | FUGR | `SHORT_TEXT` (function module) | 74 |
+  | PROG | text pool entry `R` (title) | 70 |
+  | DTEL | `DDTEXT` / `REPTEXT` | 60 / 55 |
+  | DTEL | `SCRTEXT_S` / `SCRTEXT_M` / `SCRTEXT_L` | 10 / 20 / 40 |
+  | DOMA | `DDTEXT` (short text and fixed value texts) | 60 |
+
+  A transaction text (`TSTCT-TTEXT`) is not checked: its length depends on
+  the release (80 on A4H, 36 on older systems).
 * Line endings: a CRLF working copy (Windows with `core.autocrlf=true`) is
   read as LF. `deploy`, `status` and `delete` turn every CRLF pair in the
   object files and in `.abapgit.xml` into LF before they compare, plan and
