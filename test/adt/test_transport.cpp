@@ -543,6 +543,7 @@ TEST_CASE("GetTransport: a malformed number is refused before any request",
     auto result = GetTransport(mock, "../../oo/classes/x");
     REQUIRE(result.IsErr());
     CHECK(result.Error().message.find("Transport ID") != std::string::npos);
+    CHECK(result.Error().category == ErrorCategory::Validation);  // #84
     CHECK(mock.GetCallCount() == 0);
 }
 

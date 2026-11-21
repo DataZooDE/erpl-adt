@@ -532,7 +532,7 @@ Result<TransportDetail, Error> GetTransport(
     if (id.IsErr()) {
         return Result<TransportDetail, Error>::Err(Error{
             "GetTransport", "", std::nullopt, id.Error(), std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
     const auto url = "/sap/bc/adt/cts/transportrequests/" + id.Value().Value();
 

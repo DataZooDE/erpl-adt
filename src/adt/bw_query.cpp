@@ -546,7 +546,7 @@ Result<BwQueryComponentDetail, Error> BwReadQueryComponent(
             std::nullopt,
             "Unsupported query component type: " + component_type_raw,
             std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
     if (name.empty()) {
         return Result<BwQueryComponentDetail, Error>::Err(Error{
@@ -555,7 +555,7 @@ Result<BwQueryComponentDetail, Error> BwReadQueryComponent(
             std::nullopt,
             "Component name must not be empty",
             std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
 
     const auto path = BuildObjectPath(component_type, name, version);

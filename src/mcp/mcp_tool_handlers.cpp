@@ -844,7 +844,7 @@ ToolResult HandleActivateObject(IAdtSession& session,
             if (!u.is_string() || u.get<std::string>().empty()) {
                 return MakeErrorResult(Error{"adt_activate", "", std::nullopt,
                                              "uris must be a list of object URIs",
-                                             std::nullopt, ErrorCategory::Internal});
+                                             std::nullopt, ErrorCategory::Validation});
             }
             objects.push_back(ActivationParamsFromObjectUri(u.get<std::string>()));
         }

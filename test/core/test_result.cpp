@@ -656,3 +656,12 @@ TEST_CASE("FromHttpStatus: other T100 classes keep their HTTP classification",
     CHECK(e.category == ErrorCategory::Internal);
 }
 
+// #84: invalid input is its own category - still exit 99 (owner decision:
+// no breaking change), but "validation" in the JSON, so a script can tell a
+// wrong argument from an internal error.
+TEST_CASE("Error: validation keeps exit 99 and says validation", "[error]") {
+    Error e{"Validation", "", std::nullopt, "bad --version", std::nullopt,
+            ErrorCategory::Validation};
+    CHECK(e.ExitCode() == 99);
+    CHECK(e.ToJson().find("\"category\":\"validation\"") != std::string::npos);
+}

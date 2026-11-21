@@ -267,7 +267,8 @@ bool ColorMode(const CommandArgs& args) {
 }
 
 Error MakeValidationError(const std::string& message) {
-    return Error{"Validation", "", std::nullopt, message, std::nullopt};
+    return Error{"Validation", "", std::nullopt, message, std::nullopt,
+                 ErrorCategory::Validation};
 }
 
 Result<int, Error> ParseIntInRange(std::string_view raw,

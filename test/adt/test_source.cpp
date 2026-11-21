@@ -270,6 +270,8 @@ TEST_CASE("CheckSyntax: an unknown version is refused before any request",
     REQUIRE(result.IsErr());
     CHECK(result.Error().message.find("active") != std::string::npos);
     CHECK(result.Error().message.find("inactive") != std::string::npos);
+    CHECK(result.Error().category == ErrorCategory::Validation);  // #84
+    CHECK(result.Error().ExitCode() == 99);
     CHECK(mock.GetCallCount() == 0);
     CHECK(mock.PostCallCount() == 0);
 }

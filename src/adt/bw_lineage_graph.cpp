@@ -91,7 +91,7 @@ Result<BwLineageGraph, Error> BwBuildLineageGraph(
             std::nullopt,
             "dtp_name must not be empty",
             std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
 
     BwLineageGraph graph;
