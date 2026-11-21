@@ -20,16 +20,10 @@ import random
 
 import pytest
 
+from cli_runner import release_with_tasks
+
 PACKAGE = os.getenv("SAP_TRANSPORT_PACKAGE", "")
 EXIT_ACTIVATION = 5
-
-
-def _release(cli, number):
-    data = cli.run_ok("transport", "show", number)
-    for task in data["tasks"]:
-        if task["status"] == "modifiable":
-            cli.run("transport", "release", task["number"])
-    cli.run("transport", "release", number)
 
 
 @pytest.mark.activation
@@ -71,4 +65,4 @@ def test_activate_reports_what_sap_wants_activated_with_it(cli, tmp_path):
         assert json.loads(again.stdout)["failed"] == 0, again.stdout
     finally:
         cli.run("object", "delete", group_uri, "--transport", request)
-        _release(cli, request)
+        release_with_tasks(cli, request)

@@ -487,15 +487,7 @@ private:
     }
 
     static std::string MainProgram(const FugrDefinition& def, const std::string& group) {
-        // SAPL<group>, or /NS/SAPL<group> for namespaced groups.
-        const auto upper = Upper(group);
-        std::string expected;
-        if (!upper.empty() && upper[0] == '/') {
-            const auto end = upper.find('/', 1);
-            expected = upper.substr(0, end + 1) + "SAPL" + upper.substr(end + 1);
-        } else {
-            expected = "SAPL" + upper;
-        }
+        const auto expected = FunctionGroupMainProgramName(group);
         for (const auto& include : def.includes) {
             if (include == expected) {
                 return include;

@@ -649,3 +649,66 @@ TEST_CASE("McpHttpServer: enforcing hosts leaves the web UI's own origin alone",
     server.Stop();
     server_thread.join();
 }
+
+// Crew review F2: a refused request is now read to its end before the 403
+// (so the 403 arrives, #79). httplib's default limit is SIZE_MAX, so a page on
+// any origin could make the server buffer an unbounded body. The server sets
+// an explicit limit: larger bodies are answered 413 without being buffered,
+// and the server keeps serving.
+TEST_CASE("McpHttpServer: request bodies are limited", "[mcp][http][security]") {
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 46);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    const std::string huge(McpHttpServer::kMaxRequestBodyBytes + 1, 'x');
+    {
+        httplib::Client client("127.0.0.1", port);
+        auto refused = client.Post("/mcp", {{"Origin", "http://evil.example"}}, huge,
+                                   "application/json");
+        if (refused) CHECK((refused->status == 413 || refused->status == 403));
+    }
+    {
+        httplib::Client client("127.0.0.1", port);
+        auto too_big = client.Post("/mcp", huge, "application/json");
+        if (too_big) CHECK(too_big->status == 413);
+    }
+    // Within the limit, and the server is still there.
+    httplib::Client client("127.0.0.1", port);
+    auto ok = client.Post("/mcp", EchoCall(), "application/json");
+    CHECK(ok != nullptr);
+    if (ok) CHECK(ok->status == 200);
+
+    server.Stop();
+    server_thread.join();
+}
+
+// Crew review F7 (regression guard; the reset itself was only reproducible
+// with urllib, see scripts/ci/webui_smoke.py): a refused request with a body
+// gets its full 403 with the hint, on /mcp and on a path no route matches.
+TEST_CASE("McpHttpServer: a refused request with a body gets the whole 403",
+          "[mcp][http][security]") {
+    McpHttpServer server(MakeEchoRegistry());
+    auto port = static_cast<uint16_t>(TestPort() + 47);
+
+    std::thread server_thread([&] { (void)server.Run("127.0.0.1", port); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    const std::string body = R"({"jsonrpc":"2.0","id":1,"method":"tools/list","pad":")" +
+                             std::string(2'000'000, 'x') + R"("})";
+    for (const char* path : {"/mcp", "/nope"}) {
+        INFO(path);
+        httplib::Client client("127.0.0.1", port);
+        auto refused = client.Post(path,
+                                   {{"Origin", "http://evil.example"}, {"Connection", "close"}},
+                                   body, "application/json");
+        CHECK(refused != nullptr);
+        if (!refused) continue;
+        CHECK(refused->status == 403);
+        CHECK(refused->body.find("--cors-origin") != std::string::npos);
+    }
+
+    server.Stop();
+    server_thread.join();
+}

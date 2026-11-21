@@ -173,6 +173,11 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
     //
     // Applied via a pre-routing hook rather than per-handler so a new route
     // can't accidentally omit it.
+    impl_->http.set_payload_max_length(kMaxRequestBodyBytes);
+
+    // Refusals are decided here, before the body is read; one with a body is
+    // only prepared (Refuse) and sent by the pre-request hook below, which
+    // recognises it by res.status == 403.
     impl_->http.set_pre_routing_handler([this](const httplib::Request& req,
                                                httplib::Response& res) {
         // Host first, and on its own: DNS rebinding hands the attacker both
@@ -226,7 +231,8 @@ McpHttpServer::McpHttpServer(ToolRegistry registry, bool serve_webui,
 
     // Runs after httplib has read the body, before a matched route's handler:
     // a request refused above (status already 403, see Refuse) goes out here,
-    // so no handler ever runs for it.
+    // so no handler ever runs for it. Coupled to the pre-routing hook through
+    // res.status == 403: nothing else may set 403 before routing (crew F10).
     impl_->http.set_pre_request_handler([](const httplib::Request&,
                                            httplib::Response& res) {
         return res.status == 403 ? httplib::Server::HandlerResponse::Handled

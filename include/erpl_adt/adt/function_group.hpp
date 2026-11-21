@@ -35,6 +35,10 @@ namespace erpl_adt {
     IAdtSession& session, const std::string& group, const std::string& include,
     const std::string& description, const std::optional<std::string>& transport);
 
+// The main program of a function group: SAPL<group>, or /NS/SAPL<group> for
+// a namespaced group (upper case). The one place that spells this (crew F8).
+[[nodiscard]] std::string FunctionGroupMainProgramName(const std::string& group);
+
 // What activates a function group's main program SAPL<fg> (`main_program`):
 // the group (FUGR/F) and the main program as the object ADT lists it - FUGR/I
 // named SAPL<fg> at <group>/source/main - in one request. The group alone

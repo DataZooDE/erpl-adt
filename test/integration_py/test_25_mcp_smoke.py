@@ -15,6 +15,8 @@ CLI tests already carry.
 import json
 import subprocess
 
+from cli_runner import release_with_tasks
+
 
 def mcp_call(cli, calls, timeout=600):
     """Send tools/call messages to the stdio MCP server, return results by id."""
@@ -166,4 +168,4 @@ class TestMcpTransportReview:
             assert data["tasks"] and data["tasks"][0]["owner"] == cli.user
             assert tool_error(missing) is not None
         finally:
-            cli.run("transport", "release", number)
+            release_with_tasks(cli, number)

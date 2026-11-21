@@ -36,9 +36,9 @@ def bootstrap_transport(cli):
 
     yield number
 
-    # Best-effort release: not all systems allow immediate release; we don't
-    # want a teardown failure to mask the real test result.
-    cli.run("transport", "release", number)
+    # Best-effort release (tasks first): not all systems allow immediate
+    # release; a teardown failure must not mask the real test result.
+    release_with_tasks(cli, number)
 
 
 @pytest.mark.transport
@@ -117,7 +117,7 @@ class TestTransportMutations:
         assert TRANSPORT_PATTERN.match(data["transport_number"]), \
             f"Invalid transport number: {data['transport_number']}"
         # Best-effort release so we don't accumulate transports on the trial.
-        cli.run("transport", "release", data["transport_number"])
+        release_with_tasks(cli, data["transport_number"])
 
     def test_create_then_release(self, cli):
         """Create then release; tolerate the "cannot release immediately" case."""
@@ -148,8 +148,8 @@ class TestTransportMutations:
 
 
 # The package for the object-entry test: transportable, with change recording
-# on. A4H has neither ("Change recording must be activated for package ..."),
-# so the test only runs where one is named.
+# on - ZERPL_TR on A4H (under ZCLASSIC_DEVELOPMENT; see test_41). The test runs
+# where one is named.
 RECORDING_PACKAGE = os.getenv("SAP_TRANSPORT_PACKAGE")
 
 

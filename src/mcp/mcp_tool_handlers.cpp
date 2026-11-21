@@ -854,20 +854,36 @@ ToolResult HandleReleaseTransport(IAdtSession& session,
 // adt_activate
 ToolResult HandleActivateObject(IAdtSession& session,
                                 const nlohmann::json& params) {
-    ToolResult err;
-    auto uri = RequireString(params, "uri", err);
-    if (!uri) return err;
+    // `uris`: several objects in one activation request - SAP activates some
+    // only together (a function group's main program with its group, #82).
+    // Type and name are derived from each URI, as `erpl-adt activate` does.
+    std::vector<ActivateObjectParams> objects;
+    if (params.contains("uris") && params["uris"].is_array() && !params["uris"].empty()) {
+        for (const auto& u : params["uris"]) {
+            if (!u.is_string() || u.get<std::string>().empty()) {
+                return MakeErrorResult(Error{"adt_activate", "", std::nullopt,
+                                             "uris must be a list of object URIs",
+                                             std::nullopt, ErrorCategory::Internal});
+            }
+            objects.push_back(ActivationParamsFromObjectUri(u.get<std::string>()));
+        }
+    } else {
+        ToolResult err;
+        auto uri = RequireString(params, "uri", err);
+        if (!uri) return err;
 
-    ActivateObjectParams act_params;
-    act_params.uri = *uri;
+        ActivateObjectParams act_params;
+        act_params.uri = *uri;
 
-    auto type_str = OptString(params, "type");
-    if (!type_str.empty()) act_params.type = type_str;
+        auto type_str = OptString(params, "type");
+        if (!type_str.empty()) act_params.type = type_str;
 
-    auto name_str = OptString(params, "name");
-    if (!name_str.empty()) act_params.name = name_str;
+        auto name_str = OptString(params, "name");
+        if (!name_str.empty()) act_params.name = name_str;
+        objects.push_back(std::move(act_params));
+    }
 
-    auto result = ActivateObject(session, act_params);
+    auto result = ActivateObjects(session, objects);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     const auto& act = result.Value();
@@ -1168,12 +1184,18 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
     registry.Register(
         "adt_activate",
         "Activate an inactive ABAP object after writing source code. "
-        "Optionally provide type and name for more reliable activation.",
+        "Optionally provide type and name for more reliable activation. "
+        "Pass uris instead of uri to activate several objects in one request - "
+        "SAP activates some only together and then names them (failed > 0).",
         MakeSchema(
             {{"uri", StringProp("Object URI (e.g., /sap/bc/adt/oo/classes/ZCL_MY_CLASS)")},
+             {"uris", {{"type", "array"},
+                       {"items", {{"type", "string"}}},
+                       {"description", "Several object URIs, activated in one request "
+                                       "(instead of uri)"}}},
              {"type", StringProp("Object type (e.g., CLAS/OC)")},
              {"name", StringProp("Object name (e.g., ZCL_MY_CLASS)")}},
-            {"uri"}),
+            nlohmann::json::array()),
         [&session](const nlohmann::json& params) {
             return HandleActivateObject(session, params);
         });

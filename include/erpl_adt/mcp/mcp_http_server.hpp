@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include <erpl_adt/mcp/http_security.hpp>
 #include <erpl_adt/mcp/mcp_server.hpp>
 #include <erpl_adt/mcp/tool_registry.hpp>
@@ -19,6 +21,12 @@ namespace erpl_adt {
 // ---------------------------------------------------------------------------
 class McpHttpServer {
 public:
+    // Largest request body read (httplib's default is unlimited). A refused
+    // request is read to its end before its 403 (so the 403 arrives); without
+    // a limit any page could make the server buffer an unbounded body. 16 MB
+    // holds any JSON-RPC call, a large ABAP source included.
+    static constexpr std::size_t kMaxRequestBodyBytes = 16u * 1024u * 1024u;
+
     // serve_webui: also serve the embedded Flutter web client (erpl_adt_catalog_kit)
     // at every path other than /mcp and /healthz, same-origin with the JSON-RPC
     // endpoint (erpl-adt catalog webui). If the binary was built without the web

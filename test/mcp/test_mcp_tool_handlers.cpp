@@ -985,6 +985,30 @@ TEST_CASE("adt_activate: happy path", "[mcp][handlers][activation]") {
     CHECK(j["error_messages"].is_array());
 }
 
+// Crew review F4: SAP activates some objects only together (#82) - an MCP
+// agent must be able to send them in one request, as `erpl-adt activate a b`.
+TEST_CASE("adt_activate: uris go into one activation request, typed from the URI",
+          "[mcp][handlers][activation]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         "<chkl:messages xmlns:chkl=\"http://www.sap.com/abapxml/checklist\">"
+         "<chkl:properties checkExecuted=\"true\" activationExecuted=\"true\" "
+         "generationExecuted=\"true\"/></chkl:messages>"}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_activate",
+                           {{"uris", {"/sap/bc/adt/functions/groups/zerpl_fg/source/main",
+                                      "/sap/bc/adt/functions/groups/zerpl_fg"}}});
+    CHECK_FALSE(result.is_error);
+    REQUIRE(mock.PostCallCount() == 1);
+    const auto& body = mock.PostCalls()[0].body;
+    CHECK(body.find("adtcore:type=\"FUGR/I\" adtcore:name=\"SAPLZERPL_FG\"") !=
+          std::string::npos);
+    CHECK(body.find("adtcore:type=\"FUGR/F\" adtcore:name=\"ZERPL_FG\"") != std::string::npos);
+}
+
 TEST_CASE("adt_activate: missing uri", "[mcp][handlers][activation]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);

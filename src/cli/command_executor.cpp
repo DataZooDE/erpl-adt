@@ -2284,6 +2284,39 @@ int HandleSourceCheck(const CommandArgs& args) {
     return SyntaxCheckExitCode(messages);
 }
 
+} // namespace
+
+Result<std::vector<ActivateObjectParams>, Error> ResolveActivationObjects(
+    IAdtSession& session, const std::vector<std::string>& names_or_uris) {
+    // Several objects go into one activation request: SAP activates some
+    // only together (a function group's main program with its group), and
+    // says so with a pre-audit list naming them (#82).
+    std::vector<ActivateObjectParams> objects;
+    for (const auto& arg : names_or_uris) {
+        auto info_result = ResolveObjectInfo(session, arg);
+        if (info_result.IsErr()) {
+            return Result<std::vector<ActivateObjectParams>, Error>::Err(
+                std::move(info_result).Error());
+        }
+        const auto& info = info_result.Value();
+        // A URI resolves to the URI alone; derive type and name from it, as
+        // `source write --activate` does - SAP needs them for an object
+        // inside another (a function group's main program, #82).
+        ActivateObjectParams params = info.type.empty()
+                                          ? ActivationParamsFromObjectUri(info.uri)
+                                          : ActivateObjectParams{};
+        if (!info.type.empty()) {
+            params.uri = info.uri;
+            params.type = info.type;
+            params.name = info.name;
+        }
+        objects.push_back(std::move(params));
+    }
+    return Result<std::vector<ActivateObjectParams>, Error>::Ok(std::move(objects));
+}
+
+namespace {
+
 // ---------------------------------------------------------------------------
 // activate run
 // ---------------------------------------------------------------------------
@@ -2302,33 +2335,13 @@ int HandleActivateRun(const CommandArgs& args) {
         return 99;
     }
 
-    // Several objects go into one activation request: SAP activates some
-    // only together (a function group's main program with its group), and
-    // says so with a pre-audit list naming them (#82).
-    std::vector<ActivateObjectParams> objects;
-    for (const auto& arg : args.positional) {
-        auto info_result = ResolveObjectInfo(*session, arg);
-        if (info_result.IsErr()) {
-            fmt.PrintError(info_result.Error());
-            return info_result.Error().ExitCode();
-        }
-        const auto& info = info_result.Value();
-        // A URI resolves to the URI alone; derive type and name from it, as
-        // `source write --activate` does - SAP needs them for an object
-        // inside another (a function group's main program, #82).
-        ActivateObjectParams params = info.type.empty()
-                                          ? ActivationParamsFromObjectUri(info.uri)
-                                          : ActivateObjectParams{};
-        if (!info.type.empty()) {
-            params.uri = info.uri;
-            params.type = info.type;
-            params.name = info.name;
-        }
-        if (objects.empty()) {
-            ft.SetStr("object_type", ClassifyObjectType(params.type));
-        }
-        objects.push_back(std::move(params));
+    auto resolved = ResolveActivationObjects(*session, args.positional);
+    if (resolved.IsErr()) {
+        fmt.PrintError(resolved.Error());
+        return resolved.Error().ExitCode();
     }
+    const auto objects = std::move(resolved).Value();
+    ft.SetStr("object_type", ClassifyObjectType(objects.front().type));
 
     auto result = ActivateObjects(*session, objects);
     if (result.IsErr()) {

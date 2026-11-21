@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from cli_runner import release_with_tasks
+
 from cli_runner import CliRunner
 
 FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
@@ -197,7 +199,7 @@ class TestGuardRails:
             entry = _entry(json.loads(result.stdout), "DOMA", "ZERPL_D_SO_STATUS")
             assert not any("--transport" in n for n in entry.get("notes", [])), entry
         finally:
-            cli.run("transport", "release", number)
+            release_with_tasks(cli, number)
 
     def test_sap_object_is_refused(self, cli, tmp_path):
         sap_file = tmp_path / "xfeld.doma.xml"
