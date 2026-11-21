@@ -5,8 +5,9 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
-- **[fix]** `abapgit deploy` refuses a short text longer than its SAP field before anything is written (#92):
-  exit 8, naming the field and the limit (function group text 40, function module text 74, program title 70, data
+- **[fix]** `abapgit deploy` refuses an object whose short text is longer than its SAP field before writing it
+  (#92) - like every other refused object; the rest of the repository deploys as usual: exit 8, naming the field
+  and the limit (function group text 40, function module text 74, program title 70, data
   element labels 10/20/40 and texts 60/55, domain texts 60; translations too, counted in characters). Before, SAP
   cut the text on create, and every later deploy of the same files was refused.
 - **[feature]** Runtime errors (short dumps, ST22) without SAP GUI (#89): `dump list [--owner U] [--since T]

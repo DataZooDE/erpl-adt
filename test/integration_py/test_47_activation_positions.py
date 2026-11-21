@@ -125,6 +125,15 @@ class TestActivationNamesTheBrokenPlace:
         assert text.returncode == EXIT_ACTIVATION
         assert f"{pricing} testclasses:{BROKEN_LINE}:" in text.stderr, text.stderr
 
+        # source write --activate reports the same place.
+        path = tmp_path / "t.abap"
+        path.write_text(pricing_tests(pricing, order, broken=True))
+        written = cli.run("source", "write", uris["pricing"] + "/includes/testclasses",
+                          "--file", str(path), "--activate")
+        assert written.returncode == EXIT_ACTIVATION, written.stdout + written.stderr
+        msgs = [m for m in json.loads(written.stdout)["activation"]["messages"] if m["type"] == "E"]
+        assert msgs and msgs[0]["include"] == "testclasses" and msgs[0]["line"] == BROKEN_LINE, msgs
+
         # The agent fixes exactly that line and activates again.
         write(cli, uris["pricing"] + "/includes/testclasses",
               pricing_tests(pricing, order, broken=False), tmp_path)

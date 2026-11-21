@@ -418,6 +418,10 @@ TEST_CASE("ActivateObject: a pre-audit list with inactive companions is not an a
     CHECK_FALSE(act.activation_executed);
     CHECK(act.failed == 2);  // the group and its main program
     REQUIRE(act.error_messages.size() == 1);
+    // messages carries every text error_messages has (crew F2).
+    REQUIRE(act.messages.size() == 1);
+    CHECK(act.messages[0].type == "E");
+    CHECK(act.messages[0].text == act.error_messages[0]);
     const auto& msg = act.error_messages[0];
     CHECK(msg.find("FUGR/F ZERPL_PA890") != std::string::npos);
     CHECK(msg.find("FUGR/I SAPLZERPL_PA890") != std::string::npos);
@@ -934,4 +938,27 @@ TEST_CASE("ActivationMessageFrom: href shapes of other object types", "[adt][act
         CHECK_FALSE(m.object.has_value());
         CHECK_FALSE(m.uri.has_value());
     }
+}
+
+// Crew F6: a function group include is an include of its group.
+TEST_CASE("ActivationMessageFrom: a function group include", "[adt][activation][positions]") {
+    auto m = ActivationMessageFrom(
+        "E", "x", "/sap/bc/adt/functions/groups/zfg/includes/lzfgtop/source/main#start=5,2", "");
+    CHECK(m.object == "ZFG");
+    CHECK(m.include == "lzfgtop");
+    CHECK(m.line == 5);
+    auto p = ActivationMessageFrom("E", "x", "/sap/bc/adt/programs/includes/zinc/source/main#start=3,1", "");
+    CHECK(p.object == "ZINC");
+    CHECK(p.include == "main");
+}
+
+// Crew F5: no number after start= is no position.
+TEST_CASE("ActivationMessageFrom: a fragment without a line is no position", "[adt][activation][positions]") {
+    CHECK_FALSE(ActivationMessageFrom("E", "x", "/sap/bc/adt/oo/classes/zcl_x/source/main#start=;end=1,1", "")
+                    .line.has_value());
+    CHECK_FALSE(ActivationMessageFrom("E", "x", "/sap/bc/adt/oo/classes/zcl_x/source/main#start=99999999999", "")
+                    .line.has_value());
+    auto only_line = ActivationMessageFrom("E", "x", "/sap/bc/adt/oo/classes/zcl_x/source/main#start=12", "");
+    CHECK(only_line.line == 12);
+    CHECK(only_line.column == 0);
 }

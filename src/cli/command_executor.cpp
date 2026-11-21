@@ -2479,7 +2479,7 @@ int HandleObjectRun(const CommandArgs& args) {
         // A short dump answers HTTP 500 "Application Server Error"; name the
         // dump instead of leaving the caller to guess (#89).
         if (error.http_status == 500) {
-            AttachRunDump(*session, started, error);
+            AttachRunDump(*session, started, args.positional[0], error);
         }
         fmt.PrintError(error);
         return error.ExitCode();

@@ -590,7 +590,7 @@ TEST_CASE("FUGR handler: a group text over 40 characters is refused before anyth
     CHECK(plan.Error().message.find("AREAT") != std::string::npos);
     CHECK(plan.Error().message.find("43 characters") != std::string::npos);
     CHECK(plan.Error().message.find("holds 40") != std::string::npos);
-    CHECK(plan.Error().message.find("Nothing was changed") != std::string::npos);
+    CHECK(plan.Error().message.find("This object was not written") != std::string::npos);
     CHECK(session.PostCallCount() == 0);
     CHECK(session.PutCallCount() == 0);
 
@@ -664,4 +664,42 @@ TEST_CASE("DOMA handler: a fixed value text over 60 characters is refused",
     REQUIRE(valid.IsErr());
     CHECK(valid.Error().message.find("DDTEXT") != std::string::npos);
     CHECK(valid.Error().message.find("holds 60") != std::string::npos);
+}
+
+// Crew F7: the other limits, one past each.
+TEST_CASE("DTEL and DOMA handlers: each text limit, at and past it", "[workflow][abapgit_dtel][text_limits]") {
+    auto handlers = DefaultTypeHandlers();
+    for (const auto& [field, limit] : {std::pair<const char*, size_t>{"DDTEXT", 60},
+                                       std::pair<const char*, size_t>{"REPTEXT", 55},
+                                       std::pair<const char*, size_t>{"SCRTEXT_M", 20},
+                                       std::pair<const char*, size_t>{"SCRTEXT_L", 40}}) {
+        INFO(field);
+        auto with = [&](size_t n) {
+            return OneXml("zerpl_fx_e.dtel.xml", "LCL_OBJECT_DTEL",
+                          "<DD04V><ROLLNAME>ZERPL_FX_E</ROLLNAME><" + std::string(field) + ">" +
+                              std::string(n, 'x') + "</" + field + "></DD04V>");
+        };
+        AbapGitObjectKey key{"DTEL", "ZERPL_FX_E"};
+        CHECK(handlers.at("DTEL")->Validate(key, with(limit), ObjectState{}, "E").IsOk());
+        CHECK(handlers.at("DTEL")->Validate(key, with(limit + 1), ObjectState{}, "E").IsErr());
+    }
+    AbapGitObjectKey doma{"DOMA", "ZERPL_FX_D"};
+    auto short_text = [&](size_t n) {
+        return OneXml("zerpl_fx_d.doma.xml", "LCL_OBJECT_DOMA",
+                      "<DD01V><DOMNAME>ZERPL_FX_D</DOMNAME><DDTEXT>" + std::string(n, 'd') +
+                          "</DDTEXT></DD01V>");
+    };
+    CHECK(handlers.at("DOMA")->Validate(doma, short_text(60), ObjectState{}, "E").IsOk());
+    CHECK(handlers.at("DOMA")->Validate(doma, short_text(61), ObjectState{}, "E").IsErr());
+}
+
+TEST_CASE("Text limits: the message refuses only this object", "[workflow][abapgit_fugr][text_limits]") {
+    auto handlers = DefaultTypeHandlers();
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
+    auto desired = OneXml("zerpl_fx_fg.fugr.xml", "LCL_OBJECT_FUGR",
+                          "<AREAT>" + std::string(41, 'a') + "</AREAT>");
+    auto valid = handlers.at("FUGR")->Validate(key, desired, ObjectState{}, "E");
+    REQUIRE(valid.IsErr());
+    CHECK(valid.Error().message.find("This object was not written") != std::string::npos);
+    CHECK(valid.Error().message.find("Nothing was changed") == std::string::npos);
 }

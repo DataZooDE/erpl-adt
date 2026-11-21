@@ -23,22 +23,27 @@ inline std::optional<std::pair<int, int>> ParseUriStartPosition(std::string_view
     const auto fragment = uri.substr(hash + 1);
     const auto start = fragment.find("start=");
     if (start == std::string_view::npos) return std::nullopt;
-    auto number = [](std::string_view text, size_t& pos) {
+    // A number of at most 9 digits; nullopt for none or more (no overflow).
+    auto number = [](std::string_view text, size_t& pos) -> std::optional<int> {
         int value = 0;
+        size_t digits = 0;
         while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            if (++digits > 9) return std::nullopt;
             value = value * 10 + (text[pos] - '0');
             ++pos;
         }
+        if (digits == 0) return std::nullopt;
         return value;
     };
     size_t pos = start + 6;
-    const int line = number(fragment, pos);
+    const auto line = number(fragment, pos);
+    if (!line) return std::nullopt;
     int column = 0;
     if (pos < fragment.size() && fragment[pos] == ',') {
         ++pos;
-        column = number(fragment, pos);
+        column = number(fragment, pos).value_or(0);
     }
-    return std::make_pair(line, column);
+    return std::make_pair(*line, column);
 }
 
 inline bool IEquals(std::string_view lhs, std::string_view rhs) {

@@ -368,8 +368,9 @@ objects `ZERPL_FX_*`), so the demo and the tests can share a system.
 
 ## Limitations
 
-* Short texts longer than their SAP field are refused before anything is
-  written (exit 8, category `check`, naming the field and its limit): SAP
+* An object with a short text longer than its SAP field is refused before
+  it is written (exit 8, category `check`, naming the field and its limit;
+  the other objects deploy as usual, as with every refused object): SAP
   would cut them, and every later deploy would compare the cut text with the
   file and refuse. Counted in characters, translations included. Field
   lengths, measured on A4H (`DD03L`):

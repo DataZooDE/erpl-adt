@@ -1,5 +1,7 @@
 #include <erpl_adt/adt/dumps.hpp>
 
+#include <erpl_adt/core/url.hpp>
+
 #include "adt_utils.hpp"
 #include "atom_parser.hpp"
 
@@ -71,12 +73,46 @@ std::string ServerFrom(const std::string& since) {
     return Pad(y, 4) + Pad(m, 2) + Pad(d, 2) + since.substr(11, 2) + since.substr(14, 2) + since.substr(17, 2);
 }
 
+// SAP user names: letters, digits and a few specials (SAP*, DDIC, A&B, /X/).
+// Not ',', '(' or ')' - they would end the $query expression; the value is
+// URL-encoded on top.
 bool IsUserName(std::string_view s) {
     return !s.empty() && s.size() <= 12 &&
            std::all_of(s.begin(), s.end(), [](char c) {
                return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' ||
-                      c == '-' || c == '@';
+                      c == '-' || c == '@' || c == '*' || c == '&' || c == '/';
            });
+}
+
+// "ZCL_X" or ".../oo/classes/zcl_x" -> "ZCL_X"; "%2f" in a URI is "/".
+std::string ClassNameOf(const std::string& target) {
+    std::string name = target;
+    if (const auto at = name.find("/oo/classes/"); at != std::string::npos) {
+        name = name.substr(at + 12);
+        name = name.substr(0, name.find('/'));
+    }
+    std::string out;
+    for (size_t i = 0; i < name.size(); ++i) {
+        if (i + 2 < name.size() && name.compare(i, 3, "%2f") == 0) {
+            out += '/';
+            i += 2;
+        } else if (i + 2 < name.size() && name.compare(i, 3, "%2F") == 0) {
+            out += '/';
+            i += 2;
+        } else {
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(name[i])));
+        }
+    }
+    return out;
+}
+
+// The class pool of `class_name`: the name, '=' padding, "CP".
+bool IsClassPoolOf(const std::string& program, const std::string& class_name) {
+    if (class_name.empty() || program.rfind(class_name, 0) != 0) return false;
+    const auto rest = std::string_view(program).substr(class_name.size());
+    if (rest.size() < 2 || rest.substr(rest.size() - 2) != "CP") return false;
+    const auto padding = rest.substr(0, rest.size() - 2);
+    return std::all_of(padding.begin(), padding.end(), [](char c) { return c == '='; });
 }
 
 std::string Upper(std::string s) {
@@ -220,7 +256,7 @@ Result<std::vector<DumpEntry>, Error> ListDumps(IAdtSession& session,
         if (!IsUserName(*options.owner)) {
             return R::Err(Invalid("ListDumps", "--owner '" + *options.owner + "' is not a user name"));
         }
-        path += "&$query=and%28equals%28user%2c" + Upper(*options.owner) + "%29%29";
+        path += "&$query=and%28equals%28user%2c" + UrlEncode(Upper(*options.owner)) + "%29%29";
     }
     std::optional<std::string> since;
     if (options.since) {
@@ -353,14 +389,18 @@ Result<DumpDetail, Error> GetDump(IAdtSession& session, std::string_view id, boo
 }
 
 std::optional<DumpEntry> FindDumpSince(IAdtSession& session, const std::string& user,
-                                       const std::string& since) {
+                                       const std::string& since, const std::string& class_name) {
     DumpListOptions options;
     options.owner = user;
     options.since = since;
-    options.max = 1;
+    options.max = 5;  // the user may have dumped elsewhere in the meantime
     auto dumps = ListDumps(session, options);
-    if (dumps.IsErr() || dumps.Value().empty()) return std::nullopt;
-    return dumps.Value().front();
+    if (dumps.IsErr()) return std::nullopt;
+    const auto name = ClassNameOf(class_name);
+    for (const auto& d : dumps.Value()) {
+        if (IsClassPoolOf(d.program, name)) return d;
+    }
+    return std::nullopt;
 }
 
 std::string DumpTime(std::chrono::system_clock::time_point when) {
@@ -374,10 +414,11 @@ std::string DumpTime(std::chrono::system_clock::time_point when) {
            Pad(sec / 60 % 60, 2) + ":" + Pad(sec % 60, 2) + "Z";
 }
 
-void AttachRunDump(IAdtSession& session, const std::string& since, Error& error) {
+void AttachRunDump(IAdtSession& session, const std::string& since, const std::string& class_name,
+                   Error& error) {
     const auto user = session.LogonUserName();
     if (user.empty()) return;
-    const auto dump = FindDumpSince(session, user, since);
+    const auto dump = FindDumpSince(session, user, since, class_name);
     if (!dump) return;
     error.category = ErrorCategory::RuntimeDump;
     std::string hint = "The run ended in runtime error " + dump->error;

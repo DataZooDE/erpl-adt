@@ -166,17 +166,17 @@ TEST_CASE("GetDump: an unknown dump is not found (exit 2)", "[adt][dumps]") {
 TEST_CASE("FindDumpSince: the newest dump of a user after a moment", "[adt][dumps]") {
     MockAdtSession mock;
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
-    auto found = FindDumpSince(mock, "DEVELOPER", "2026-11-21T16:12:10Z");
+    auto found = FindDumpSince(mock, "DEVELOPER", "2026-11-21T16:12:10Z", "ZCL_ERPL_DUMP_PROBE");
     REQUIRE(found.has_value());
     CHECK(found->id == kProbeId);
 
     MockAdtSession later;
     later.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
-    CHECK_FALSE(FindDumpSince(later, "DEVELOPER", "2026-11-21T16:13:00Z").has_value());
+    CHECK_FALSE(FindDumpSince(later, "DEVELOPER", "2026-11-21T16:13:00Z", "ZCL_ERPL_DUMP_PROBE").has_value());
 
     MockAdtSession failing;
     failing.EnqueueGet(Result<HttpResponse, Error>::Ok(HttpResponse{500, {}, "boom"}));
-    CHECK_FALSE(FindDumpSince(failing, "DEVELOPER", "2026-11-21T16:12:10Z").has_value());
+    CHECK_FALSE(FindDumpSince(failing, "DEVELOPER", "2026-11-21T16:12:10Z", "ZCL_ERPL_DUMP_PROBE").has_value());
 }
 
 TEST_CASE("DumpDetailToJson: the documented shape", "[adt][dumps]") {
@@ -208,7 +208,7 @@ TEST_CASE("AttachRunDump: a failed run names the dump of the logon user", "[adt]
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
     Error error{"RunClass", "/sap/bc/adt/oo/classrun/ZCL_ERPL_DUMP_PROBE", 500,
                 "SAP server error: Application Server Error", std::nullopt};
-    AttachRunDump(mock, "2026-11-21T16:12:10Z", error);
+    AttachRunDump(mock, "2026-11-21T16:12:10Z", "ZCL_ERPL_DUMP_PROBE", error);
     CHECK(error.category == ErrorCategory::RuntimeDump);
     CHECK(error.ExitCode() == 99);
     REQUIRE(error.hint.has_value());
@@ -220,7 +220,51 @@ TEST_CASE("AttachRunDump: a failed run names the dump of the logon user", "[adt]
     MockAdtSession none;
     none.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
     Error other{"RunClass", "", 500, "boom", std::nullopt};
-    AttachRunDump(none, "2026-11-21T17:00:00Z", other);
+    AttachRunDump(none, "2026-11-21T17:00:00Z", "ZCL_ERPL_DUMP_PROBE", other);
     CHECK(other.category == ErrorCategory::Internal);
     CHECK_FALSE(other.hint.has_value());
+}
+
+// Crew F1: a dump of another program (another session, a GUI step) is not
+// this run's.
+TEST_CASE("AttachRunDump: a dump of another program is not blamed on the run", "[adt][dumps]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
+    Error error{"RunClass", "", 500, "boom", std::nullopt};
+    AttachRunDump(mock, "2026-11-21T16:00:00Z", "ZCL_ERPL_DUMP_PROB", error);  // a prefix only
+    CHECK(error.category == ErrorCategory::Internal);
+    CHECK_FALSE(error.hint.has_value());
+
+    MockAdtSession uri;
+    uri.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
+    Error by_uri{"RunClass", "", 500, "boom", std::nullopt};
+    AttachRunDump(uri, "2026-11-21T16:00:00Z", "/sap/bc/adt/oo/classes/zcl_erpl_dump_probe", by_uri);
+    CHECK(by_uri.category == ErrorCategory::RuntimeDump);
+}
+
+// Crew F4: SAP user names may hold *, & and /; they are encoded, not refused.
+TEST_CASE("ListDumps: an owner with SAP's special characters is encoded", "[adt][dumps]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
+    DumpListOptions options;
+    options.owner = "SAP*";
+    REQUIRE(ListDumps(mock, options).IsOk());
+    CHECK(mock.GetCalls()[0].path ==
+          "/sap/bc/adt/runtime/dumps?$top=50&$query=and%28equals%28user%2cSAP%2A%29%29");
+}
+
+// Crew F7: the server's `from` is a day early, across month, year and leap day.
+TEST_CASE("ListDumps: the server's from across calendar boundaries", "[adt][dumps]") {
+    for (const auto& [since, from] :
+         {std::pair<const char*, const char*>{"2026-03-01T00:00:00Z", "20260228000000"},
+          std::pair<const char*, const char*>{"2024-03-01T10:20:30Z", "20240229102030"},
+          std::pair<const char*, const char*>{"2027-01-01T00:00:00Z", "20261231000000"}}) {
+        INFO(since);
+        MockAdtSession mock;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok(Ok(Fixture("dump_feed.xml"))));
+        DumpListOptions options;
+        options.since = since;
+        REQUIRE(ListDumps(mock, options).IsOk());
+        CHECK(mock.GetCalls()[0].path == std::string("/sap/bc/adt/runtime/dumps?$top=50&from=") + from);
+    }
 }

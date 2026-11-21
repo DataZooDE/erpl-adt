@@ -97,6 +97,14 @@ class TestDiagnoseAShortDump:
         assert "COMPUTE_INT_ZERODIVIDE" in human.stdout
         assert f"line {DUMP_LINE}" in human.stdout, human.stdout
 
+        # Without --owner every user's dumps are listed; the owner is not case-sensitive.
+        everyone = cli.run_ok("dump", "list", "--since", since_arg)
+        assert dump["id"] in [d["id"] for d in everyone]
+        lower = cli.run_ok("dump", "list", "--owner", "developer", "--since", since_arg)
+        assert dump["id"] in [d["id"] for d in lower]
+        bad = cli.run("dump", "list", "--since", "yesterday")
+        assert bad.returncode == 99 and '"category":"validation"' in bad.stderr, bad.stderr
+
         # The same through MCP.
         listed_mcp, shown_mcp = mcp_call(cli, [
             ("adt_list_dumps", {"owner": "DEVELOPER", "since": since_arg}),

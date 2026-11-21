@@ -309,7 +309,7 @@ ToolResult HandleRunClass(IAdtSession& session,
     if (result.IsErr()) {
         auto error = result.Error();
         // A short dump answers HTTP 500; name it (see adt_show_dump, #89).
-        if (error.http_status == 500) AttachRunDump(session, started, error);
+        if (error.http_status == 500) AttachRunDump(session, started, *class_name, error);
         return MakeErrorResult(error);
     }
 

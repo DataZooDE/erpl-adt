@@ -60,7 +60,7 @@ with `search … --type` (or `source read --type`) and pass the URI.
     (`main`, `testclasses`, ...), `line` and `column` in `messages`; text mode prints
     `ZCL_X testclasses:70:4: <text>`. Before activating, `--json source check <name> --version inactive` finds
     the same errors in what was just written.
-11. **Keep short texts within SAP's field lengths.** `abapgit deploy` refuses a longer one before writing anything
+11. **Keep short texts within SAP's field lengths.** `abapgit deploy` refuses the object before writing it
     (exit 8, naming the field and the limit): function group text (`AREAT`) 40, function module text 74, program
     title 70, data element labels 10/20/40 (`SCRTEXT_S/M/L`), short texts 60.
 12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write

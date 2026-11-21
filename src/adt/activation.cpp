@@ -248,6 +248,8 @@ ActivationResult ResolvePreaudit(IAdtSession& session,
         "; MCP: adt_activate with uris)." +
         (unknown.empty() ? "" : " (SAP listed these; could not read the inactive objects: " +
                                     unknown + ")"));
+    // messages holds every text error_messages does (crew F2).
+    result.messages.push_back(ActivationMessageFrom("E", result.error_messages.back(), "", ""));
     return result;
 }
 
@@ -464,6 +466,18 @@ ActivationMessage ActivationMessageFrom(std::string type, std::string text,
     // The object is the segment before /source/... or /includes/...; for a
     // plain object URI it is the last segment.
     std::string object_path = path;
+    // A function group include is an include of its group:
+    // .../functions/groups/zfg/includes/lzfgtop/source/main -> ZFG, lzfgtop.
+    if (const auto groups = path.find("/functions/groups/"); groups != std::string::npos) {
+        const auto inc = path.find("/includes/", groups);
+        if (inc != std::string::npos) {
+            const auto rest = path.substr(inc + 10);
+            m.include = rest.substr(0, rest.find('/'));
+            const auto group = path.substr(groups + 18, inc - groups - 18);
+            if (!group.empty()) m.object = SegmentToName(group);
+            return m;
+        }
+    }
     for (const char* marker : {"/source/", "/includes/"}) {
         const auto at = path.find(marker);
         if (at == std::string::npos) continue;

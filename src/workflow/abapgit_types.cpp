@@ -239,7 +239,7 @@ Result<void, Error> CheckTextLimits(const std::string& object, const std::string
         message += problems[i];
     }
     message += ". Shorten it in the files - SAP would cut it, and every later deploy would see "
-               "a change. Nothing was changed.";
+               "a change. This object was not written.";
     Error error;
     error.operation = "abapGit";
     error.message = std::move(message);

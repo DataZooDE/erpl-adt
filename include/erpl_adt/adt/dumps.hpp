@@ -80,18 +80,24 @@ struct DumpDetail {
                                                 bool full_text);
 
 // The newest dump of `user` written at or after `since` (ParseDumpSince
-// form), for the hint of a failed run. Best effort: nullopt on any failure.
+// form) whose terminated program is the class pool of `class_name` (a name
+// or an ADT class URI): "ZCL_X" matches "ZCL_X=========...CP". A dump of
+// any other program - another session, a GUI step - is not this run's.
+// Best effort: nullopt on any failure.
 [[nodiscard]] std::optional<DumpEntry> FindDumpSince(IAdtSession& session, const std::string& user,
-                                                     const std::string& since);
+                                                     const std::string& since,
+                                                     const std::string& class_name);
 
 // A time as ParseDumpSince's canonical form, e.g. "2026-11-21T16:12:00Z".
 [[nodiscard]] std::string DumpTime(std::chrono::system_clock::time_point when);
 
-// When a run (object run, adt_run_class) failed: if the logon user has a
-// dump written since `since`, turn the error into a runtime_dump error whose
-// hint names it ("COMPUTE_INT_ZERODIVIDE (Division by 0 ...) in ZCL_X=====CP
-// - see: erpl-adt dump show <id>"). Otherwise the error is left as it was.
-void AttachRunDump(IAdtSession& session, const std::string& since, Error& error);
+// When a run of `class_name` (object run, adt_run_class) failed: if the
+// logon user has a dump of that class written since `since`, turn the error
+// into a runtime_dump error whose hint names it ("COMPUTE_INT_ZERODIVIDE
+// (Division by 0 ...) in ZCL_X=====CP - see: erpl-adt dump show <id>").
+// Otherwise the error is left as it was.
+void AttachRunDump(IAdtSession& session, const std::string& since, const std::string& class_name,
+                   Error& error);
 
 // The JSON of `dump list` / `dump show` and of adt_list_dumps /
 // adt_show_dump.

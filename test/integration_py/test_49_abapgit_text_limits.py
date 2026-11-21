@@ -22,6 +22,8 @@ import pytest
 PACKAGE = "$TMP"
 FUGR = "ZERPL_TXT_FG"
 DTEL = "ZERPL_TXT_E_PRIO"
+# Fits from the start: refusing the others must not hold it back.
+DTEL_OK = "ZERPL_TXT_E_SHIFT"
 
 AREAT_TOO_LONG = "Order priority rules for the planning board"  # 43
 AREAT_FITS = AREAT_TOO_LONG[:40]
@@ -128,6 +130,10 @@ def write_repo(root, areat, scrtext_s):
         INCLUDE_XML.format(name="SAPLZERPL_TXT_FG", subc="F", extra="    <RLOAD>E</RLOAD>\n"),
         encoding="utf-8")
     (src / f"{DTEL.lower()}.dtel.xml").write_text(DTEL_XML.format(scrtext_s=scrtext_s), encoding="utf-8")
+    (src / f"{DTEL_OK.lower()}.dtel.xml").write_text(
+        DTEL_XML.format(scrtext_s="Shift").replace(DTEL, DTEL_OK)
+        .replace("Order priority on the planning board", "Work shift on the planning board"),
+        encoding="utf-8")
     for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "texts", "--allow-empty"]):
         subprocess.run(["git", "-C", str(root), "-c", "user.name=erpl-adt test",
                         "-c", "user.email=test@erpl.invalid", *args], check=True, capture_output=True)
@@ -162,12 +168,15 @@ class TestShortTextLimits:
         dtel = entry(data, "DTEL", DTEL)
         assert dtel["action"] == "failed", dtel
         assert "SCRTEXT_S" in dtel["message"] and "10" in dtel["message"], dtel
-        # Nothing was created.
+        # Only the refused objects are held back; the one that fits deploys.
+        assert entry(data, "DTEL", DTEL_OK)["action"] == "created", data["objects"]
+        # The refused ones were not created.
         assert cli.run("object", "read", f"/sap/bc/adt/functions/groups/{FUGR.lower()}").returncode == 2
         assert cli.run("object", "read", f"/sap/bc/adt/ddic/dataelements/{DTEL.lower()}").returncode == 2
 
         write_repo(repo, AREAT_FITS, SCRTEXT_S_FITS)
         created = cli.run_ok("abapgit", "deploy", str(repo), "--package", PACKAGE)
+        assert entry(created, "DTEL", DTEL_OK)["action"] == "unchanged", created["objects"]
         assert entry(created, "FUGR", FUGR)["action"] == "created", created["objects"]
         assert entry(created, "DTEL", DTEL)["action"] == "created", created["objects"]
 
