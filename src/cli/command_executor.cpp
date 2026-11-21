@@ -56,6 +56,7 @@
 #include <erpl_adt/adt/screen.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
+#include <erpl_adt/adt/dumps.hpp>
 #include <erpl_adt/adt/xml_codec.hpp>
 #include <erpl_adt/workflow/lock_workflow.hpp>
 #include <erpl_adt/workflow/screen_workflow.hpp>
@@ -154,7 +155,7 @@ inline std::string SectionUriSegment(const std::string& section) {
 
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
-    "transport", "ddic", "package", "discover", "catalog", "screen", "abapgit"};
+    "transport", "ddic", "package", "discover", "catalog", "screen", "abapgit", "dump"};
 
 constexpr const char* kCredsFile = ".adt.creds";
 
@@ -2470,14 +2471,115 @@ int HandleObjectRun(const CommandArgs& args) {
     auto session = RequireSession(args, fmt);
     if (!session) return 99;
 
+    // A few seconds early: the client's clock and SAP's may differ a little.
+    const auto started = DumpTime(std::chrono::system_clock::now() - std::chrono::seconds(10));
     auto result = RunClass(*session, args.positional[0]);
     if (result.IsErr()) {
-        fmt.PrintError(result.Error());
-        return result.Error().ExitCode();
+        auto error = result.Error();
+        // A short dump answers HTTP 500 "Application Server Error"; name the
+        // dump instead of leaving the caller to guess (#89).
+        if (error.http_status == 500) {
+            AttachRunDump(*session, started, error);
+        }
+        fmt.PrintError(error);
+        return error.ExitCode();
     }
 
     const auto& cr = result.Value();
     return ReportClassRunOutcome(cr, fmt, std::cout);
+}
+
+// ---------------------------------------------------------------------------
+// dump list / dump show (#89)
+// ---------------------------------------------------------------------------
+int HandleDumpList(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kDumpRead);
+    ft.SetStr("op", "list");
+
+    DumpListOptions options;
+    options.max = 20;
+    if (HasFlag(args, "max")) {
+        auto max = ParseIntInRange(GetFlag(args, "max"), 1, 1000, "--max");
+        if (max.IsErr()) {
+            fmt.PrintError(max.Error());
+            return max.Error().ExitCode();
+        }
+        options.max = max.Value();
+    }
+    // --user is the connection flag; the filter is --owner (any user without it).
+    if (HasFlag(args, "owner")) options.owner = GetFlag(args, "owner");
+    if (HasFlag(args, "since")) options.since = GetFlag(args, "since");
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+    auto result = ListDumps(*session, options);
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    const auto& dumps = result.Value();
+    ft.SetStr("results", BucketCount(static_cast<long long>(dumps.size())));
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& d : dumps) j.push_back(DumpEntryToJson(d));
+        fmt.PrintJson(j.dump());
+        return 0;
+    }
+    if (dumps.empty()) {
+        fmt.PrintSuccess("No runtime errors match.");
+        return 0;
+    }
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& d : dumps) {
+        rows.push_back({d.time, d.error, d.program, d.user, d.id});
+    }
+    fmt.PrintTable({"Time (UTC)", "Runtime error", "Program", "User", "Id"}, rows);
+    return 0;
+}
+
+int HandleDumpShow(const CommandArgs& args) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    FeatureTimer ft(feature::kDumpRead);
+    ft.SetStr("op", "show");
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            "Missing dump id. Usage: erpl-adt dump show <id> (ids: erpl-adt dump list)"));
+        return 99;
+    }
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+    auto result = GetDump(*session, args.positional[0], HasFlag(args, "full"));
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    const auto& d = result.Value();
+    if (fmt.IsJsonMode()) {
+        fmt.PrintJson(DumpDetailToJson(d).dump());
+        return 0;
+    }
+    std::cout << "Runtime error  " << d.error;
+    if (!d.short_text.empty()) std::cout << " - " << d.short_text;
+    std::cout << "\n";
+    if (!d.exception.empty()) std::cout << "Exception      " << d.exception << "\n";
+    std::cout << "Program        " << d.program << "\n";
+    if (!d.include.empty()) {
+        std::cout << "Terminated in  " << (d.event.empty() ? "" : d.event + ", ") << "include "
+                  << d.include;
+        if (d.include_line) std::cout << " line " << *d.include_line;
+        std::cout << "\n";
+    }
+    if (d.uri) {
+        std::cout << "Source         " << *d.uri;
+        if (d.line) std::cout << " line " << *d.line;
+        std::cout << "\n";
+    }
+    std::cout << "User           " << d.user << "\n";
+    std::cout << "Time (UTC)     " << d.time << "\n";
+    if (!d.text.empty()) std::cout << "\n" << d.text << "\n";
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -7378,7 +7480,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
 
     // Group ordering.
     const std::vector<std::string> group_order = {
-        "search", "object", "source", "activate", "test", "check",
+        "search", "object", "source", "activate", "test", "check", "dump",
         "transport", "ddic", "package", "discover", "bw", "catalog", "screen", "abapgit"};
 
     // Group display names and short descriptions (overrides for cleaner display).
@@ -7393,6 +7495,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"activate",  {"ACTIVATE", ""}},
         {"test",      {"TEST", ""}},
         {"check",     {"CHECK", ""}},
+        {"dump",      {"DUMP", "Runtime errors (short dumps, ST22)"}},
         {"transport", {"TRANSPORT", ""}},
         {"ddic",      {"DATA DICTIONARY", "Tables and CDS views"}},
         {"package",   {"PACKAGE", ""}},
@@ -7891,6 +7994,11 @@ void RegisterAllCommands(CommandRouter& router) {
         "$ erpl-adt check run /sap/bc/adt/packages/ZTEST --variant=FUNCTIONAL_DB_ADDITION",
     });
 
+    router.SetGroupDescription("dump", "Runtime errors (short dumps, ST22): list and show");
+    router.SetGroupExamples("dump", {
+        "$ erpl-adt dump list --owner DEVELOPER --max 5",
+        "$ erpl-adt dump show <id>",
+    });
     router.SetGroupDescription("transport", "List, show, create, and release transports");
     router.SetGroupExamples("transport", {
         "$ erpl-adt transport list",
@@ -8473,6 +8581,48 @@ void RegisterAllCommands(CommandRouter& router) {
         router.Register("check", "run", "Run ATC checks",
                          HandleCheckRun, std::move(help));
         router.SetDefaultAction("check", "run");
+    }
+
+    // -----------------------------------------------------------------------
+    // dump list / dump show
+    // -----------------------------------------------------------------------
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt dump list [flags]";
+        help.long_description =
+            "Lists runtime errors (short dumps, ST22), newest first. Each row has the "
+            "id `dump show` takes. Times are UTC.";
+        help.flags = {
+            {"owner", "<user>", "Only dumps of this user (default: every user)", false},
+            {"since", "<time>", "Only dumps written at or after this UTC time: 2026-11-21T16:12:00Z, "
+                                "2026-11-21T16:12, 2026-11-21 or 20261121161200", false},
+            {"max", "<n>", "Maximum number of dumps (default 20)", false},
+        };
+        help.examples = {
+            "erpl-adt dump list --owner DEVELOPER --max 5",
+            "erpl-adt --json dump list --since 2026-11-21T16:00:00Z",
+        };
+        router.Register("dump", "list", "List runtime errors (short dumps)",
+                        HandleDumpList, std::move(help));
+    }
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt dump show <id> [flags]";
+        help.args_description = "<id>    Dump id from `dump list` (or its ADT URI)";
+        help.long_description =
+            "Shows a runtime error: what it was (error, exception, short text), where it "
+            "terminated (program, include and line as the runtime saw them) and the place in "
+            "the source as ADT resolves it (`uri`, `line` - open it with `source read`). "
+            "An id that does not exist exits 2.";
+        help.flags = {
+            {"full", "", "Add the whole formatted dump (`text`) as ST22 shows it", false},
+        };
+        help.examples = {
+            "erpl-adt dump show <id>",
+            "erpl-adt --json dump show <id> --full",
+        };
+        router.Register("dump", "show", "Show a runtime error and where it happened",
+                        HandleDumpShow, std::move(help));
     }
 
     // -----------------------------------------------------------------------

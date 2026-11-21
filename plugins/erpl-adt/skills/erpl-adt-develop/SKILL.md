@@ -113,6 +113,14 @@ erpl-adt --json object run ZCL_MY_RUNNER     # IF_OO_ADT_CLASSRUN~MAIN output
 
 Useful for seeding test data or probing the system — the erpl test harnesses use it this way.
 
+When the class short-dumps, the run exits 99 with category `runtime_dump`, and the hint names the dump. Read it,
+fix the line it points at, and run again:
+
+```bash
+erpl-adt --json dump list --owner DEVELOPER --max 3   # id, error (e.g. COMPUTE_INT_ZERODIVIDE), program, time
+erpl-adt --json dump show <id>                        # exception, include/include_line, and uri + line in the source
+```
+
 ## Delete
 
 ```bash

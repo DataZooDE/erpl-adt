@@ -752,6 +752,7 @@ int SeverityRank(ErrorCategory category) {
         case ErrorCategory::Authentication:
         case ErrorCategory::Authorization:
         case ErrorCategory::CsrfToken: return 0;
+        case ErrorCategory::RuntimeDump:
         case ErrorCategory::Validation:
         case ErrorCategory::Internal: return 1;
         case ErrorCategory::Timeout: return 2;

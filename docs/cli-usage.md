@@ -191,6 +191,33 @@ The JSON names the variant that ran (`variant`).
 - `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
 - `RunAtcCheck(session, uri, variant)` -- variant: empty → `systemCheckVariant` from `GET /sap/bc/adt/atc/customizing` (DEFAULT if none); checked via `GET /sap/bc/adt/atc/checkvariants/{name}`; then worklist + run + get findings
 
+### dump -- Runtime errors (short dumps, ST22)
+
+```bash
+# Newest runtime errors, of every user or of one (times are UTC)
+erpl-adt dump list --max 5
+erpl-adt --json dump list --owner DEVELOPER --since 2026-11-21T16:00:00Z
+
+# What it was, where it terminated, and the source line to fix
+erpl-adt dump show <id>
+erpl-adt --json dump show <id> --full      # plus the whole formatted dump as `text`
+```
+
+`dump list` gives per dump `id`, `error` (the runtime error, e.g. `COMPUTE_INT_ZERODIVIDE`), `short_text`,
+`program`, `user` and `time`. `dump show` adds `exception`, where the runtime terminated (`include`,
+`include_line`, `event`, `main_program`) and the place in the source as ADT resolves it (`uri`, `line` -
+read it with `source read`; absent when the program no longer exists). An id that does not exist exits 2.
+`--user` is the login flag; the filter is `--owner`.
+
+When `object run` (or MCP `adt_run_class`) ends in a short dump, the error is category `runtime_dump`
+(exit 99) and its hint names the dump: `The run ended in runtime error COMPUTE_INT_ZERODIVIDE (Division by
+0 ...) in ZCL_X=====CP. See where and why: erpl-adt dump show <id>`. The MCP tools are `adt_list_dumps` and
+`adt_show_dump`.
+
+**API:**
+- `ListDumps(session, options)` -- `GET /sap/bc/adt/runtime/dumps?$top=N[&$query=and(equals(user,U))][&from=...]`
+- `GetDump(session, id, full)` -- `GET /sap/bc/adt/runtime/dump/{id}` plus `/unformatted`, `/formatted`, `/summary`
+
 ### transport -- Transport management
 
 ```bash

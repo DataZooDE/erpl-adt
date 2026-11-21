@@ -35,6 +35,7 @@
 #include <erpl_adt/adt/source.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
+#include <erpl_adt/adt/dumps.hpp>
 #include <erpl_adt/adt/xml_codec.hpp>
 
 #include <nlohmann/json.hpp>
@@ -303,11 +304,46 @@ ToolResult HandleRunClass(IAdtSession& session,
     auto class_name = RequireString(params, "class_name", err);
     if (!class_name) return err;
 
+    const auto started = DumpTime(std::chrono::system_clock::now() - std::chrono::seconds(10));
     auto result = RunClass(session, *class_name);
-    if (result.IsErr()) return MakeErrorResult(result.Error());
+    if (result.IsErr()) {
+        auto error = result.Error();
+        // A short dump answers HTTP 500; name it (see adt_show_dump, #89).
+        if (error.http_status == 500) AttachRunDump(session, started, error);
+        return MakeErrorResult(error);
+    }
 
     const auto& cr = result.Value();
     return MakeOkResult(nlohmann::json{{"class", cr.class_name}, {"output", cr.output}});
+}
+
+// adt_list_dumps / adt_show_dump (#89)
+ToolResult HandleListDumps(IAdtSession& session, const nlohmann::json& params) {
+    DumpListOptions options;
+    options.max = OptInt(params, "max", 20);
+    if (options.max < 1 || options.max > 1000) {
+        return MakeParamError("max must be between 1 and 1000");
+    }
+    const auto owner = OptString(params, "owner");
+    if (!owner.empty()) options.owner = owner;
+    const auto since = OptString(params, "since");
+    if (!since.empty()) options.since = since;
+    auto result = ListDumps(session, options);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& d : result.Value()) j.push_back(DumpEntryToJson(d));
+    return MakeOkResult(j);
+}
+
+ToolResult HandleShowDump(IAdtSession& session, const nlohmann::json& params) {
+    ToolResult err;
+    auto id = RequireString(params, "id", err);
+    if (!id) return err;
+    const bool full = params.contains("full") && params["full"].is_boolean() &&
+                      params["full"].get<bool>();
+    auto result = GetDump(session, *id, full);
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+    return MakeOkResult(DumpDetailToJson(result.Value()));
 }
 
 // adt_run_atc
@@ -989,6 +1025,34 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             {"transport_number"}),
         [&session](const nlohmann::json& params) {
             return HandleShowTransport(session, params);
+        });
+
+    registry.Register(
+        "adt_list_dumps",
+        "List runtime errors (short dumps, ST22), newest first: id, runtime error, "
+        "short text, terminated program, user, UTC time. Use it after adt_run_class "
+        "or a test fails with a server error; adt_show_dump says where it happened.",
+        MakeSchema(
+            {{"owner", StringProp("Only dumps of this user (default: every user)")},
+             {"since", StringProp("Only dumps at or after this UTC time, e.g. 2026-11-21T16:12:00Z")},
+             {"max", IntProp("Maximum number of dumps (default: 20)")}},
+            {}),
+        [&session](const nlohmann::json& params) {
+            return HandleListDumps(session, params);
+        });
+
+    registry.Register(
+        "adt_show_dump",
+        "Show one runtime error: error, exception, short text, where it terminated "
+        "(program, include, include_line, event) and the source place as ADT resolves "
+        "it (uri + line, readable with adt_read_source). full=true adds the whole "
+        "formatted dump as text.",
+        MakeSchema(
+            {{"id", StringProp("Dump id from adt_list_dumps")},
+             {"full", {{"type", "boolean"}, {"description", "Add the formatted dump (large)"}}}},
+            {"id"}),
+        [&session](const nlohmann::json& params) {
+            return HandleShowDump(session, params);
         });
 
     registry.Register(

@@ -119,6 +119,7 @@ inline constexpr const char* kTransportOp   = "transport_op";
 inline constexpr const char* kDdicRead      = "ddic_read";
 inline constexpr const char* kPackageRead   = "package_read";
 inline constexpr const char* kDeployRun     = "deploy_run";
+inline constexpr const char* kDumpRead      = "dump_read";
 inline constexpr const char* kMcpToolCalled = "mcp_tool_called";
 } // namespace feature
 
