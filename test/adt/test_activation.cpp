@@ -848,3 +848,90 @@ TEST_CASE("ActivationResult::Failed: any failed object", "[adt][activation]") {
     act.failed = 1;
     CHECK(act.Failed());
 }
+
+// ---------------------------------------------------------------------------
+// #90: each activation message says which object, include and line it is
+// about - read off the message's href (the objDescr is free text).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ActivateObjects: an error in a test include names class, include and line",
+          "[adt][activation][positions]") {
+    // Captured on A4H: two classes activated together, the second one's unit
+    // test misspells the class under test.
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_failed_testclasses.xml")}));
+    ActivateObjectParams a = ActivationParamsFromObjectUri("/sap/bc/adt/oo/classes/zcl_erpl_ord_11111");
+    ActivateObjectParams b = ActivationParamsFromObjectUri("/sap/bc/adt/oo/classes/zcl_erpl_prc_11111");
+    auto result = ActivateObjects(session, {a, b});
+    REQUIRE(result.IsOk());
+    const auto& act = result.Value();
+    REQUIRE(act.messages.size() == 2);
+    CHECK(act.error_messages.size() == 2);  // the text list stays
+
+    const auto& cancelled = act.messages[0];
+    CHECK(cancelled.type == "W");
+    CHECK(cancelled.text == "Activation was cancelled.");
+    CHECK_FALSE(cancelled.object.has_value());
+    CHECK_FALSE(cancelled.line.has_value());
+
+    const auto& error = act.messages[1];
+    CHECK(error.type == "E");
+    CHECK(error.text == "Type \"ZCL_ERPL_PRC_11111X\" is unknown.");
+    CHECK(error.object == "ZCL_ERPL_PRC_11111");
+    CHECK(error.include == "testclasses");
+    CHECK(error.line == 9);
+    CHECK(error.column == 23);
+    CHECK(error.uri == "/sap/bc/adt/oo/classes/zcl_erpl_prc_11111/includes/testclasses");
+    CHECK(error.description.find("Class ZCL_ERPL_PRC_11111") == 0);
+}
+
+TEST_CASE("ActivateObject: an error in the main source is include main", "[adt][activation][positions]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_failed_response.xml")}));
+    auto result = ActivateObject(session,
+                                 ActivationParamsFromObjectUri("/sap/bc/adt/oo/classes/ztest_prb_17726"));
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().messages.size() == 2);
+    const auto& error = result.Value().messages[1];
+    CHECK(error.object == "ZTEST_PRB_17726");
+    CHECK(error.include == "main");
+    CHECK(error.line == 7);  // from #start=7,16 - the line="1" attribute is not the line
+    CHECK(error.column == 16);
+}
+
+TEST_CASE("ActivationMessageFrom: href shapes of other object types", "[adt][activation][positions]") {
+    SECTION("a program") {
+        auto m = ActivationMessageFrom("E", "x", "/sap/bc/adt/programs/programs/zrep/source/main#start=12,3", "");
+        CHECK(m.object == "ZREP");
+        CHECK(m.include == "main");
+        CHECK(m.line == 12);
+        CHECK(m.column == 3);
+    }
+    SECTION("a function module") {
+        auto m = ActivationMessageFrom(
+            "E", "x", "/sap/bc/adt/functions/groups/zfg/fmodules/z_read/source/main#start=4,1", "");
+        CHECK(m.object == "Z_READ");
+        CHECK(m.include == "main");
+    }
+    SECTION("a namespaced class") {
+        auto m = ActivationMessageFrom(
+            "E", "x", "/sap/bc/adt/oo/classes/%2fdmo%2fcl_flight/includes/definitions#start=2,5", "");
+        CHECK(m.object == "/DMO/CL_FLIGHT");
+        CHECK(m.include == "definitions");
+    }
+    SECTION("the object itself, no position") {
+        auto m = ActivationMessageFrom("W", "x", "/sap/bc/adt/oo/classes/zcl_test_flight", "Class ZCL_TEST_FLIGHT");
+        CHECK(m.object == "ZCL_TEST_FLIGHT");
+        CHECK_FALSE(m.include.has_value());
+        CHECK_FALSE(m.line.has_value());
+    }
+    SECTION("no href") {
+        auto m = ActivationMessageFrom("E", "x", "", "");
+        CHECK_FALSE(m.object.has_value());
+        CHECK_FALSE(m.uri.has_value());
+    }
+}

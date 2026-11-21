@@ -2202,13 +2202,7 @@ int HandleSourceWrite(const CommandArgs& args) {
         }
         const auto& act = act_result.Value();
         if (fmt.IsJsonMode()) {
-            nlohmann::json msgs = nlohmann::json::array();
-            for (const auto& m : act.error_messages) {
-                msgs.push_back(m);
-            }
-            out["activation"] = {{"activated", act.activated},
-                                 {"failed", act.failed},
-                                 {"error_messages", msgs}};
+            out["activation"] = ActivationResultToJson(act);
             out["success"] = ActivationExitCode(act) == 0;
             fmt.PrintJson(out.dump());
             return ActivationExitCode(act);
@@ -2353,15 +2347,7 @@ int HandleActivateRun(const CommandArgs& args) {
     const auto& act = result.Value();
     ft.SetStr("outcome", act.failed ? "errors" : "active");
     if (fmt.IsJsonMode()) {
-        nlohmann::json j;
-        j["activated"] = act.activated;
-        j["failed"] = act.failed;
-        nlohmann::json msgs = nlohmann::json::array();
-        for (const auto& m : act.error_messages) {
-            msgs.push_back(m);
-        }
-        j["error_messages"] = msgs;
-        fmt.PrintJson(j.dump());
+        fmt.PrintJson(ActivationResultToJson(act).dump());
         return ActivationExitCode(act);
     }
     std::string label;
@@ -7169,8 +7155,26 @@ int ReportActivationOutcome(const ActivationResult& act,
     }
     if (act.failed > 0) {
         err << "Activation completed with " << act.failed << " error(s)\n";
-        for (const auto& m : act.error_messages) {
-            err << "  " << m << "\n";
+        if (act.messages.size() == act.error_messages.size()) {
+            // Compiler style when SAP names the place (#90):
+            //   ZCL_X testclasses:9:23: Type "ZCL_Y" is unknown.
+            for (const auto& m : act.messages) {
+                err << "  ";
+                if (m.object) {
+                    err << *m.object;
+                    if (m.include) err << " " << *m.include;
+                    if (m.line) {
+                        err << ":" << *m.line;
+                        if (m.column) err << ":" << *m.column;
+                    }
+                    err << ": ";
+                }
+                err << m.text << "\n";
+            }
+        } else {
+            for (const auto& m : act.error_messages) {
+                err << "  " << m << "\n";
+            }
         }
         return ActivationExitCode(act);
     }

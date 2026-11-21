@@ -868,14 +868,7 @@ ToolResult HandleActivateObject(IAdtSession& session,
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
     const auto& act = result.Value();
-    nlohmann::json j;
-    j["activated"] = act.activated;
-    j["failed"] = act.failed;
-    nlohmann::json msgs = nlohmann::json::array();
-    for (const auto& m : act.error_messages) {
-        msgs.push_back(m);
-    }
-    j["error_messages"] = msgs;
+    nlohmann::json j = ActivationResultToJson(act);
     j["passed"] = !act.Failed();  // the rule the CLI's exit 5 uses (#84)
     return MakeOkResult(j);
 }

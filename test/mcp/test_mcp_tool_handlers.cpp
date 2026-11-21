@@ -1111,6 +1111,25 @@ TEST_CASE("adt_check_syntax: passed is false on an error; the text block stays t
     }
 }
 
+// #90: adt_activate names the broken place of a multi-object activation.
+TEST_CASE("adt_activate: messages name class, include and line", "[mcp][handlers][activation]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("activation_failed_testclasses.xml")}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_activate",
+                           {{"uris", nlohmann::json::array({"/sap/bc/adt/oo/classes/zcl_erpl_ord_11111",
+                                                            "/sap/bc/adt/oo/classes/zcl_erpl_prc_11111"})}});
+    auto j = ParseContent(result);
+    CHECK(j["passed"] == false);
+    CHECK(j["error_messages"].size() == 2);
+    REQUIRE(j["messages"].size() == 2);
+    CHECK(j["messages"][1]["object"] == "ZCL_ERPL_PRC_11111");
+    CHECK(j["messages"][1]["include"] == "testclasses");
+    CHECK(j["messages"][1]["line"] == 9);
+}
+
 TEST_CASE("adt_activate: missing uri", "[mcp][handlers][activation]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
@@ -1557,7 +1576,7 @@ TEST_CASE("The most-parsed tools declare an outputSchema",
     RegisterAdtTools(registry, session);
 
     const std::set<std::string> want_schema = {
-        "adt_run_tests", "adt_run_atc", "adt_check_syntax", "adt_read_table"};
+        "adt_run_tests", "adt_run_atc", "adt_check_syntax", "adt_read_table", "adt_activate"};
 
     size_t found = 0;
     for (const auto& tool : registry.Tools()) {

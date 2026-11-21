@@ -153,6 +153,20 @@ erpl-adt source check ZCL_MY_CLASS
 erpl-adt source check ZCL_MY_CLASS --version inactive
 ```
 
+A failed activation says where each error is. The JSON keeps `error_messages` (the texts) and adds `messages`,
+one entry per message with `type` and `text` and, when SAP names the place, `object`, `include` (`main`,
+`testclasses`, `definitions`, ...), `line`, `column` and `uri`:
+
+```json
+{"activated":1,"failed":1,"error_messages":["Activation was cancelled.","Type \"ZCL_PRICINGX\" is unknown."],
+ "messages":[{"type":"W","text":"Activation was cancelled."},
+             {"type":"E","text":"Type \"ZCL_PRICINGX\" is unknown.","object":"ZCL_PRICING","include":"testclasses",
+              "line":9,"column":23,"uri":"/sap/bc/adt/oo/classes/zcl_pricing/includes/testclasses", "description":"..."}]}
+```
+
+Text mode prints the same compiler style: `ZCL_PRICING testclasses:9:23: Type "ZCL_PRICINGX" is unknown.`
+MCP `adt_activate` returns the same fields plus `passed`.
+
 **API:**
 - `ReadSource(session, uri, version)` -- `GET {sourceUri}?version=active`
 - `WriteSource(session, uri, source, handle)` -- `PUT {sourceUri}?lockHandle=...`

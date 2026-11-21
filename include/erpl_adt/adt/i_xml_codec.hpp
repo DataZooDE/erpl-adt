@@ -88,12 +88,31 @@ struct InactiveObject {
     std::string uri;
 };
 
+// One message of an activation answer, with the place it is about (#90).
+// object/include/uri/line/column come from the message's href, e.g.
+// ".../oo/classes/zcl_x/includes/testclasses#start=9,23" -> object ZCL_X,
+// include "testclasses", line 9, column 23; "/source/main" is include
+// "main". They are empty when SAP names no place (e.g. "Activation was
+// cancelled."). description is SAP's free-text objDescr.
+struct ActivationMessage {
+    std::string type;  // E, A (errors), W, I
+    std::string text;
+    std::string description;
+    std::optional<std::string> object;
+    std::optional<std::string> include;
+    std::optional<std::string> uri;  // href without the #start fragment
+    std::optional<int> line;
+    std::optional<int> column;
+};
+
 // Activation: parsed from activation response.
 struct ActivationResult {
     int total = 0;
     int activated = 0;
     int failed = 0;
     std::vector<std::string> error_messages;
+    // The same messages with type and place, in the same order (#90).
+    std::vector<ActivationMessage> messages{};
     // True when chkl:properties activationExecuted="true" is present in the
     // SAP Cloud response format (chkl:messages as root element).
     bool activation_executed = false;

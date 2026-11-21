@@ -597,6 +597,50 @@ TEST_CASE("ReportActivationOutcome: failed>0 writes error counts to err and retu
     CHECK(err.str().find("Syntax error in line 42") != std::string::npos);
 }
 
+// #90: text mode names the place, compiler style: object include:line:column.
+TEST_CASE("ReportActivationOutcome: an error names object, include and line",
+          "[cli][executor][outcome]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    ActivationResult act;
+    act.total = 2;
+    act.failed = 1;
+    act.error_messages = {"Activation was cancelled.", "Type \"ZCL_PRCX\" is unknown."};
+    act.messages = {ActivationMessageFrom("W", "Activation was cancelled.", "", ""),
+                    ActivationMessageFrom("E", "Type \"ZCL_PRCX\" is unknown.",
+                                          "/sap/bc/adt/oo/classes/zcl_prc/includes/testclasses#start=9,23", "")};
+    CHECK(ReportActivationOutcome(act, fmt, "ZCL_PRC", err) == 5);
+    CHECK(err.str().find("  Activation was cancelled.\n") != std::string::npos);
+    CHECK(err.str().find("  ZCL_PRC testclasses:9:23: Type \"ZCL_PRCX\" is unknown.") !=
+          std::string::npos);
+}
+
+// #90: the JSON CLI and MCP share - the text list stays, messages add the place.
+TEST_CASE("ActivationResultToJson: messages carry the place", "[cli][executor][outcome]") {
+    ActivationResult act;
+    act.activated = 1;
+    act.failed = 1;
+    act.error_messages = {"Activation was cancelled.", "boom"};
+    act.messages = {ActivationMessageFrom("W", "Activation was cancelled.", "", ""),
+                    ActivationMessageFrom("E", "boom",
+                                          "/sap/bc/adt/oo/classes/zcl_prc/source/main#start=7,16", "Class ZCL_PRC")};
+    const auto j = ActivationResultToJson(act);
+    CHECK(j["activated"] == 1);
+    CHECK(j["failed"] == 1);
+    CHECK(j["error_messages"] == nlohmann::json::array({"Activation was cancelled.", "boom"}));
+    REQUIRE(j["messages"].size() == 2);
+    CHECK(j["messages"][0] == nlohmann::json{{"type", "W"}, {"text", "Activation was cancelled."}});
+    CHECK(j["messages"][1] == nlohmann::json{{"type", "E"},
+                                             {"text", "boom"},
+                                             {"description", "Class ZCL_PRC"},
+                                             {"object", "ZCL_PRC"},
+                                             {"include", "main"},
+                                             {"uri", "/sap/bc/adt/oo/classes/zcl_prc/source/main"},
+                                             {"line", 7},
+                                             {"column", 16}});
+}
+
 TEST_CASE("ReportActivationOutcome: success prints Activated label and returns 0",
           "[cli][executor][outcome]") {
     std::ostringstream out;

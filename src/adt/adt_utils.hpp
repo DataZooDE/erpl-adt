@@ -10,8 +10,36 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace erpl_adt::adt_utils {
+
+// The "#start=line,column" position of an ADT URI fragment, e.g.
+// ".../source/main#start=7,16;end=7,31" -> {7, 16}; a start without a
+// column gives column 0. nullopt when there is no start position.
+inline std::optional<std::pair<int, int>> ParseUriStartPosition(std::string_view uri) {
+    const auto hash = uri.find('#');
+    if (hash == std::string_view::npos) return std::nullopt;
+    const auto fragment = uri.substr(hash + 1);
+    const auto start = fragment.find("start=");
+    if (start == std::string_view::npos) return std::nullopt;
+    auto number = [](std::string_view text, size_t& pos) {
+        int value = 0;
+        while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            value = value * 10 + (text[pos] - '0');
+            ++pos;
+        }
+        return value;
+    };
+    size_t pos = start + 6;
+    const int line = number(fragment, pos);
+    int column = 0;
+    if (pos < fragment.size() && fragment[pos] == ',') {
+        ++pos;
+        column = number(fragment, pos);
+    }
+    return std::make_pair(line, column);
+}
 
 inline bool IEquals(std::string_view lhs, std::string_view rhs) {
     if (lhs.size() != rhs.size()) {

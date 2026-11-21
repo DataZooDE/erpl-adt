@@ -4,8 +4,11 @@
 #include <erpl_adt/adt/i_xml_codec.hpp>
 #include <erpl_adt/core/result.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace erpl_adt {
@@ -54,6 +57,18 @@ struct ActivateObjectParams {
 // with the group as parent_uri. "%2f" in names is decoded ("/DMO/FM"). A URI
 // that matches no known pattern yields params with only `uri` set.
 [[nodiscard]] ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri);
+
+// ActivationMessageFrom — one activation message with the place its href
+// names (see ActivationMessage). Both activation parsers use it.
+[[nodiscard]] ActivationMessage ActivationMessageFrom(std::string type, std::string text,
+                                                      std::string_view href,
+                                                      std::string description);
+
+// The activation JSON of the CLI (`activate`, `source write --activate`) and
+// of MCP adt_activate: activated, failed, error_messages (the texts) and
+// messages (#90: type, text and - when SAP names one - description, object,
+// include, uri, line, column; absent fields are left out).
+[[nodiscard]] nlohmann::json ActivationResultToJson(const ActivationResult& act);
 
 // ActivateObjects — activate several objects in one request (one
 // adtcore:objectReference each), so that objects which depend on each other

@@ -5,6 +5,10 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** A failed activation says where each error is (#90): `activate --json`, `source write --activate`
+  and MCP `adt_activate` add `messages` (type, text, object, include, line, column, uri) beside the unchanged
+  `error_messages`; text mode prints `ZCL_X testclasses:9:23: <text>`. Useful when several objects are
+  activated together.
 - **[feature]** `object create --type TABL/DS` creates dictionary structures (then `source write` the `define structure`
   source, as for TABL/DT); BAPI-like function module interfaces need them.
 - **[feature]** `abapgit deploy` deploys remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`), which it

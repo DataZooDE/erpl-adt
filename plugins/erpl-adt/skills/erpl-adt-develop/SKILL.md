@@ -25,7 +25,8 @@ with `search … --type` (or `source read --type`) and pass the URI.
 2. **Transportable packages need `--transport`.** `$TMP` objects do not; anything else fails without a request
    (`erpl-adt-transport`).
 3. **A failed activation exits 5.** `--json activate` (and `source write --activate`, which prints one object
-   with `written` and `activation`) carries `failed` and `error_messages`; the inactive version is saved —
+   with `written` and `activation`) carries `failed`, `error_messages` and `messages` (each error's `object`,
+   `include` such as `testclasses`, `line`, `column`); the inactive version is saved —
    read it with `--version inactive`, fix, write again. Check what you have just written, before activating,
    with `source check <name> --version inactive` (exit 8 on a syntax error); without `--version` it checks
    the *active* version.
