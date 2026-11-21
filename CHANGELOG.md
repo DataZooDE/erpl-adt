@@ -5,6 +5,20 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[fix]** The MCP HTTP server (`mcp --http`, `catalog webui`) read request bodies without a limit - since a
+  refused request is read to its end before its 403, a page on any origin could make it buffer an unbounded
+  body. Bodies are limited to 16 MB (HTTP 413 above).
+- **[feature]** MCP `adt_activate` takes `uris` to activate several objects in one request, as `erpl-adt
+  activate a b` does; types and names are derived from the URIs.
+- **[fix]** `transport release` accepted a non-empty answer it could not read as a release report as
+  "Released"; it is now a transport error (exit 9) that points to `transport show`.
+- **[fix]** `activate` said "activated 0, failed 0" (exit 0) when SAP had not activated (#82): for an object
+  recorded on a request, SAP may answer with a pre-audit list ("activate these together?") instead. The list
+  looks the same whether anything is inactive or not, so erpl-adt now checks the inactive objects: if the
+  object or what SAP lists with it is inactive, it exits 5 naming them and the one `erpl-adt activate` call that
+  activates them; otherwise it is "nothing to activate". `activate` takes several objects for that call, and
+  a URI argument now carries its type - a function group's main program (`…/source/main`) is `FUGR/I SAPL<fg>`,
+  which SAP needs to activate it.
 - **[fix]** `transport release` (and the MCP tool `adt_release_transport`) said "Released" when SAP had refused
   the release: SAP answers HTTP 200 either way and puts the outcome in a release report. A report other than
   `released` - an open task, an inactive object, a failed export step - is now a transport error (exit 9) with

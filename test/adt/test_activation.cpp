@@ -5,6 +5,8 @@
 #include "../../test/mocks/mock_xml_codec.hpp"
 
 #include <chrono>
+#include <fstream>
+#include <sstream>
 
 using namespace erpl_adt;
 using namespace erpl_adt::testing;
@@ -371,6 +373,106 @@ TEST_CASE("ActivateObject: sync 200 with error messages", "[adt][activation]") {
     CHECK(result.Value().error_messages[1] == "Unused variable X");
 }
 
+// #82: asked to activate the main program of a function group recorded on a
+// request, SAP does not activate - it answers HTTP 200 with a pre-audit list
+// (root ioc:inactiveObjects) naming the request's objects, the list Eclipse
+// shows in its "activate these too?" dialog. The list is the same whether
+// anything is inactive or not (captured on A4H for ZERPL_PA890 in both
+// states), so the inactive objects decide: read as plain messages it was
+// "activated 0, failed 0", exit 0, with the main program still inactive.
+namespace {
+std::string Fixture(const std::string& name) {
+    std::string here = __FILE__;
+    here = here.substr(0, here.find_last_of("/\\"));
+    const auto root = here.substr(0, here.find_last_of("/\\"));
+    std::ifstream in(root + "/testdata/" + name);
+    REQUIRE(in.good());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+ActivateObjectParams MainProgramOfPa890() {
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/functions/groups/zerpl_pa890/source/main";
+    params.type = "FUGR/I";
+    params.name = "SAPLZERPL_PA890";
+    params.parent_uri = "/sap/bc/adt/functions/groups/zerpl_pa890";
+    return params;
+}
+}  // namespace
+
+TEST_CASE("ActivateObject: a pre-audit list with inactive companions is not an activation",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_preaudit_main_inactive.xml")}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("inactive_objects_group_inactive.xml")}));
+
+    auto result = ActivateObject(session, MainProgramOfPa890());
+
+    REQUIRE(result.IsOk());
+    const auto& act = result.Value();
+    CHECK_FALSE(act.activation_executed);
+    CHECK(act.failed == 2);  // the group and its main program
+    REQUIRE(act.error_messages.size() == 1);
+    const auto& msg = act.error_messages[0];
+    CHECK(msg.find("FUGR/F ZERPL_PA890") != std::string::npos);
+    CHECK(msg.find("FUGR/I SAPLZERPL_PA890") != std::string::npos);
+    // How: one call with everything that is inactive, by URI.
+    CHECK(msg.find("erpl-adt activate ") != std::string::npos);
+    CHECK(msg.find("/sap/bc/adt/functions/groups/zerpl_pa890/source/main") !=
+          std::string::npos);
+    CHECK(msg.find("/sap/bc/adt/functions/groups/zerpl_pa890 ") != std::string::npos);
+    // The request is where they are recorded, not something to activate.
+    CHECK(msg.find("A4HK900308") == std::string::npos);
+    REQUIRE(session.GetCallCount() == 1);
+    CHECK(session.GetCalls()[0].path == "/sap/bc/adt/activation/inactiveobjects");
+}
+
+TEST_CASE("ActivateObject: a pre-audit list with nothing inactive is nothing to activate",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_preaudit_nothing_inactive.xml")}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("inactive_objects_none.xml")}));
+
+    auto result = ActivateObject(session, MainProgramOfPa890());
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed == 0);
+    CHECK(result.Value().total == 0);
+    CHECK(result.Value().error_messages.empty());
+    // The verdict came from the inactive objects - 22 of them, none ours -
+    // not from the pre-audit list alone (crew F5).
+    REQUIRE(session.GetCallCount() == 1);
+    CHECK(session.GetCalls()[0].path == "/sap/bc/adt/activation/inactiveobjects");
+}
+
+TEST_CASE("ActivateObject: a pre-audit list after an asynchronous activation is resolved too",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {202, {{"Location", "/poll/activation/1"}}, ""}));
+    session.EnqueuePoll(Result<PollResult, Error>::Ok(
+        PollResult{PollStatus::Completed, Fixture("activation_preaudit_main_inactive.xml"),
+                   std::chrono::milliseconds{100}}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("inactive_objects_group_inactive.xml")}));
+
+    auto result = ActivateObject(session, MainProgramOfPa890());
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed == 2);
+    REQUIRE(session.PollCallCount() == 1);
+    REQUIRE(session.GetCallCount() == 1);
+}
+
 TEST_CASE("ActivateObject: async 202 with poll success", "[adt][activation]") {
     MockAdtSession session;
 
@@ -607,9 +709,7 @@ TEST_CASE("ActivationParamsFromObjectUri: function group itself stays FUGR/F",
     CHECK(p.type == "FUGR/F");
     CHECK(p.name == "ZFG");
     CHECK(p.parent_uri.empty());
-    auto main = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zfg/source/main");
-    CHECK(main.type == "FUGR/F");
-    CHECK(main.name == "ZFG");
+    // Its main program (.../source/main) is not the group: see the SAPL test.
 }
 
 TEST_CASE("ActivationParamsFromObjectUri: namespaced names are decoded",
@@ -630,4 +730,110 @@ TEST_CASE("ActivationParamsFromObjectUri: other object types", "[adt][activation
     CHECK(unknown.uri == "/sap/bc/adt/unknown/thing/x");
     CHECK(unknown.type.empty());
     CHECK(unknown.name.empty());
+}
+
+// #82: a function group's main program is its own activation object - FUGR/I
+// named SAPL<fg> at <group>/source/main, as ADT lists it. Mapped to the group
+// (FUGR/F), SAP answered activationExecuted="true" and left it inactive.
+TEST_CASE("ActivationParamsFromObjectUri: a function group's main program is FUGR/I SAPL<fg>",
+          "[adt][activation]") {
+    auto p = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fg/source/main");
+    CHECK(p.type == "FUGR/I");
+    CHECK(p.name == "SAPLZERPL_FG");
+    CHECK(p.uri == "/sap/bc/adt/functions/groups/zerpl_fg/source/main");
+    CHECK(p.parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+
+    auto ns = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/%2facme%2ffg/source/main");
+    CHECK(ns.type == "FUGR/I");
+    CHECK(ns.name == "/ACME/SAPLFG");
+
+    // The group itself stays the group.
+    auto group = ActivationParamsFromObjectUri("/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(group.type == "FUGR/F");
+    CHECK(group.name == "ZERPL_FG");
+}
+
+// Crew review F1: the pre-audit list names the group and its main program
+// with the same label ("FUGR/F ZERPL_PA890"); deduplicated by label, the main
+// program's URI was lost, and activating the group with only the main program
+// inactive read as "nothing to activate". Companions are keyed by URI, and the
+// message names what is inactive as the inactive-objects list names it.
+TEST_CASE("ActivateObject: activating the group finds its inactive main program",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_preaudit_main_inactive.xml")}));
+    // Only the main program is inactive: the group entry is dropped from the
+    // captured list, which is how A4H answers once the group header is active.
+    auto inactive = Fixture("inactive_objects_group_inactive.xml");
+    const auto group_entry_start = inactive.find(
+        "<ioc:entry><ioc:object ioc:user=\"DEVELOPER\" ioc:deleted=\"false\">"
+        "<ioc:ref adtcore:uri=\"/sap/bc/adt/functions/groups/zerpl_pa890\"");
+    REQUIRE(group_entry_start != std::string::npos);
+    const auto group_entry_end = inactive.find("</ioc:entry>", group_entry_start) +
+                                 std::string("</ioc:entry>").size();
+    inactive.erase(group_entry_start, group_entry_end - group_entry_start);
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, inactive}));
+
+    ActivateObjectParams group;
+    group.uri = "/sap/bc/adt/functions/groups/zerpl_pa890";
+    group.type = "FUGR/F";
+    group.name = "ZERPL_PA890";
+    auto result = ActivateObject(session, group);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed == 1);
+    REQUIRE(result.Value().error_messages.size() == 1);
+    const auto& msg = result.Value().error_messages[0];
+    CHECK(msg.find("FUGR/I SAPLZERPL_PA890") != std::string::npos);
+    CHECK(msg.find("/sap/bc/adt/functions/groups/zerpl_pa890/source/main") !=
+          std::string::npos);
+}
+
+// Crew review F5: an inactive-objects answer that cannot be read is no proof
+// that nothing is inactive.
+TEST_CASE("ActivateObject: an unreadable inactive-objects list is not success",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, Fixture("activation_preaudit_nothing_inactive.xml")}));
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<html>gateway</html>"}));
+
+    auto result = ActivateObject(session, MainProgramOfPa890());
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed > 0);
+    REQUIRE(result.Value().error_messages.size() == 1);
+    CHECK(result.Value().error_messages[0].find("could not read the inactive objects") !=
+          std::string::npos);
+}
+
+// Crew review F3: SAP's own activation errors next to an inactiveObjects
+// element stay the messages; only a pre-audit list as the root is a pre-audit.
+TEST_CASE("ActivateObject: activation errors next to inactive objects are kept",
+          "[adt][activation]") {
+    MockAdtSession session;
+    session.EnqueueCsrfToken(Result<std::string, Error>::Ok(std::string("tok")));
+    session.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         "<chkl:messages xmlns:chkl=\"http://www.sap.com/abapxml/checklist\">"
+         "<chkl:properties checkExecuted=\"true\" activationExecuted=\"false\"/>"
+         "<msg type=\"E\"><shortText><txt>Field \"LV_X\" is unknown.</txt></shortText></msg>"
+         "<ioc:inactiveObjects xmlns:ioc=\"http://www.sap.com/abapxml/inactiveCtsObjects\">"
+         "<ioc:entry><ioc:object><ioc:ref xmlns:adtcore=\"http://www.sap.com/adt/core\" "
+         "adtcore:uri=\"/sap/bc/adt/oo/classes/zcl_x\" adtcore:type=\"CLAS/OC\" "
+         "adtcore:name=\"ZCL_X\"/></ioc:object></ioc:entry></ioc:inactiveObjects>"
+         "</chkl:messages>"}));
+
+    ActivateObjectParams params;
+    params.uri = "/sap/bc/adt/oo/classes/zcl_x";
+    auto result = ActivateObject(session, params);
+
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().failed >= 1);
+    REQUIRE_FALSE(result.Value().error_messages.empty());
+    CHECK(result.Value().error_messages[0] == "Field \"LV_X\" is unknown.");
+    CHECK(session.GetCallCount() == 0);  // not a pre-audit: no inactive-list lookup
 }

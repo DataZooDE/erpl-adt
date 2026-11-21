@@ -308,6 +308,25 @@ TEST_CASE("ReleaseTransport: an export failure is not reported as released",
     CHECK(result.Error().message.find("Error in pre-export methods") != std::string::npos);
 }
 
+// Crew review F6: only an empty body (older releases) or a "released" report
+// is a release. An answer that cannot be read is no proof of one - the step
+// cannot be undone, so say so and point to `transport show`.
+TEST_CASE("ReleaseTransport: an unreadable release answer is not reported as released",
+          "[adt][transport]") {
+    for (const char* body : {"<html><body>Gateway timeout</body></html>",
+                             "<tm:root xmlns:tm=\"http://www.sap.com/cts/adt/tm\"/>"}) {
+        INFO(body);
+        MockAdtSession mock;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, body}));
+
+        auto result = ReleaseTransport(mock, "A4HK900226");
+        REQUIRE(result.IsErr());
+        CHECK(result.Error().category == ErrorCategory::TransportError);
+        CHECK(result.Error().message.find("transport show A4HK900226") != std::string::npos);
+    }
+}
+
 // ===========================================================================
 // GetTransport — review a request before releasing it (#76)
 // ===========================================================================

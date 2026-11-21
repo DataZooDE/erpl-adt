@@ -78,6 +78,19 @@ std::string FunctionGroupUri(const std::string& group) {
     return kGroups + UriSegment(group);
 }
 
+std::string FunctionGroupMainProgramName(const std::string& group) {
+    std::string upper = group;
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (!upper.empty() && upper[0] == '/') {
+        const auto end = upper.find('/', 1);
+        if (end != std::string::npos) {
+            return upper.substr(0, end + 1) + "SAPL" + upper.substr(end + 1);
+        }
+    }
+    return "SAPL" + upper;
+}
+
 std::vector<ActivateObjectParams> FunctionGroupMainProgramActivation(
     const std::string& group, const std::string& main_program) {
     const auto group_uri = FunctionGroupUri(group);

@@ -2,6 +2,7 @@
 
 #include <erpl_adt/cli/command_executor.hpp>
 #include <erpl_adt/cli/command_router.hpp>
+#include "../../test/mocks/mock_adt_session.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -689,6 +690,39 @@ TEST_CASE("SyntaxCheckExitCode: 8 on an error message, warnings pass",
         with_error.push_back(e);
         CHECK(SyntaxCheckExitCode(with_error) == 8);
     }
+}
+
+// ---------------------------------------------------------------------------
+// ResolveActivationObjects (#82, crew F6): `activate a b` is one request,
+// URIs carry type and name, and an argument that does not resolve stops it.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ResolveActivationObjects: URIs are typed, in order", "[cli][executor][activate]") {
+    erpl_adt::testing::MockAdtSession mock;
+    auto result = ResolveActivationObjects(
+        mock, {"/sap/bc/adt/functions/groups/zerpl_fg/source/main",
+               "/sap/bc/adt/functions/groups/zerpl_fg"});
+    REQUIRE(result.IsOk());
+    const auto& objects = result.Value();
+    REQUIRE(objects.size() == 2);
+    CHECK(objects[0].type == "FUGR/I");
+    CHECK(objects[0].name == "SAPLZERPL_FG");
+    CHECK(objects[0].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(objects[1].type == "FUGR/F");
+    CHECK(objects[1].name == "ZERPL_FG");
+    CHECK(mock.GetCallCount() == 0);  // URIs need no search
+}
+
+TEST_CASE("ResolveActivationObjects: an unknown name is the error, nothing resolved after it",
+          "[cli][executor][activate]") {
+    erpl_adt::testing::MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, "<adtcore:objectReferences xmlns:adtcore=\"http://www.sap.com/adt/core\"/>"}));
+    auto result = ResolveActivationObjects(
+        mock, {"/sap/bc/adt/oo/classes/zcl_a", "ZZZ_DOES_NOT_EXIST", "ZCL_LATER"});
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::NotFound);
+    CHECK(mock.GetCallCount() == 1);  // ZCL_LATER was not looked up
 }
 
 // ---------------------------------------------------------------------------

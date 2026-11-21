@@ -135,3 +135,14 @@ class CliRunner:
             f"CLI unexpectedly succeeded:\n  stdout: {result.stdout}"
         )
         return result
+
+
+def release_with_tasks(cli, number):
+    """Release a request as SE09 does: its open tasks first, then the request.
+    A request with an open task is refused (exit 9) - it used to read as
+    released."""
+    data = cli.run_ok("transport", "show", number)
+    for task in data["tasks"]:
+        if task["status"] == "modifiable":
+            cli.run("transport", "release", task["number"])
+    cli.run("transport", "release", number)

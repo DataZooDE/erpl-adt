@@ -1,5 +1,6 @@
 #pragma once
 
+#include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/checks.hpp>
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
@@ -100,6 +101,13 @@ int ReportActivationOutcome(const ActivationResult& act,
                             OutputFormatter& fmt,
                             const std::string& label,
                             std::ostream& err);
+
+// Resolve `activate` arguments (names or ADT URIs) to activation references,
+// in order, for one request. A URI carries type and name derived from it
+// (ActivationParamsFromObjectUri). The first argument that does not resolve
+// is the error; nothing is activated then.
+[[nodiscard]] Result<std::vector<ActivateObjectParams>, Error> ResolveActivationObjects(
+    IAdtSession& session, const std::vector<std::string>& names_or_uris);
 
 // Outcome exit codes. The run itself worked; these say whether its outcome
 // should stop a script or agent gating on $?. The same code applies in text

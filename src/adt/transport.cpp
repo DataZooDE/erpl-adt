@@ -287,16 +287,25 @@ void CollectErrorMessages(const tinyxml2::XMLElement* el, std::vector<std::strin
 // Anything else - "abortrelapifail" (an open task), "abortrelinacobj" (an
 // inactive object), a pre-export error - is the release failing. An empty
 // body (older releases) carries no report and stays accepted.
-std::optional<std::string> ReleaseFailure(std::string_view body) {
+std::optional<std::string> ReleaseFailure(std::string_view body,
+                                          const std::string& number) {
     if (body.empty()) {
         return std::nullopt;
     }
+    // A non-empty answer without a readable report proves nothing - and the
+    // release cannot be undone (crew F6).
+    const std::string unreadable =
+        "SAP's answer to the release could not be read as a release report; "
+        "check whether it was released with: erpl-adt transport show " + number;
     tinyxml2::XMLDocument doc;
     if (doc.Parse(body.data(), body.size()) != tinyxml2::XML_SUCCESS || !doc.RootElement()) {
-        return std::nullopt;
+        return unreadable;
     }
     std::vector<const tinyxml2::XMLElement*> reports;
     CollectCheckReports(doc.RootElement(), reports);
+    if (reports.empty()) {
+        return unreadable;
+    }
     std::string failure;
     for (const auto* report : reports) {
         const auto status = xml_utils::AttrAny(report, "chkrun:status", "status");
@@ -456,7 +465,7 @@ Result<void, Error> ReleaseTransport(
         return Result<void, Error>::Err(
             Error::FromHttpStatus("ReleaseTransport", url, http.status_code, http.body));
     }
-    if (auto failure = ReleaseFailure(http.body)) {
+    if (auto failure = ReleaseFailure(http.body, transport_number)) {
         return Result<void, Error>::Err(Error{
             "ReleaseTransport", url, http.status_code, *failure, std::nullopt,
             ErrorCategory::TransportError});

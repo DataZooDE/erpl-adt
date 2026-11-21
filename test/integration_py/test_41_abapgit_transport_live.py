@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from cli_runner import release_with_tasks
+
 FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
 PACKAGE = os.getenv("SAP_TRANSPORT_PACKAGE", "")
 TRAN_AUTH = os.getenv("SAP_TRAN_AUTH_OBJ", "")
@@ -81,11 +83,7 @@ def _release(cli, number):
     return its status afterwards. On A4H the request's release answers
     "Error in pre-export methods" (the trial has no export) yet leaves the
     request released; what counts is the status, read back."""
-    data = cli.run_ok("transport", "show", number)
-    for task in data["tasks"]:
-        if task["status"] == "modifiable":
-            cli.run("transport", "release", task["number"])
-    cli.run("transport", "release", number)
+    release_with_tasks(cli, number)
     return cli.run_ok("transport", "show", number)["status"]
 
 
