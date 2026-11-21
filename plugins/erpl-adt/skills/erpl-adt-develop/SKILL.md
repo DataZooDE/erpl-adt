@@ -56,9 +56,10 @@ with `search … --type` (or `source read --type`) and pass the URI.
    expression or offset directly on a method result (`get( )[ key ]`, `get( )+4(2)` — assign it first); a
    positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); a
    `LOOP ... ASSIGNING <fs> WHERE` condition that uses `<fs>`; ABAP Doc (`"!`) before a chained `TYPES:`.
-10. **Find where an activation error is.** `--json activate` lists the texts without object or line (#90);
-    `--json source check <name> --version inactive` returns `line`, `offset` and the include in `uri`
-    (`.../includes/testclasses#start=70,4`) for each error — run it on each failed class.
+10. **Find where an activation error is.** `--json activate` gives each message's `object`, `include`
+    (`main`, `testclasses`, ...), `line` and `column` in `messages`; text mode prints
+    `ZCL_X testclasses:70:4: <text>`. Before activating, `--json source check <name> --version inactive` finds
+    the same errors in what was just written.
 11. **Keep short texts within SAP's field lengths.** A function group text (`AREAT`) holds 40 characters: a longer
     one is cut on create, and every later `abapgit deploy` of the same files is refused ("changing the short text
     ... is not supported"); only deleting the group helps (#92). Function module texts: 74.
