@@ -52,6 +52,26 @@ std::string FileName(const AbapGitObjectKey& key, const std::string& part);
 // engine (compact asXML document).
 Result<std::string, Error> EnginePayload(const ObjectFileSet& files, const std::string& file_name);
 
+// A short text field and the number of characters SAP stores for it (#92):
+// an element `field` inside an element `container` (local names, at any
+// depth). With `id`, only where the sibling <ID> has that value (text pool
+// entries: R is the program title). `label` names it in the message
+// (default: the field name).
+struct TextLimit {
+    const char* container;
+    const char* field;
+    size_t limit;
+    const char* id = nullptr;
+    const char* label = nullptr;
+};
+
+// Refuses (CheckError, exit 8) a short text in `xml` that is longer than its
+// SAP field - SAP would cut it, and every later deploy would see a change.
+// Lengths are counted in characters (UTF-8 code points), as SAP counts them.
+// `object` names the object in the message, e.g. "Function group ZFG".
+Result<void, Error> CheckTextLimits(const std::string& object, const std::string& xml,
+                                    const std::vector<TextLimit>& limits);
+
 // Renders engine DATA (SAP asXML) as an abapGit file of `serializer`.
 Result<std::string, Error> RenderFromEngine(const std::string& asxml,
                                             const std::string& serializer);

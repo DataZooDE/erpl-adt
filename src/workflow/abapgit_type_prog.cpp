@@ -322,6 +322,16 @@ public:
     Result<void, Error> Validate(const AbapGitObjectKey& key, const ObjectFileSet& desired,
                                  const ObjectState& current,
                                  const std::string& language) const override {
+        // The title (text pool entry R) holds 70 characters (TRDIRT-TEXT,
+        // A4H DD03L); its translations alike.
+        if (desired.count(FileName(key, "xml"))) {
+            auto texts = CheckTextLimits("Program " + key.name, desired.at(FileName(key, "xml")),
+                                         {{"TPOOL", "ENTRY", 70, "R", "title"},
+                                          {"I18N_TPOOL", "ENTRY", 70, "R", "title"}});
+            if (texts.IsErr()) {
+                return texts;
+            }
+        }
         ObjectState master = current;
         master.files = WithoutI18nSections(current.files);
         auto valid = ValidateMaster(key, WithoutI18nSections(desired), master, language);

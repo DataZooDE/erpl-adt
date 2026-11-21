@@ -19,7 +19,7 @@ priority-1 finding 8.
    [--transport …]`. Exit 6 = lock conflict: report who holds the lock and stop.
 5. Check what you wrote: `erpl-adt --json source check <name> --version inactive`. Exit 8 = syntax error:
    fix the local file from the messages (`line`, `text`) and go back to step 4.
-6. Activate: `erpl-adt --json activate <name>`. Exit 5 = activation failed: read `error_messages`, fix the
+6. Activate: `erpl-adt --json activate <name>`. Exit 5 = activation failed: `messages` names `object`, `include` and `line` of each error; fix the
    local file, go back to step 4.
 7. `erpl-adt --json test <name>` — exit 7 = a test failed; report `total_failed` and the failing methods.
    `erpl-adt --json check <name>` — exit 8 = a priority-1 finding; report the findings by priority.

@@ -75,7 +75,8 @@ bool CommandRouter::IsBooleanFlag(std::string_view arg) {
            arg == "--optimistic" || arg == "--no-resolve-types" ||
            arg == "--no-telemetry" || arg == "--embed" || arg == "--resume" ||
            arg == "--resolve-ddic-types" || arg == "--include-raw-source" ||
-           arg == "--keep-lock" || arg == "--dry-run" || arg == "--keep-helper";
+           arg == "--keep-lock" || arg == "--dry-run" || arg == "--keep-helper" ||
+           arg == "--full";
 }
 
 void CommandRouter::Register(const std::string& group,

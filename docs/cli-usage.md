@@ -153,6 +153,20 @@ erpl-adt source check ZCL_MY_CLASS
 erpl-adt source check ZCL_MY_CLASS --version inactive
 ```
 
+A failed activation says where each error is. The JSON keeps `error_messages` (the texts) and adds `messages`,
+one entry per message with `type` and `text` and, when SAP names the place, `object`, `include` (`main`,
+`testclasses`, `definitions`, ...), `line`, `column` and `uri`:
+
+```json
+{"activated":1,"failed":1,"error_messages":["Activation was cancelled.","Type \"ZCL_PRICINGX\" is unknown."],
+ "messages":[{"type":"W","text":"Activation was cancelled."},
+             {"type":"E","text":"Type \"ZCL_PRICINGX\" is unknown.","object":"ZCL_PRICING","include":"testclasses",
+              "line":9,"column":23,"uri":"/sap/bc/adt/oo/classes/zcl_pricing/includes/testclasses", "description":"..."}]}
+```
+
+Text mode prints the same compiler style: `ZCL_PRICING testclasses:9:23: Type "ZCL_PRICINGX" is unknown.`
+MCP `adt_activate` returns the same fields plus `passed`.
+
 **API:**
 - `ReadSource(session, uri, version)` -- `GET {sourceUri}?version=active`
 - `WriteSource(session, uri, source, handle)` -- `PUT {sourceUri}?lockHandle=...`
@@ -176,6 +190,33 @@ The JSON names the variant that ran (`variant`).
 **API:**
 - `RunTests(session, uri)` -- `POST /sap/bc/adt/abapunit/testruns`
 - `RunAtcCheck(session, uri, variant)` -- variant: empty → `systemCheckVariant` from `GET /sap/bc/adt/atc/customizing` (DEFAULT if none); checked via `GET /sap/bc/adt/atc/checkvariants/{name}`; then worklist + run + get findings
+
+### dump -- Runtime errors (short dumps, ST22)
+
+```bash
+# Newest runtime errors, of every user or of one (times are UTC)
+erpl-adt dump list --max 5
+erpl-adt --json dump list --owner DEVELOPER --since 2026-11-21T16:00:00Z
+
+# What it was, where it terminated, and the source line to fix
+erpl-adt dump show <id>
+erpl-adt --json dump show <id> --full      # plus the whole formatted dump as `text`
+```
+
+`dump list` gives per dump `id`, `error` (the runtime error, e.g. `COMPUTE_INT_ZERODIVIDE`), `short_text`,
+`program`, `user` and `time`. `dump show` adds `exception`, where the runtime terminated (`include`,
+`include_line`, `event`, `main_program`) and the place in the source as ADT resolves it (`uri`, `line` -
+read it with `source read`; absent when the program no longer exists). An id that does not exist exits 2.
+`--user` is the login flag; the filter is `--owner`.
+
+When `object run` (or MCP `adt_run_class`) ends in a short dump, the error is category `runtime_dump`
+(exit 99) and its hint names the dump: `The run ended in runtime error COMPUTE_INT_ZERODIVIDE (Division by
+0 ...) in ZCL_X=====CP. See where and why: erpl-adt dump show <id>`. The MCP tools are `adt_list_dumps` and
+`adt_show_dump`.
+
+**API:**
+- `ListDumps(session, options)` -- `GET /sap/bc/adt/runtime/dumps?$top=N[&$query=and(equals(user,U))][&from=...]`
+- `GetDump(session, id, full)` -- `GET /sap/bc/adt/runtime/dump/{id}` plus `/unformatted`, `/formatted`, `/summary`
 
 ### transport -- Transport management
 

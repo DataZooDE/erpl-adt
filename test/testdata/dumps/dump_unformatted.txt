@@ -1,0 +1,70 @@
+----------------------------------------------------------------------------------------------------
+|Short Text                    |ID|Val.                                                                                                                                                                                                                        
+----------------------------------------------------------------------------------------------------
+|Runtime Errors                |FC|COMPUTE_INT_ZERODIVIDE                                                                                                      
+|ABAP: Program                 |AP|ZCL_ERPL_DUMP_PROBE===========CP                                                                                                                                             
+|ABAP: Include                 |AI|ZCL_ERPL_DUMP_PROBE===========CM001                                                                                                                                                                                    
+|ABAP: Line                    |AL|3                                                                                                                                                                                                                           
+|Exception Class               |XC|CX_SY_ZERODIVIDE   
+|Transaction ID                |TD|4DD97CCD6B390050E006AF6D5C769689                                          
+|EPP Root Context ID           |GX|0242AC1100021FE1B9B8CA17647AC06A                                                                                 
+|EPP Connection ID             |VX|0242AC1100021FE1B9B8CA17647AE06A                                                                                                                        
+|EPP Connection Counter        |AX|1                                                                                                                                                               
+|EPP Component Name            |NX|A4H/vhcala4hci_A4H_00                                                                                                                                                                                                      
+|ABAP: CONT Offset             |AF|30                                                                                                                                                                                                                                             
+|C Mdule                       |CM|//bas/GIT/krn/abap/runt/abcalc.c#0                     
+|C Function                    |CF|ab_CaliDiv0Rabax                                                            
+|C Line                        |CL|3570                                                                                                   
+|Roll Area Start Time          |RT|20261121161214                                                                                                                                          
+|Used Page Memory              |SP|16384                                                                                                                                                                                 
+|Used Heap Memory              |SV|0                                                                                                                                                                                                                        
+|Used Extended Memory          |SA|8258441
+|User MM Memory                |MU|3596240                                       
+|Free MM Memory                |MF|4658256                                                                              
+|Used Areas in MM              |MG|1372                                                                                                                     
+|Free Areas in MM              |MH|24                                                                                                                                                            
+|Largest Free Area in MM       |MJ|3201208                                                                                                                                                                                                   
+|                              |MK|5061536                                                                                                                                                                                                                                          
+|Session Memory Quota          |SQ|6000000000                  
+|Session Memory Quota (Extended|SE|6000000000                                                         
+|Session Memory Warning        |SW|5400000000                                                                                                
+|Session Memory Warning (Extend|EW|0                                                                                                                                       
+|Add. Space                    |SX|18446744073709551615                                                                                                                                                                              
+|ABAP Include Time Stamp       |AT|20261121161214                                                                                                                                                                                                                     
+|Roll Area Status              |ST|D                                                                                                                                                                                                                                                            
+|ABAP: Main Program            |AM|SAPMHTTP                                    
+|ABAP: Event                   |EV|IF_OO_ADT_CLASSRUN~MAIN                                                                           
+|ABAP: Event Type              |ET|(METHOD)                                                                                                                  
+|ABAP: VM Cmnd.                |OP|CALC                                                                                                                                                         
+|C Stack                       |ZS|# buildID: 1317a4d562d51551cbd105feff2c068c90006541                                                                                                                                                                                                
+|C Stack                       |ZS|dw.sapA4H_D00;0xade98f;[S](LinStackBacktrace(void**, int, int)+0xa8)[0x55b5c36de98f]                                                                                                                                                                            
+|C Stack                       |ZS|dw.sapA4H_D00;0xae2f93;[S](LinStack(_IO_FILE*)+0x48)[0x55b5c36e2f93]               
+|C Stack                       |ZS|dw.sapA4H_D00;0xade3ce;[S](CTrcStack2+0x9c)[0x55b5c36de3ce]                                                      
+|C Stack                       |ZS|dw.sapA4H_D00;0xe4b143;[S](rabax_CStackSave()+0x9e)[0x55b5c3a4b143]                                                                                             
+|C Stack                       |ZS|dw.sapA4H_D00;0xe46ab9;[S](rabax(char16_t const*, char16_t const*, int, char16_t const*, void const*) [clone .cold]+0xe83)[0x55b5c3a46ab9]                                                                                                                      
+|C Stack                       |ZS|dw.sapA4H_D00;0xf2c49d;[S](ab_CaliDiv0Rabax(CONT*, char16_t const*, bool)+0x6b)[0x55b5c3b2c49d]                                                                                                                                                                 
+|C Stack                       |ZS|dw.sapA4H_D00;0x35f4162;[S](AbCalc<CalI<TraitsI> >::loop()+0x1212)[0x55b5c61f4162]                                                                                                                                                                              
+|C Stack                       |ZS|dw.sapA4H_D00;0x35f2f0f;[S](AbCalc<CalI<TraitsI> >::run()+0x2f)[0x55b5c61f2f0f]                                                                                                                                                                                 
+|CStack                        |ZS|dw.sapA4H_D00;0x35edcf5;[S](ab_extri()+0x1c5)[0x55b5c61edcf5]                                 
+|C Stack                       |ZS|dw.sapA4H_D00;0x3623864;[S](ab_xevent(char16_t const*)+0x34)[0x55b5c6223864]                                                                        
+|C Stack                       |ZS|dw.sapA4H_D00;0x35eb82a;[S](ab_dstep(char16_t*, unsigned int, char16_t*, unsigned int)+0x5a)[0x55b5c61eb82a]                                                                                                               
+|C Stack                       |ZS|dw.sapA4H_D00;0x35b6630;[S](dynpmcal(DINFDUMY*, STPDUMMY*)+0x230)[0x55b5c61b6630]                                                                                                                                                      
+|C Stack                       |ZS|dw.sapA4H_D00;0x35b5bbd;[S](dynppbo0(DINFDUMY*)+0xed)[0x55b5c61b5bbd]                                                                                                                                                                                           
+|C Stack                       |ZS|dw.sapA4H_D00;0x35b58d9;[S](dynprctl(DINFDUMY*)+0x129)[0x55b5c61b58d9]                                                                                                                                                                                          
+|C Stack                       |ZS|dw.sapA4H_D00;0x35b49ae;[S](dynpen00(int)+0x42e)[0x55b5c61b49ae]            
+|C Stack                       |ZS|dw.sapA4H_D00;0x3720636;[S](ab_HttpRequestHandler(TH_PLUGIN_ROLE, TH_PLUGIN_ACTION, int, TH_PLUGIN_PROTOCOL, unsigned char)+0x456)[0x55b5c6320636]                                                   
+|C Stack                       |ZS|dw.sapA4H_D00;0x35a8f69;[S](PluginHandler::handleRequest(REQUEST_BUF*, bool)+0x489)[0x55b5c61a8f69]                                                                                          
+|C Stack                       |ZS|dw.sapA4H_D00;0x39bfd09;[S](ThStart()+0x869)[0x55b5c65bfd09]                                                                                                                                 
+|C Stack                       |ZS|dw.sapA4H_D00;0x3980308;[S](DpMain+0x3e8)[0x55b5c6580308]                                                                                                                                                                        
+|C Stack                       |ZS|dw.sapA4H_D00;0x353000e;[S](main+0x2e)[0x55b5c613000e]                                                                                                                                                                                                          
+|C Stack                       |ZS|# buildID: f732026552f6adff988b338e92d466bc81a01c37                                                                                                                                                                                                             
+|C Stack                       |ZS|libc.so.6;0x3524d;[S](__libc_start_main+0xef)[0x7f3d183f924d]                              
+|C Stack                       |ZS|# buildID: 1317a4d562d51551cbd105feff2c068c90006541                                                                     
+|C Stack                       |ZS|dw.sapA4H_D00;0x397fe5a;[S](_start+0x2a)[0x55b5c657fe5a]                                                                                                            
+|ABAP: Transaction             |TC|                                                                                                                                                   
+|ABAP: Dynpro                  |AD|SAPMHTTP                                0010                                                                                                                                                                                          
+|ABAP: Dynpro Line             |DL|2                                                                                                                                                                                                                                 
+|RFC: Error                    |RE|RFC_ERROR_SYSTEM_FAILURE         
+|CPIC Return Text              |CT|A row already exists with this key                                                
+|CPIC Return Value             |CR|INCL_RFC_ERROR_SYSTEM_FAILURE                                                                                       
+|ICF: Log                      |HP|HTTP                                                                                                                              

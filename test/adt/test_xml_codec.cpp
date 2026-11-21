@@ -367,6 +367,16 @@ TEST_CASE("ParseActivationResponse: parses fixture with warning", "[xml][parse]"
     CHECK(activation.error_messages[0] == "Warning: Some method implementations are empty");
 }
 
+// #90: the deploy path's parser carries the same structured messages.
+TEST_CASE("ParseActivationResponse: messages name the object", "[xml][parse]") {
+    XmlCodec codec;
+    auto result = codec.ParseActivationResponse(LoadFixture("activation_response.xml"));
+    REQUIRE(result.IsOk());
+    REQUIRE(result.Value().messages.size() == 1);
+    CHECK(result.Value().messages[0].object == "ZCL_TEST_FLIGHT");
+    CHECK(result.Value().messages[0].type == "W");
+}
+
 TEST_CASE("ParseActivationResponse: invalid XML returns error", "[xml][parse]") {
     XmlCodec codec;
     auto result = codec.ParseActivationResponse("garbage");

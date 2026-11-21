@@ -159,7 +159,8 @@ OBJECT — Read, create, delete, lock/unlock ABAP objects
   object delete <uri>                     Delete an ABAP object
   object lock <uri>                       Lock an object for editing
   object read <name-or-uri>               Read object structure
-  object run <class-name-or-uri>          Run an ABAP console class (IF_OO_ADT_CLASSRUN)
+  object run <class-name-or-uri>          Run an ABAP console class (IF_OO_ADT_CLASSRUN);
+                                          a short dump is named in the error hint
   object unlock <uri>                     Unlock an object
 
 SOURCE — Read, write, and check ABAP source code
@@ -183,6 +184,12 @@ TEST / CHECK
   test <name-or-uri>                      Run ABAP unit tests
   check <name-or-uri>                     Run ATC quality checks
       --variant <name>                    ATC variant (default: the system check variant)
+
+DUMP — Runtime errors (short dumps, ST22)
+  dump list                               List runtime errors, newest first
+      --owner <user>, --since <time>, --max <n>
+  dump show <id>                          What it was, where it happened, the source line
+      --full                              Add the whole formatted dump
 
 TRANSPORT — List, show, create, and release transports
   transport create --desc <text> --package <pkg>
