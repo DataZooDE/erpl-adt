@@ -51,7 +51,13 @@ with `search … --type` (or `source read --type`) and pass the URI.
    parsed as an HTML tag; offset/length access on `STRING` variables in assignments (`result = result(35)`;
    use `substring( )`); `regex =` (POSIX is deprecated; use `pcre =`). A class's `testclasses` section is
    written with `source write <class-uri> --section testclasses`; write every class first and activate them in
-   one `activate <uri>...` call, so classes that use each other activate together.
+   one `activate <uri>...` call, so classes that use each other activate together. Also refused: a table
+   expression or offset directly on a method result (`get( )[ key ]`, `get( )+4(2)` — assign it first); a
+   positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); a
+   `LOOP ... ASSIGNING <fs> WHERE` condition that uses `<fs>`; ABAP Doc (`"!`) before a chained `TYPES:`.
+10. **Find where an activation error is.** `--json activate` lists the texts without object or line (#90);
+    `--json source check <name> --version inactive` returns `line`, `offset` and the include in `uri`
+    (`.../includes/testclasses#start=70,4`) for each error — run it on each failed class.
 
 ## Find
 
