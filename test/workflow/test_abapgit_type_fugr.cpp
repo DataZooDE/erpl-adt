@@ -317,8 +317,8 @@ TEST_CASE("FUGR handler: update modules are refused before anything is written",
     xml.values_xml =
         "<AREAT>demo</AREAT><FUNCTIONS><item><FUNCNAME>Z_UPD</FUNCNAME>"
         "<UPDATE_TASK>1</UPDATE_TASK></item></FUNCTIONS>";
-    ObjectFileSet desired{{"zerpl_fg.fugr.xml", RenderAbapGitXml(xml)},
-                          {"zerpl_fg.fugr.z_upd.abap", "FUNCTION z_upd.\nENDFUNCTION.\n"}};
+    ObjectFileSet desired{{"zerpl_fx_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fx_fg.fugr.z_upd.abap", "FUNCTION z_upd.\nENDFUNCTION.\n"}};
     MockAdtSession session;
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
@@ -332,7 +332,7 @@ TEST_CASE("FUGR handler: update modules are refused before anything is written",
 TEST_CASE("FUGR handler: RFC modules are planned, not refused", "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
-    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
     AbapGitXml xml;
     xml.serializer = "LCL_OBJECT_FUGR";
     xml.serializer_version = "v1.0.0";
