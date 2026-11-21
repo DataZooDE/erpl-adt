@@ -9,9 +9,9 @@ the master language:
   PROG  I18N_TPOOL (text pool: title, text symbols, selection texts, headings)
 
 and the documentation (SE61 long texts) as LONGTEXTS (DOKIL + THEAD + TLINE
-lines, every language). The erpl_demo fixtures carry German translations and
+lines, every language). The erpl_fixture fixtures carry German translations and
 documentation; these tests deploy them as ZERPL_I18N_* copies (so they never
-race with other tests on the erpl_demo objects) and check the result
+race with other tests on the erpl_fixture objects) and check the result
 independently of erpl-adt's engine, over ADT REST: element info and the
 repository search answer in the logon language (Accept-Language de), the
 SAPscript documentation endpoint renders SE61 documents, and the data
@@ -29,21 +29,21 @@ from pathlib import Path
 
 import pytest
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 SRC = FIXTURES / "src"
 PACKAGE = "$TMP"
 
-# erpl_demo object -> its ZERPL_I18N_* copy
+# erpl_fixture object -> its ZERPL_I18N_* copy
 RENAME = {
-    "ZERPL_D_SO_STATUS": "ZERPL_I18N_D_SO_STATUS",
-    "ZERPL_E_SO_STATUS": "ZERPL_I18N_E_SO_STATUS",
-    "ZERPL_PO_REPORT": "ZERPL_I18N_PO_REPORT",
-    "ZERPL_SO_DISPLAY": "ZERPL_I18N_SO_DISPLAY",
+    "ZERPL_FX_D_STATUS": "ZERPL_I18N_D_SO_STATUS",
+    "ZERPL_FX_E_STATUS": "ZERPL_I18N_E_SO_STATUS",
+    "ZERPL_FX_REPORT": "ZERPL_I18N_PO_REPORT",
+    "ZERPL_FX_DIALOG": "ZERPL_I18N_SO_DISPLAY",
 }
-DOMA = RENAME["ZERPL_D_SO_STATUS"]
-DTEL = RENAME["ZERPL_E_SO_STATUS"]
-REPORT = RENAME["ZERPL_PO_REPORT"]
-DISPLAY = RENAME["ZERPL_SO_DISPLAY"]
+DOMA = RENAME["ZERPL_FX_D_STATUS"]
+DTEL = RENAME["ZERPL_FX_E_STATUS"]
+REPORT = RENAME["ZERPL_FX_REPORT"]
+DISPLAY = RENAME["ZERPL_FX_DIALOG"]
 TPOOL_CHECK = "ZERPL_I18N_TPOOL_CHECK"
 
 
@@ -255,7 +255,7 @@ GERMAN_VALUES = {"0001": "Neu", "0002": "In Bearbeitung", "0003": "Abgeschlossen
 
 @pytest.mark.abapgit_deploy
 class TestTranslationsAndDocumentation:
-    """German translations and SE61 documentation of the erpl_demo objects."""
+    """German translations and SE61 documentation of the erpl_fixture objects."""
 
     def test_deploy_creates_objects_with_german_texts(self, cli, adt, repo):
         cli.run("abapgit", "delete", str(repo), "--package", PACKAGE, "--force")
@@ -376,17 +376,17 @@ class TestTranslationsAndDocumentation:
     def test_changed_documentation_updates_only_the_documentation(self, cli, adt, repo):
         dtel_file = repo / "src" / f"{DTEL.lower()}.dtel.xml"
         dtel_file.write_bytes(dtel_file.read_bytes().replace(
-            b"Anzeige des Kundenauftrags (Transaktion ZERPL_VA03).",
-            b"Kundenauftrag anzeigen (Transaktion ZERPL_VA03)."))
+            b"Anzeige des Kundenauftrags (Transaktion ZERPL_FX_DYN).",
+            b"Kundenauftrag anzeigen (Transaktion ZERPL_FX_DYN)."))
 
         result = _deploy(cli, repo)
 
         entry = _entry(result, "DTEL", DTEL)
         assert entry["action"] == "updated"
         assert entry["parts"] == ["LONGTEXTS"]
-        assert "Kundenauftrag anzeigen (Transaktion ZERPL_VA03)." in \
+        assert "Kundenauftrag anzeigen (Transaktion ZERPL_FX_DYN)." in \
             adt.documentation("DE", DTEL, "D")
-        assert "Shown on the sales order display (transaction ZERPL_VA03)." in \
+        assert "Shown on the sales order display (transaction ZERPL_FX_DYN)." in \
             adt.documentation("DE", DTEL, "E")
         _commit(repo, "docu reworded")
 
@@ -453,7 +453,7 @@ class TestTranslationsAndDocumentation:
             assert what in entry["message"], entry
         # Nothing was deleted.
         assert adt.fixed_values(DOMA, "D")["0004"] == "Annulliert"
-        assert "Kundenauftrag anzeigen (Transaktion ZERPL_VA03)." in \
+        assert "Kundenauftrag anzeigen (Transaktion ZERPL_FX_DYN)." in \
             adt.documentation("DE", DTEL, "D")
 
     def test_delete_removes_objects_and_documentation(self, cli, adt, repo):

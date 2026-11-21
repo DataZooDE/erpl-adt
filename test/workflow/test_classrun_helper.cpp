@@ -146,7 +146,7 @@ TEST_CASE("ClassrunEngineRunner: parses results and deletes its helper exactly o
 
     {
         ClassrunEngineRunner runner(mock, classrun_mock, Options());
-        auto first = runner.Run({DomaGetOp("ZERPL_D_SO_STATUS", "E")});
+        auto first = runner.Run({DomaGetOp("ZERPL_FX_D_STATUS", "E")});
         REQUIRE(first.IsOk());
         CHECK(first.Value()[0].exists == std::optional<bool>(false));
 

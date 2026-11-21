@@ -364,9 +364,9 @@ classic dialog application can live in git, be linted with abaplint and be
 deployed headless from CI:
 
 ```bash
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # what would change
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # create/update + activate
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO                          # pull SE51/SE41 changes into git
+erpl-adt abapgit status ./my-repo --package ZMY_APP --transport A4HK900146   # what would change
+erpl-adt abapgit deploy ./my-repo --package ZMY_APP --transport A4HK900146   # create/update + activate
+erpl-adt abapgit export ./my-repo --package ZMY_APP                          # pull SE51/SE41 changes into git
 ```
 
 Deploys are idempotent (unchanged objects are left alone), run in dependency

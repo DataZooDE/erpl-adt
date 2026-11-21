@@ -4,12 +4,12 @@
   <asx:values>
    <AREAT>erpl demo: order access</AREAT>
    <INCLUDES>
-    <SOBJ_NAME>LZERPL_FGTOP</SOBJ_NAME>
-    <SOBJ_NAME>SAPLZERPL_FG</SOBJ_NAME>
+    <SOBJ_NAME>LZERPL_FX_FGTOP</SOBJ_NAME>
+    <SOBJ_NAME>SAPLZERPL_FX_FG</SOBJ_NAME>
    </INCLUDES>
    <FUNCTIONS>
     <item>
-     <FUNCNAME>Z_ERPL_READ_ORDER</FUNCNAME>
+     <FUNCNAME>Z_ERPL_FX_READ_ORDER</FUNCNAME>
      <SHORT_TEXT>erpl demo: read sales order</SHORT_TEXT>
      <IMPORT>
       <RSIMP>
@@ -54,7 +54,7 @@
      </DOCUMENTATION>
     </item>
     <item>
-     <FUNCNAME>Z_ERPL_READ_PARTNER</FUNCNAME>
+     <FUNCNAME>Z_ERPL_FX_READ_PARTNER</FUNCNAME>
      <SHORT_TEXT>erpl demo: read business partner</SHORT_TEXT>
      <IMPORT>
       <RSIMP>

@@ -700,16 +700,16 @@ TEST_CASE("SyntaxCheckExitCode: 8 on an error message, warnings pass",
 TEST_CASE("ResolveActivationObjects: URIs are typed, in order", "[cli][executor][activate]") {
     erpl_adt::testing::MockAdtSession mock;
     auto result = ResolveActivationObjects(
-        mock, {"/sap/bc/adt/functions/groups/zerpl_fg/source/main",
-               "/sap/bc/adt/functions/groups/zerpl_fg"});
+        mock, {"/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main",
+               "/sap/bc/adt/functions/groups/zerpl_fx_fg"});
     REQUIRE(result.IsOk());
     const auto& objects = result.Value();
     REQUIRE(objects.size() == 2);
     CHECK(objects[0].type == "FUGR/I");
-    CHECK(objects[0].name == "SAPLZERPL_FG");
-    CHECK(objects[0].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fg");
+    CHECK(objects[0].name == "SAPLZERPL_FX_FG");
+    CHECK(objects[0].parent_uri == "/sap/bc/adt/functions/groups/zerpl_fx_fg");
     CHECK(objects[1].type == "FUGR/F");
-    CHECK(objects[1].name == "ZERPL_FG");
+    CHECK(objects[1].name == "ZERPL_FX_FG");
     CHECK(mock.GetCallCount() == 0);  // URIs need no search
 }
 

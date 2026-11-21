@@ -3,7 +3,7 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <PROGDIR>
-    <NAME>ZERPL_SO_DISPLAY</NAME>
+    <NAME>ZERPL_FX_DIALOG</NAME>
     <SUBC>M</SUBC>
     <RLOAD>E</RLOAD>
     <FIXPT>X</FIXPT>
@@ -12,7 +12,7 @@
    <DYNPROS>
     <item>
      <HEADER>
-      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>
+      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>
       <SCREEN>0100</SCREEN>
       <LANGUAGE>E</LANGUAGE>
       <DESCRIPT>Display Sales Order: Initial Screen</DESCRIPT>
@@ -93,7 +93,7 @@
     </item>
     <item>
      <HEADER>
-      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>
+      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>
       <SCREEN>0200</SCREEN>
       <LANGUAGE>E</LANGUAGE>
       <DESCRIPT>Display Sales Order: Overview</DESCRIPT>
@@ -418,7 +418,7 @@
     </item>
     <item>
      <HEADER>
-      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>
+      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>
       <SCREEN>0210</SCREEN>
       <LANGUAGE>E</LANGUAGE>
       <DESCRIPT>Display Sales Order: Items</DESCRIPT>
@@ -598,7 +598,7 @@
     </item>
     <item>
      <HEADER>
-      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>
+      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>
       <SCREEN>0220</SCREEN>
       <LANGUAGE>E</LANGUAGE>
       <DESCRIPT>Display Sales Order: Notes</DESCRIPT>
@@ -643,7 +643,7 @@
     </item>
     <item>
      <HEADER>
-      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>
+      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>
       <SCREEN>0300</SCREEN>
       <LANGUAGE>E</LANGUAGE>
       <DESCRIPT>Display Sales Order: Order Info</DESCRIPT>

@@ -6,10 +6,10 @@ way SE93 and abapGit's ZCL_ABAPGIT_OBJECT_TRAN do: RPY_TRANSACTION_INSERT
 locks it while writing) and RPY_TRANSACTION_DELETE. An update is a delete +
 insert -- that is what abapGit does too, since there is no update API.
 
-Three realistic transactions of the demo order application:
-- ZERPL_VA03     dialog transaction  -> ZERPL_SO_DISPLAY screen 0100
-- ZERPL_ME2L     report transaction  -> ZERPL_PO_REPORT (selection screen 1000)
-- ZERPL_SO_LIST  parameter transaction: SE16 on SNWD_SO, first screen skipped
+Three realistic transactions of the fixture order application:
+- ZERPL_FX_DYN     dialog transaction  -> ZERPL_FX_DIALOG screen 0100
+- ZERPL_FX_REP     report transaction  -> ZERPL_FX_REPORT (selection screen 1000)
+- ZERPL_FX_PARAM  parameter transaction: SE16 on SNWD_SO, first screen skipped
 
 The programs are owned by the PROG slice; when they are not there yet, this
 module creates minimal stand-ins (and removes only the ones it created).
@@ -28,25 +28,25 @@ import pytest
 
 from hana_oracle import oracle as hana_oracle
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 SRC = FIXTURES / "src"
 PACKAGE = "$TMP"
 
-VA03 = SRC / "zerpl_va03.tran.xml"
-ME2L = SRC / "zerpl_me2l.tran.xml"
-SO_LIST = SRC / "zerpl_so_list.tran.xml"
+DYN = SRC / "zerpl_fx_dyn.tran.xml"
+REP = SRC / "zerpl_fx_rep.tran.xml"
+SO_LIST = SRC / "zerpl_fx_param.tran.xml"
 
 STAND_INS = {
-    "ZERPL_SO_DISPLAY": (
-        "REPORT zerpl_so_display.\n"
+    "ZERPL_FX_DIALOG": (
+        "REPORT zerpl_fx_dialog.\n"
         "\n"
         "DATA ok_code TYPE sy-ucomm.\n"
         "\n"
         "START-OF-SELECTION.\n"
         "  CALL SCREEN 100.\n"
     ),
-    "ZERPL_PO_REPORT": (
-        "REPORT zerpl_po_report.\n"
+    "ZERPL_FX_REPORT": (
+        "REPORT zerpl_fx_report.\n"
         "\n"
         "PARAMETERS p_supp TYPE snwd_bpa-bp_id.\n"
         "\n"
@@ -98,7 +98,7 @@ def programs(cli):
         uri = f"/sap/bc/adt/programs/programs/{name.lower()}"
         if cli.run("object", "read", uri).returncode != 0:
             cli.run_ok("object", "create", "--type", "PROG/P", "--name", name,
-                       "--package", PACKAGE, "--description", f"erpl demo stand-in {name}")
+                       "--package", PACKAGE, "--description", f"erpl fixture stand-in {name}")
             created.append(uri)
             src_file = Path(__file__).parent / f".{name.lower()}.abap"
             src_file.write_text(source)
@@ -111,7 +111,7 @@ def programs(cli):
         # The dialog transaction calls screen 0100. RPY_TRANSACTION_INSERT
         # does not check that the screen exists (SE93 only warns), so a
         # failure to create the stand-in screen does not block the TRAN tests.
-        if name == "ZERPL_SO_DISPLAY" and cli.run(
+        if name == "ZERPL_FX_DIALOG" and cli.run(
                 "screen", "read", "--program", name, "--screen", "0100",
                 "--package", PACKAGE).returncode != 0:
             made = cli.run("screen", "create", "--program", name, "--screen", "0100",
@@ -151,7 +151,7 @@ def _commit(repo):
 @pytest.mark.abapgit_deploy
 class TestTransactions:
 
-    @pytest.mark.parametrize("path", [VA03, ME2L, SO_LIST], ids=lambda p: p.stem)
+    @pytest.mark.parametrize("path", [DYN, REP, SO_LIST], ids=lambda p: p.stem)
     def test_deploy_creates_transaction(self, cli, programs, path):
         tcode = path.name.split(".")[0].upper()
         cli.run("abapgit", "delete", str(path), "--package", PACKAGE, "--force")
@@ -164,30 +164,30 @@ class TestTransactions:
         assert hits and hits[0]["type"].startswith("TRAN")
 
     def test_dialog_transaction_in_tstc(self, cli):
-        row = _tstc("ZERPL_VA03")
-        assert row == {"PGMNA": "ZERPL_SO_DISPLAY", "DYPNO": "0100", "CINFO": "0x00",
+        row = _tstc("ZERPL_FX_DYN")
+        assert row == {"PGMNA": "ZERPL_FX_DIALOG", "DYPNO": "0100", "CINFO": "0x00",
                        "S_WIN32": "X", "S_WEBGUI": "1", "S_PLATIN": "X"}
-        assert _search(cli, "ZERPL_VA03")[0]["description"] == "Display Sales Order"
+        assert _search(cli, "ZERPL_FX_DYN")[0]["description"] == "Display Sales Order"
 
     def test_report_transaction_in_tstc(self, cli):
-        row = _tstc("ZERPL_ME2L")
-        assert row["PGMNA"] == "ZERPL_PO_REPORT"
+        row = _tstc("ZERPL_FX_REP")
+        assert row["PGMNA"] == "ZERPL_FX_REPORT"
         assert row["DYPNO"] == "1000"
         assert row["CINFO"] == "0x80"
-        assert _search(cli, "ZERPL_ME2L")[0]["description"] == "Purchase Orders by Supplier"
+        assert _search(cli, "ZERPL_FX_REP")[0]["description"] == "Purchase Orders by Supplier"
 
     def test_parameter_transaction_calls_se16(self, cli):
-        row = _tstc("ZERPL_SO_LIST")
+        row = _tstc("ZERPL_FX_PARAM")
         assert row["CINFO"] == "0x02"
-        assert _tstcp("ZERPL_SO_LIST") == "/*SE16 DATABROWSE-TABLENAME=SNWD_SO;"
+        assert _tstcp("ZERPL_FX_PARAM") == "/*SE16 DATABROWSE-TABLENAME=SNWD_SO;"
 
-    @pytest.mark.parametrize("path", [VA03, ME2L, SO_LIST], ids=lambda p: p.stem)
+    @pytest.mark.parametrize("path", [DYN, REP, SO_LIST], ids=lambda p: p.stem)
     def test_redeploy_unchanged_changes_nothing(self, cli, path):
         tcode = path.name.split(".")[0].upper()
         result = cli.run_ok("abapgit", "deploy", str(path), "--package", PACKAGE)
         assert _entry(result, "TRAN", tcode)["action"] == "unchanged"
 
-    @pytest.mark.parametrize("path", [VA03, ME2L, SO_LIST], ids=lambda p: p.stem)
+    @pytest.mark.parametrize("path", [DYN, REP, SO_LIST], ids=lambda p: p.stem)
     def test_export_matches_file_byte_for_byte(self, cli, tmp_path, path):
         tcode = path.name.split(".")[0].upper()
         cli.run_ok("abapgit", "export", str(tmp_path), "--object", f"TRAN:{tcode}",
@@ -196,58 +196,58 @@ class TestTransactions:
         assert exported.read_bytes() == path.read_bytes()
 
     def test_changed_text_updates_only_the_text(self, cli, tmp_path):
-        changed = _git_copy(VA03, tmp_path)
-        changed.write_bytes(VA03.read_bytes().replace(
+        changed = _git_copy(DYN, tmp_path)
+        changed.write_bytes(DYN.read_bytes().replace(
             b"<TTEXT>Display Sales Order</TTEXT>", b"<TTEXT>Display Sales Order (EPM)</TTEXT>"))
 
         result = cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
 
-        entry = _entry(result, "TRAN", "ZERPL_VA03")
+        entry = _entry(result, "TRAN", "ZERPL_FX_DYN")
         assert entry["action"] == "updated"
         assert entry["parts"] == ["TSTCT"]
-        assert _search(cli, "ZERPL_VA03")[0]["description"] == "Display Sales Order (EPM)"
+        assert _search(cli, "ZERPL_FX_DYN")[0]["description"] == "Display Sales Order (EPM)"
         # the rest of the transaction survived the delete + insert
-        assert _tstc("ZERPL_VA03")["PGMNA"] == "ZERPL_SO_DISPLAY"
+        assert _tstc("ZERPL_FX_DYN")["PGMNA"] == "ZERPL_FX_DIALOG"
 
         _commit(tmp_path)
-        shutil.copy(VA03, changed)
+        shutil.copy(DYN, changed)
         back = cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
-        assert _entry(back, "TRAN", "ZERPL_VA03")["action"] == "updated"
+        assert _entry(back, "TRAN", "ZERPL_FX_DYN")["action"] == "updated"
 
     def test_change_not_in_git_is_refused(self, cli, tmp_path):
         # A version in the system that no git history knows (as if edited in
         # SE93, which records no last changer) is not overwritten: exit 6.
-        edited = tmp_path / VA03.name
-        edited.write_bytes(VA03.read_bytes().replace(
+        edited = tmp_path / DYN.name
+        edited.write_bytes(DYN.read_bytes().replace(
             b"<TTEXT>Display Sales Order</TTEXT>", b"<TTEXT>Edited in SE93</TTEXT>"))
         cli.run_ok("abapgit", "deploy", str(edited), "--package", PACKAGE, "--force")
 
-        result = cli.run("abapgit", "deploy", str(VA03), "--package", PACKAGE)
+        result = cli.run("abapgit", "deploy", str(DYN), "--package", PACKAGE)
 
         assert result.returncode == 6, result.stdout + result.stderr
-        entry = _entry(json.loads(result.stdout), "TRAN", "ZERPL_VA03")
+        entry = _entry(json.loads(result.stdout), "TRAN", "ZERPL_FX_DYN")
         assert entry["action"] == "refused"
         assert "unknown user" in entry["message"]
-        assert _search(cli, "ZERPL_VA03")[0]["description"] == "Edited in SE93"
-        cli.run_ok("abapgit", "deploy", str(VA03), "--package", PACKAGE, "--force")
+        assert _search(cli, "ZERPL_FX_DYN")[0]["description"] == "Edited in SE93"
+        cli.run_ok("abapgit", "deploy", str(DYN), "--package", PACKAGE, "--force")
 
     def test_changed_gui_flags_update(self, cli, tmp_path):
-        changed = _git_copy(ME2L, tmp_path)
-        changed.write_bytes(ME2L.read_bytes().replace(b"    <S_PLATIN>X</S_PLATIN>\n", b""))
+        changed = _git_copy(REP, tmp_path)
+        changed.write_bytes(REP.read_bytes().replace(b"    <S_PLATIN>X</S_PLATIN>\n", b""))
 
         result = cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
 
-        entry = _entry(result, "TRAN", "ZERPL_ME2L")
+        entry = _entry(result, "TRAN", "ZERPL_FX_REP")
         assert entry["action"] == "updated"
         assert entry["parts"] == ["TSTCC"]
-        assert _tstc("ZERPL_ME2L")["S_PLATIN"] in ("", "?")
+        assert _tstc("ZERPL_FX_REP")["S_PLATIN"] in ("", "?")
         _commit(tmp_path)
-        shutil.copy(ME2L, changed)
+        shutil.copy(REP, changed)
         cli.run_ok("abapgit", "deploy", str(changed), "--package", PACKAGE)
 
     def test_sap_transaction_is_refused_before_anything_is_written(self, cli, tmp_path):
         se38 = tmp_path / "se38.tran.xml"
-        se38.write_bytes(VA03.read_bytes().replace(b"ZERPL_VA03", b"SE38"))
+        se38.write_bytes(DYN.read_bytes().replace(b"ZERPL_FX_DYN", b"SE38"))
         before = _tstc("SE38")
 
         result = cli.run("abapgit", "deploy", str(se38), "--package", PACKAGE)
@@ -259,20 +259,20 @@ class TestTransactions:
     def test_unsupported_parts_are_refused_not_dropped(self, cli, tmp_path):
         # An authorization-object check (TSTCA, CINFO x'04') can only be written
         # to the tables directly -- erpl-adt refuses instead of dropping it.
-        with_auth = tmp_path / VA03.name
-        with_auth.write_bytes(VA03.read_bytes().replace(
+        with_auth = tmp_path / DYN.name
+        with_auth.write_bytes(DYN.read_bytes().replace(
             b"   </TSTCT>\n",
-            b"   </TSTCT>\n   <AUTHORIZATIONS>\n    <TSTCA>\n     <TCODE>ZERPL_VA03</TCODE>\n"
-            b"     <OBJCT>S_TCODE</OBJCT>\n     <FIELD>TCD</FIELD>\n     <VALUE>ZERPL_VA03</VALUE>\n"
+            b"   </TSTCT>\n   <AUTHORIZATIONS>\n    <TSTCA>\n     <TCODE>ZERPL_FX_DYN</TCODE>\n"
+            b"     <OBJCT>S_TCODE</OBJCT>\n     <FIELD>TCD</FIELD>\n     <VALUE>ZERPL_FX_DYN</VALUE>\n"
             b"    </TSTCA>\n   </AUTHORIZATIONS>\n"))
 
         result = cli.run("abapgit", "deploy", str(with_auth), "--package", PACKAGE)
 
         assert result.returncode != 0
         assert "AUTHORIZATIONS" in (result.stdout + result.stderr)
-        assert _tstc("ZERPL_VA03")["PGMNA"] == "ZERPL_SO_DISPLAY"  # untouched
+        assert _tstc("ZERPL_FX_DYN")["PGMNA"] == "ZERPL_FX_DIALOG"  # untouched
 
-    @pytest.mark.parametrize("path", [VA03, ME2L, SO_LIST], ids=lambda p: p.stem)
+    @pytest.mark.parametrize("path", [DYN, REP, SO_LIST], ids=lambda p: p.stem)
     def test_delete_removes_transaction(self, cli, path):
         tcode = path.name.split(".")[0].upper()
         result = cli.run_ok("abapgit", "delete", str(path), "--package", PACKAGE)

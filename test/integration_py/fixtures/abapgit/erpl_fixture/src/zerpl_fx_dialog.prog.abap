@@ -1,5 +1,5 @@
 *&---------------------------------------------------------------------*
-*& Module pool ZERPL_SO_DISPLAY - Display Sales Order
+*& Module pool ZERPL_FX_DIALOG - Display Sales Order
 *&---------------------------------------------------------------------*
 *& A VA03-style display transaction on the EPM demo model:
 *&   0100  initial screen: sales order number (F4 help), Display
@@ -7,9 +7,9 @@
 *&   0210  subscreen: items in table control TC_ITEMS
 *&   0220  subscreen: notes in a text edit control
 *&   0300  dialog box: order info
-*& Started by dialog transaction ZERPL_VA03 at screen 0100.
+*& Started by dialog transaction ZERPL_FX_DYN at screen 0100.
 *&---------------------------------------------------------------------*
-PROGRAM zerpl_so_display.
+PROGRAM zerpl_fx_dialog.
 
 TABLES: snwd_so, snwd_so_i, snwd_pd.
 

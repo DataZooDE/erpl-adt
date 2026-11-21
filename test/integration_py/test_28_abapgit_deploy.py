@@ -6,10 +6,12 @@ deploys them from abapGit-serialized files through SAP's own workbench
 function modules (run by a temporary console helper class), and exports them
 back into the same files.
 
-The fixtures under fixtures/abapgit/erpl_demo model a small, realistic
+The fixtures under fixtures/abapgit/erpl_fixture model a small, realistic
 order-display application on the EPM demo model (SNWD_SO / SNWD_SO_I /
 SNWD_BPA) that exists on the A4H trial — the trial has no SD tables
-(VBAK/VBAP), so a "Display Sales Order" clone is built on EPM.
+(VBAK/VBAP). The look-alike demo transactions themselves live in the separate
+repository DataZooDE/erpl-sap-demo; this fixture uses its own ZERPL_FX_* names
+so both can be deployed on the same system.
 """
 
 import json
@@ -25,7 +27,7 @@ from cli_runner import release_with_tasks
 
 from cli_runner import CliRunner
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 SRC = FIXTURES / "src"
 PACKAGE = "$TMP"
 
@@ -107,8 +109,8 @@ def helpers_before(cli):
 class TestDomain:
     """Slice 1: a domain with fixed values (sales order lifecycle status)."""
 
-    DOMA = "ZERPL_D_SO_STATUS"
-    FILE = SRC / "zerpl_d_so_status.doma.xml"
+    DOMA = "ZERPL_FX_D_STATUS"
+    FILE = SRC / "zerpl_fx_d_status.doma.xml"
 
     def test_deploy_creates_domain_with_fixed_values(self, cli, adt, helpers_before):
         cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
@@ -154,7 +156,7 @@ class TestDomain:
 class TestGuardRails:
     """Enterprise guard rails: nothing is written when a rule is violated."""
 
-    FILE = SRC / "zerpl_d_so_status.doma.xml"
+    FILE = SRC / "zerpl_fx_d_status.doma.xml"
 
     def test_transportable_package_without_request_is_refused(self, cli, adt):
         cli.run("abapgit", "delete", str(self.FILE), "--package", PACKAGE, "--force")
@@ -163,10 +165,10 @@ class TestGuardRails:
 
         assert result.returncode == 9, result.stderr
         data = json.loads(result.stdout)
-        entry = _entry(data, "DOMA", "ZERPL_D_SO_STATUS")
+        entry = _entry(data, "DOMA", "ZERPL_FX_D_STATUS")
         assert entry["action"] == "refused"
         assert "--transport" in entry["message"]
-        status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_d_so_status")
+        status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_fx_d_status")
         assert status == 404  # nothing was written
 
     def test_status_without_request_annotates_instead_of_refusing(self, cli):
@@ -177,13 +179,13 @@ class TestGuardRails:
         data = cli.run_ok("abapgit", "status", str(self.FILE), "--package",
                           "ZCLASSIC_DEVELOPMENT")
 
-        entry = _entry(data, "DOMA", "ZERPL_D_SO_STATUS")
+        entry = _entry(data, "DOMA", "ZERPL_FX_D_STATUS")
         assert entry["action"] == "created"
         assert any("--transport" in n for n in entry["notes"])
         strict = cli.run("abapgit", "status", str(self.FILE), "--package",
                          "ZCLASSIC_DEVELOPMENT", "--strict")
         assert strict.returncode == 9, strict.stdout + strict.stderr
-        assert _entry(json.loads(strict.stdout), "DOMA", "ZERPL_D_SO_STATUS")["action"] == \
+        assert _entry(json.loads(strict.stdout), "DOMA", "ZERPL_FX_D_STATUS")["action"] == \
             "refused"
 
     def test_status_accepts_a_request_of_this_system(self, cli):
@@ -196,7 +198,7 @@ class TestGuardRails:
             result = cli.run("abapgit", "status", str(self.FILE), "--package",
                              "ZCLASSIC_DEVELOPMENT", "--transport", number)
             assert result.returncode == 0, result.stderr
-            entry = _entry(json.loads(result.stdout), "DOMA", "ZERPL_D_SO_STATUS")
+            entry = _entry(json.loads(result.stdout), "DOMA", "ZERPL_FX_D_STATUS")
             assert not any("--transport" in n for n in entry.get("notes", [])), entry
         finally:
             release_with_tasks(cli, number)
@@ -204,7 +206,7 @@ class TestGuardRails:
     def test_sap_object_is_refused(self, cli, tmp_path):
         sap_file = tmp_path / "xfeld.doma.xml"
         sap_file.write_bytes(self.FILE.read_bytes().replace(
-            b"ZERPL_D_SO_STATUS", b"XFELD"))
+            b"ZERPL_FX_D_STATUS", b"XFELD"))
 
         result = cli.run("abapgit", "deploy", str(sap_file), "--package", PACKAGE)
 
@@ -224,13 +226,13 @@ class TestGuardRails:
             status = cli.run("abapgit", "status", str(self.FILE), "--package", PACKAGE)
             assert status.returncode == 0, status.stdout + status.stderr
             data = json.loads(status.stdout)
-            entry = _entry(data, "DOMA", "ZERPL_D_SO_STATUS")
+            entry = _entry(data, "DOMA", "ZERPL_FX_D_STATUS")
             assert entry["action"] == "refused"
             assert "BWDEVELOPER" in entry["message"]
             assert data["exit_code"] == 0
             text = cli.run_no_json("abapgit", "status", str(self.FILE), "--package", PACKAGE)
             assert text.returncode == 0
-            assert "refused  DOMA ZERPL_D_SO_STATUS" in text.stdout
+            assert "refused  DOMA ZERPL_FX_D_STATUS" in text.stdout
 
             strict = cli.run("abapgit", "status", str(self.FILE), "--package", PACKAGE,
                              "--strict")
@@ -257,7 +259,7 @@ class TestGuardRails:
         assert data["dry_run"] is True
         assert data["exit_code"] == status.returncode
         assert _entry(data, "DOMA", "ZERPL_D_BROKEN")["action"] == "failed"
-        assert _entry(data, "DOMA", "ZERPL_D_SO_STATUS")["action"] in ("created", "updated",
+        assert _entry(data, "DOMA", "ZERPL_FX_D_STATUS")["action"] in ("created", "updated",
                                                                        "unchanged")
 
     def test_status_reports_without_writing(self, cli, adt):
@@ -266,8 +268,8 @@ class TestGuardRails:
         data = cli.run_ok("abapgit", "status", str(self.FILE), "--package", PACKAGE)
 
         assert data["dry_run"] is True
-        assert _entry(data, "DOMA", "ZERPL_D_SO_STATUS")["action"] == "created"
-        status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_d_so_status")
+        assert _entry(data, "DOMA", "ZERPL_FX_D_STATUS")["action"] == "created"
+        status, _ = adt.get("/sap/bc/adt/ddic/domains/zerpl_fx_d_status")
         assert status == 404
 
     def test_no_helper_classes_are_left_behind(self, cli, helpers_before):
@@ -297,8 +299,8 @@ class TestColleagueChanges:
     """Two users: a deploy never silently overwrites (or deletes) what a
     colleague changed in the system, and respects a colleague's edit lock."""
 
-    DOMA = "ZERPL_D_SO_STATUS"
-    FILE = SRC / "zerpl_d_so_status.doma.xml"
+    DOMA = "ZERPL_FX_D_STATUS"
+    FILE = SRC / "zerpl_fx_d_status.doma.xml"
 
     def _colleague_edits_domain(self, cli, cli2, tmp_path):
         cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
@@ -342,22 +344,22 @@ class TestColleagueChanges:
         cli.run_ok("abapgit", "deploy", str(self.FILE), "--package", PACKAGE, "--force")
 
     def test_deploy_fails_on_a_colleagues_edit_lock(self, cli, cli2, adt, tmp_path):
-        xml = SRC / "zerpl_po_report.prog.xml"
-        abap = SRC / "zerpl_po_report.prog.abap"
+        xml = SRC / "zerpl_fx_report.prog.xml"
+        abap = SRC / "zerpl_fx_report.prog.abap"
         cli.run_ok("abapgit", "deploy", str(xml), "--package", PACKAGE, "--force",
                    timeout=900)
         work = tmp_path / "work"
         work.mkdir()
         shutil.copy(xml, work / xml.name)
         (work / abap.name).write_bytes(abap.read_bytes() + b"* changed while locked\n")
-        uri = "/sap/bc/adt/programs/programs/zerpl_po_report"
+        uri = "/sap/bc/adt/programs/programs/zerpl_fx_report"
         session = tmp_path / "colleague_session.json"
         lock = cli2.run_ok("object", "lock", uri, session_file=session)
         try:
             result = cli.run("abapgit", "deploy", str(work / xml.name), "--package", PACKAGE,
                              timeout=900)
             assert result.returncode == 6, result.stdout + result.stderr
-            entry = _entry(json.loads(result.stdout), "PROG", "ZERPL_PO_REPORT")
+            entry = _entry(json.loads(result.stdout), "PROG", "ZERPL_FX_REPORT")
             assert entry["action"] == "failed"
             status, source = adt.get(uri + "/source/main")
             assert status == 200
@@ -385,8 +387,8 @@ class TestSubPackageRepository:
         (repo / "src" / "sub").mkdir(parents=True)
         shutil.copy(FIXTURES / ".abapgit.xml", repo / ".abapgit.xml")
         file = repo / "src" / "sub" / "zerpl_d_sub_status.doma.xml"
-        file.write_bytes((SRC / "zerpl_d_so_status.doma.xml").read_bytes().replace(
-            b"ZERPL_D_SO_STATUS", self.DOMA.encode()))
+        file.write_bytes((SRC / "zerpl_fx_d_status.doma.xml").read_bytes().replace(
+            b"ZERPL_FX_D_STATUS", self.DOMA.encode()))
         return repo, file
 
     def test_deploy_export_refresh_and_delete_keep_the_folder(self, cli, adt, tmp_path):
@@ -427,7 +429,7 @@ class TestSubPackageRepository:
 
 @pytest.mark.abapgit_deploy
 class TestRepositoryRoundTrip:
-    """The whole demo repository: domain, data element, function group with
+    """The whole fixture repository: domain, data element, function group with
     function modules, a module pool with five screens and GUI status, a report
     with text pool, and three transactions — deployed in one call."""
 
@@ -468,7 +470,7 @@ class TestRepositoryRoundTrip:
         _git(repo, "init", "-q")
         _git(repo, "add", ".")
         _git(repo, "commit", "-qm", "fixture")
-        flow = repo / "src" / "zerpl_so_display.prog.screen_0100.abap"
+        flow = repo / "src" / "zerpl_fx_dialog.prog.screen_0100.abap"
         original = flow.read_bytes()
         flow.write_bytes(original.replace(b"PROCESS BEFORE OUTPUT.\n",
                                           b"PROCESS BEFORE OUTPUT.\n* order number entry\n", 1))
@@ -480,7 +482,7 @@ class TestRepositoryRoundTrip:
         data = json.loads(result.stdout)
         changed = [o for o in data["objects"] if o["action"] != "unchanged"]
         assert [(o["name"], o["action"], o["parts"]) for o in changed] == \
-               [("ZERPL_SO_DISPLAY", "updated", ["screen 0100"])]
+               [("ZERPL_FX_DIALOG", "updated", ["screen 0100"])]
         assert _engine_runs(result) <= 2, _engine_runs(result)
         # Back to the fixture.
         _git(repo, "commit", "-qam", "comment")
