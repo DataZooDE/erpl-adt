@@ -6,11 +6,11 @@ A PROG object is a set of abapGit files:
   <name>.prog.screen_NNNN.abap  flow logic of screen NNNN
 
 The fixtures model two classic EPM applications (the A4H trial has no SD/MM
-tables, so the VA03 / ME2L look-alikes run on SNWD_SO / SNWD_PO):
-  ZERPL_SO_DISPLAY  module pool "Display Sales Order": initial screen with F4,
+tables, so the fixture programs run on SNWD_SO / SNWD_PO):
+  ZERPL_FX_DIALOG  module pool "Display Sales Order": initial screen with F4,
                     overview with tabstrip, table control subscreen, custom
                     control subscreen, dialog box, GUI status MAIN / DIALOG
-  ZERPL_PO_REPORT   executable report "Purchase orders by supplier" with a
+  ZERPL_FX_REPORT   executable report "Purchase orders by supplier" with a
                     selection screen and ALV output
 
 Every result is verified independently of the engine under test: ADT REST
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 SRC = FIXTURES / "src"
 PACKAGE = "$TMP"
 
@@ -130,11 +130,11 @@ def _screen_fields(cli, program, screen):
 
 @pytest.mark.abapgit_deploy
 class TestModulePool:
-    """ZERPL_SO_DISPLAY: module pool with five screens, GUI status and titles."""
+    """ZERPL_FX_DIALOG: module pool with five screens, GUI status and titles."""
 
-    PROG = "ZERPL_SO_DISPLAY"
-    STEM = "zerpl_so_display"
-    XML = SRC / "zerpl_so_display.prog.xml"
+    PROG = "ZERPL_FX_DIALOG"
+    STEM = "zerpl_fx_dialog"
+    XML = SRC / "zerpl_fx_dialog.prog.xml"
 
     def test_deploy_creates_program_with_all_parts(self, cli, adt):
         cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE, "--force")
@@ -164,21 +164,21 @@ class TestModulePool:
         assert company["output"] and not company["input"]
         assert (screen["lines"], screen["columns"]) == (27, 120)
 
-    CHECK_CLASS = "ZCL_ERPL_SO_DISPLAY_CHECK"
-    CHECK_SOURCE = """CLASS zcl_erpl_so_display_check DEFINITION PUBLIC FINAL CREATE PUBLIC.
+    CHECK_CLASS = "ZCL_ERPL_FX_DIALOG_CHECK"
+    CHECK_SOURCE = """CLASS zcl_erpl_fx_dialog_check DEFINITION PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
     INTERFACES if_oo_adt_classrun.
 ENDCLASS.
 
-CLASS zcl_erpl_so_display_check IMPLEMENTATION.
+CLASS zcl_erpl_fx_dialog_check IMPLEMENTATION.
   METHOD if_oo_adt_classrun~main.
-    " What screen 0200 of ZERPL_SO_DISPLAY shows for one order: the module
+    " What screen 0200 of ZERPL_FX_DIALOG shows for one order: the module
     " pool's own FORM read_order fills the fields the screen displays.
-    DATA(program) = `ZERPL_SO_DISPLAY`.
+    DATA(program) = `ZERPL_FX_DIALOG`.
     DATA(form) = `READ_ORDER`.
     FIELD-SYMBOLS <value> TYPE any.
     PERFORM (form) IN PROGRAM (program).
-    ASSIGN ('(ZERPL_SO_DISPLAY)SNWD_SO-SO_ID') TO <value>.
+    ASSIGN ('(ZERPL_FX_DIALOG)SNWD_SO-SO_ID') TO <value>.
     <value> = '500000728'.
     PERFORM (form) IN PROGRAM (program).
     LOOP AT VALUE string_table( ( `SNWD_SO-SO_ID` ) ( `GS_BUYER-COMPANY_NAME` )
@@ -220,7 +220,7 @@ ENDCLASS.
         uri = f"/sap/bc/adt/oo/classes/{self.CHECK_CLASS.lower()}"
         cli.run("object", "delete", uri)
         cli.run_ok("object", "create", "--type", "CLAS/OC", "--name", self.CHECK_CLASS,
-                   "--package", PACKAGE, "--description", "erpl-adt test: ZERPL_SO_DISPLAY data")
+                   "--package", PACKAGE, "--description", "erpl-adt test: ZERPL_FX_DIALOG data")
         try:
             src = tmp_path / "check.abap"
             src.write_text(self.CHECK_SOURCE)
@@ -385,7 +385,7 @@ ENDCLASS.
         cli.run_ok("abapgit", "deploy", str(self.XML), "--package", PACKAGE, "--force")
         xml = _git_copy(self.STEM, tmp_path)  # the system holds the committed version
         content = xml.read_text(encoding="utf-8")
-        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPL_SO_DISPLAY</PROGRAM>\n"
+        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPL_FX_DIALOG</PROGRAM>\n"
                               "      <SCREEN>0300</SCREEN>")
         end = content.index("    </item>\n", start) + len("    </item>\n")
         screen = content[start:end].replace("<SCREEN>0300</SCREEN>", "<SCREEN>0400</SCREEN>")
@@ -443,11 +443,11 @@ ENDCLASS.
 
 @pytest.mark.abapgit_deploy
 class TestReport:
-    """ZERPL_PO_REPORT: executable report with selection screen and text pool."""
+    """ZERPL_FX_REPORT: executable report with selection screen and text pool."""
 
-    PROG = "ZERPL_PO_REPORT"
-    STEM = "zerpl_po_report"
-    XML = SRC / "zerpl_po_report.prog.xml"
+    PROG = "ZERPL_FX_REPORT"
+    STEM = "zerpl_fx_report"
+    XML = SRC / "zerpl_fx_report.prog.xml"
 
     def test_deploy_creates_report_with_text_pool(self, cli, adt):
         cli.run_ok("abapgit", "delete", str(self.XML), "--package", PACKAGE, "--force")

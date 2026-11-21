@@ -1,4 +1,4 @@
-FUNCTION z_erpl_read_partner.
+FUNCTION z_erpl_fx_read_partner.
 *"----------------------------------------------------------------------
 *"*"Local Interface:
 *"  IMPORTING

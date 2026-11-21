@@ -3,7 +3,7 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <PROGDIR>
-    <NAME>ZERPL_PO_REPORT</NAME>
+    <NAME>ZERPL_FX_REPORT</NAME>
     <SUBC>1</SUBC>
     <RLOAD>E</RLOAD>
     <FIXPT>X</FIXPT>
@@ -207,7 +207,7 @@
     <item>
      <DOKIL>
       <ID>RE</ID>
-      <OBJECT>ZERPL_PO_REPORT</OBJECT>
+      <OBJECT>ZERPL_FX_REPORT</OBJECT>
       <LANGU>E</LANGU>
       <TYP>E</TYP>
       <VERSION>0001</VERSION>
@@ -216,7 +216,7 @@
      </DOKIL>
      <HEAD>
       <TDOBJECT>DOKU</TDOBJECT>
-      <TDNAME>ZERPL_PO_REPORT</TDNAME>
+      <TDNAME>ZERPL_FX_REPORT</TDNAME>
       <TDID>RE</TDID>
       <TDSPRAS>E</TDSPRAS>
       <TDFORM>S_DOCU_SHOW</TDFORM>
@@ -239,7 +239,7 @@
       </TLINE>
       <TLINE>
        <TDFORMAT>AS</TDFORMAT>
-       <TDLINE>Started with the report transaction ZERPL_ME2L.</TDLINE>
+       <TDLINE>Started with the report transaction ZERPL_FX_REP.</TDLINE>
       </TLINE>
       <TLINE>
        <TDFORMAT>U1</TDFORMAT>

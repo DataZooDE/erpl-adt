@@ -219,11 +219,14 @@ EXIT CODES
   0  Success           1  Connection/auth     2  Not found
   3  Clone error       4  Pull error          5  Activation failed
   6  Lock conflict     7  Unit test failed    8  ATC / syntax error
-  9  Transport error   10 Timeout             99 Internal error
+  9  Transport error   10 Timeout             99 Internal error / invalid input
 
   5, 7 and 8 are outcomes, the same in text and --json mode: activate (failed > 0),
   test (a method failed) and check (a priority-1 finding) or source check (an error
   message) exit non-zero, and the JSON on stdout still says what failed.
+
+  Exit 99 is an internal error or invalid input; with --json the error's category
+  ("internal" or "validation") says which.
 ```
 
 ## MCP server
@@ -361,9 +364,9 @@ classic dialog application can live in git, be linted with abaplint and be
 deployed headless from CI:
 
 ```bash
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # what would change
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146   # create/update + activate
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO                          # pull SE51/SE41 changes into git
+erpl-adt abapgit status ./my-repo --package ZMY_APP --transport A4HK900146   # what would change
+erpl-adt abapgit deploy ./my-repo --package ZMY_APP --transport A4HK900146   # create/update + activate
+erpl-adt abapgit export ./my-repo --package ZMY_APP                          # pull SE51/SE41 changes into git
 ```
 
 Deploys are idempotent (unchanged objects are left alone), run in dependency

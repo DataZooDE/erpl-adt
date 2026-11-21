@@ -235,7 +235,12 @@ ToolResult HandleCheckSyntax(IAdtSession& session,
                       {"line", m.line},
                       {"offset", m.offset}});
     }
-    return MakeOkResult(j);
+    // The text block stays the bare list (existing clients); the structured
+    // content carries it with the verdict (#84).
+    return ToolResult(false,
+                      nlohmann::json::array({{{"type", "text"}, {"text", j.dump()}}}),
+                      nlohmann::json{{"result", j},
+                                     {"passed", !SyntaxHasError(result.Value())}});
 }
 
 // adt_run_tests
@@ -254,6 +259,7 @@ ToolResult HandleRunTests(IAdtSession& session,
     j["total_failed"] = tr.TotalFailed();
     j["total_skipped"] = tr.TotalSkipped();
     j["all_passed"] = tr.AllPassed();
+    j["passed"] = tr.AllPassed();  // the rule the CLI's exit 7 uses (#84)
     nlohmann::json classes = nlohmann::json::array();
     for (const auto& c : tr.classes) {
         nlohmann::json class_alerts = nlohmann::json::array();
@@ -321,6 +327,7 @@ ToolResult HandleRunAtc(IAdtSession& session,
     j["variant"] = atc.variant;
     j["error_count"] = atc.ErrorCount();
     j["warning_count"] = atc.WarningCount();
+    j["passed"] = !atc.HasErrors();  // the rule the CLI's exit 8 uses (#84)
     nlohmann::json findings = nlohmann::json::array();
     for (const auto& f : atc.findings) {
         findings.push_back({{"uri", f.uri},
@@ -352,17 +359,6 @@ ToolResult HandleListTransports(IAdtSession& session,
 }
 
 // adt_show_transport
-nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
-    nlohmann::json j = nlohmann::json::array();
-    for (const auto& o : objects) {
-        j.push_back({{"pgmid", o.pgmid},
-                      {"type", o.type},
-                      {"name", o.name},
-                      {"description", o.description},
-                      {"lock_status", o.lock_status}});
-    }
-    return j;
-}
 
 ToolResult HandleShowTransport(IAdtSession& session,
                                const nlohmann::json& params) {
@@ -373,25 +369,7 @@ ToolResult HandleShowTransport(IAdtSession& session,
     auto result = GetTransport(session, *number);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
-    const auto& tr = result.Value();
-    nlohmann::json tasks = nlohmann::json::array();
-    for (const auto& t : tr.tasks) {
-        tasks.push_back({{"number", t.number},
-                          {"description", t.description},
-                          {"owner", t.owner},
-                          {"status", t.status},
-                          {"type", t.type},
-                          {"objects", TransportObjectsJson(t.objects)}});
-    }
-    nlohmann::json j = {{"number", tr.number},
-                        {"description", tr.description},
-                        {"owner", tr.owner},
-                        {"status", tr.status},
-                        {"target", tr.target},
-                        {"type", tr.type},
-                        {"tasks", tasks},
-                        {"objects", TransportObjectsJson(tr.objects)}};
-    return MakeOkResult(j);
+    return MakeOkResult(TransportDetailToJson(result.Value()));
 }
 
 // adt_read_table
@@ -866,7 +844,7 @@ ToolResult HandleActivateObject(IAdtSession& session,
             if (!u.is_string() || u.get<std::string>().empty()) {
                 return MakeErrorResult(Error{"adt_activate", "", std::nullopt,
                                              "uris must be a list of object URIs",
-                                             std::nullopt, ErrorCategory::Internal});
+                                             std::nullopt, ErrorCategory::Validation});
             }
             objects.push_back(ActivationParamsFromObjectUri(u.get<std::string>()));
         }
@@ -898,6 +876,7 @@ ToolResult HandleActivateObject(IAdtSession& session,
         msgs.push_back(m);
     }
     j["error_messages"] = msgs;
+    j["passed"] = !act.Failed();  // the rule the CLI's exit 5 uses (#84)
     return MakeOkResult(j);
 }
 

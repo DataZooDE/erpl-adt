@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <erpl_adt/adt/transport.hpp>
 
 #include <algorithm>
 
@@ -445,6 +446,21 @@ TEST_CASE("adt_show_transport: request with its task", "[mcp][handlers][transpor
     REQUIRE(j["tasks"][0]["objects"].size() == 8);
     CHECK(j["tasks"][0]["objects"][0]["type"] == "DOMA");
     CHECK(j["objects"][0]["type"] == "RELE");
+}
+
+TEST_CASE("adt_show_transport: returns exactly TransportDetailToJson", "[mcp][handlers][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_show_transport",
+                           {{"transport_number", "A4HK900260"}});
+    auto detail = GetTransport(mock, "A4HK900260");
+    REQUIRE(detail.IsOk());
+    CHECK(ParseContent(result) == TransportDetailToJson(detail.Value()));
 }
 
 TEST_CASE("adt_show_transport: is read-only", "[mcp][handlers][transport]") {
@@ -1007,14 +1023,92 @@ TEST_CASE("adt_activate: uris go into one activation request, typed from the URI
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_activate",
-                           {{"uris", {"/sap/bc/adt/functions/groups/zerpl_fg/source/main",
-                                      "/sap/bc/adt/functions/groups/zerpl_fg"}}});
+                           {{"uris", {"/sap/bc/adt/functions/groups/zerpl_fx_fg/source/main",
+                                      "/sap/bc/adt/functions/groups/zerpl_fx_fg"}}});
     CHECK_FALSE(result.is_error);
     REQUIRE(mock.PostCallCount() == 1);
     const auto& body = mock.PostCalls()[0].body;
-    CHECK(body.find("adtcore:type=\"FUGR/I\" adtcore:name=\"SAPLZERPL_FG\"") !=
+    CHECK(body.find("adtcore:type=\"FUGR/I\" adtcore:name=\"SAPLZERPL_FX_FG\"") !=
           std::string::npos);
-    CHECK(body.find("adtcore:type=\"FUGR/F\" adtcore:name=\"ZERPL_FG\"") != std::string::npos);
+    CHECK(body.find("adtcore:type=\"FUGR/F\" adtcore:name=\"ZERPL_FX_FG\"") != std::string::npos);
+}
+
+// #84: MCP results carry the verdict the CLI turns into an exit code -
+// "passed" - from the same rule on the result type; isError stays for real
+// tool errors.
+TEST_CASE("adt_activate: passed says whether the activation worked",
+          "[mcp][handlers][activation][passed]") {
+    for (const auto& [fixture, expected] :
+         {std::pair<const char*, bool>{"activation_failed_response.xml", false},
+          std::pair<const char*, bool>{"activation_response.xml", true}}) {
+        INFO(fixture);
+        MockAdtSession mock;
+        mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture(fixture)}));
+        auto registry = MakeRegistry(mock);
+        auto result = CallTool(registry, "adt_activate",
+                               {{"uri", "/sap/bc/adt/oo/classes/zcl_x"}});
+        CHECK_FALSE(result.is_error);
+        CHECK(ParseContent(result)["passed"] == expected);
+    }
+}
+
+TEST_CASE("adt_run_tests: passed says whether every test method passed",
+          "[mcp][handlers][testing][passed]") {
+    for (const auto& [fixture, expected] :
+         {std::pair<const char*, bool>{"testing/test_failures.xml", false},
+          std::pair<const char*, bool>{"testing/test_pass.xml", true}}) {
+        INFO(fixture);
+        MockAdtSession mock;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture(fixture)}));
+        auto registry = MakeRegistry(mock);
+        auto result = CallTool(registry, "adt_run_tests",
+                               {{"uri", "/sap/bc/adt/oo/classes/zcl_test"}});
+        CHECK_FALSE(result.is_error);
+        CHECK(ParseContent(result)["passed"] == expected);
+    }
+}
+
+TEST_CASE("adt_run_atc: passed is false on a priority-1 finding",
+          "[mcp][handlers][checks][passed]") {
+    for (const auto& [fixture, expected] :
+         {std::pair<const char*, bool>{"checks/atc_worklist.xml", false},
+          std::pair<const char*, bool>{"checks/atc_worklist_clean.xml", true}}) {
+        INFO(fixture);
+        MockAdtSession mock;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<chkv:checkvariant/>"}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, "wl"}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture(fixture)}));
+        auto registry = MakeRegistry(mock);
+        auto result = CallTool(registry, "adt_run_atc",
+                               {{"uri", "/sap/bc/adt/oo/classes/zcl_x"},
+                                {"check_variant", "ZABAP_CLOUD_DEVELOPMENT"}});
+        CHECK_FALSE(result.is_error);
+        CHECK(ParseContent(result)["passed"] == expected);
+    }
+}
+
+TEST_CASE("adt_check_syntax: passed is false on an error; the text block stays the list",
+          "[mcp][handlers][source][passed]") {
+    for (const auto& [fixture, expected] :
+         {std::pair<const char*, bool>{"source/check_errors_inactive.xml", false},
+          std::pair<const char*, bool>{"source/check_clean.xml", true}}) {
+        INFO(fixture);
+        MockAdtSession mock;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, LoadFixture(fixture)}));
+        auto registry = MakeRegistry(mock);
+        auto result = CallTool(registry, "adt_check_syntax",
+                               {{"uri", "/sap/bc/adt/oo/classes/zcl_x/source/main"}});
+        CHECK_FALSE(result.is_error);
+        CHECK(ParseContent(result).is_array());  // unchanged for existing clients
+        REQUIRE(result.structured.is_object());
+        CHECK(result.structured["passed"] == expected);
+        CHECK(result.structured["result"].is_array());
+    }
 }
 
 TEST_CASE("adt_activate: missing uri", "[mcp][handlers][activation]") {

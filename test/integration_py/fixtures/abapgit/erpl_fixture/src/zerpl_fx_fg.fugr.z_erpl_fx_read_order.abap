@@ -1,4 +1,4 @@
-FUNCTION z_erpl_read_order.
+FUNCTION z_erpl_fx_read_order.
 *"----------------------------------------------------------------------
 *"*"Local Interface:
 *"  IMPORTING

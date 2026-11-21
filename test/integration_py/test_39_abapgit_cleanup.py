@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo" / "src"
-FILE = SRC / "zerpl_d_so_status.doma.xml"
+SRC = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture" / "src"
+FILE = SRC / "zerpl_fx_d_status.doma.xml"
 PACKAGE = "$TMP"
 
 

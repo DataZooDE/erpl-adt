@@ -3,6 +3,8 @@
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <vector>
 
@@ -70,6 +72,13 @@ struct TransportDetail {
 [[nodiscard]] Result<TransportDetail, Error> GetTransport(
     IAdtSession& session,
     const std::string& transport_number);
+
+// The JSON of `transport show` and of the MCP tool adt_show_transport - one
+// serializer, so both have the shape the docs describe (#84): number,
+// description, owner, status, target, type, tasks[] (each with its own
+// objects), objects (entries on the request itself); an object entry has
+// pgmid, type, name, description, lock_status.
+[[nodiscard]] nlohmann::json TransportDetailToJson(const TransportDetail& detail);
 
 // ---------------------------------------------------------------------------
 // CreateTransport — create a new transport request.

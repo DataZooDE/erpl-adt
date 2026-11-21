@@ -3,21 +3,20 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <TSTC>
-    <TCODE>ZERPL_ME2L</TCODE>
-    <PGMNA>ZERPL_PO_REPORT</PGMNA>
-    <DYPNO>1000</DYPNO>
-    <CINFO>gA==</CINFO>
+    <TCODE>ZERPL_FX_DYN</TCODE>
+    <PGMNA>ZERPL_FX_DIALOG</PGMNA>
+    <DYPNO>0100</DYPNO>
    </TSTC>
    <TSTCC>
-    <TCODE>ZERPL_ME2L</TCODE>
+    <TCODE>ZERPL_FX_DYN</TCODE>
     <S_WEBGUI>1</S_WEBGUI>
     <S_WIN32>X</S_WIN32>
     <S_PLATIN>X</S_PLATIN>
    </TSTCC>
    <TSTCT>
     <SPRSL>E</SPRSL>
-    <TCODE>ZERPL_ME2L</TCODE>
-    <TTEXT>Purchase Orders by Supplier</TTEXT>
+    <TCODE>ZERPL_FX_DYN</TCODE>
+    <TTEXT>Display Sales Order</TTEXT>
    </TSTCT>
   </asx:values>
  </asx:abap>

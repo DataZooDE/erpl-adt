@@ -34,7 +34,7 @@ import pytest
 
 from cli_runner import release_with_tasks
 
-FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_demo"
+FIXTURES = Path(__file__).parent / "fixtures" / "abapgit" / "erpl_fixture"
 PACKAGE = os.getenv("SAP_TRANSPORT_PACKAGE", "")
 TRAN_AUTH = os.getenv("SAP_TRAN_AUTH_OBJ", "")
 TRAN_AUTH_PACKAGE = os.getenv("SAP_TRAN_AUTH_PACKAGE", PACKAGE)
@@ -44,15 +44,15 @@ EXIT_CHECK = 8
 # locked in another request)" - a CTS conflict, unlike an edit lock (6).
 EXIT_TRANSPORT = 9
 
-# The tests deploy their own copy of the demo repository, renamed ZERPL_ ->
-# ZERPT_ (a second team's repository): the demo itself may be deployed in
+# The tests deploy their own copy of the fixture repository, renamed ZERPL_ ->
+# ZERPT_ (a second team's repository): the fixture itself may be deployed in
 # $TMP on the same system, and an object cannot live in two packages.
 def N(name):
-    """The test copy's name for a demo object name."""
+    """The test copy's name for a fixture object name."""
     return name.replace("ZERPL_", "ZERPT_").replace("Z_ERPL_", "Z_ERPT_")
 
 
-PROG = N("ZERPL_SO_DISPLAY")
+PROG = N("ZERPL_FX_DIALOG")
 
 
 def _entry(result, obj_type, name):
@@ -64,7 +64,7 @@ def _entry(result, obj_type, name):
 
 def _recorded(cli, number):
     """Every E071 entry of the request and its tasks, as (pgmid, type, name)
-    with the name's padding collapsed ("ZERPL_SO_DISPLAY 0200")."""
+    with the name's padding collapsed ("ZERPL_FX_DIALOG 0200")."""
     data = cli.run_ok("transport", "show", number)
     entries = data["objects"] + [o for t in data["tasks"] for o in t["objects"]]
     return {(o["pgmid"], o["type"], " ".join(o["name"].split())) for o in entries}
@@ -125,7 +125,7 @@ class TestTransportRecording:
 
     @pytest.fixture(scope="class")
     def ctx(self, cli, tmp_path_factory):
-        repo = _repo_copy(tmp_path_factory.mktemp("tr") / "erpl_demo")
+        repo = _repo_copy(tmp_path_factory.mktemp("tr") / "erpl_fixture")
         ctx = {"repo": repo, "requests": []}
         yield ctx
         if ctx.get("last_request"):
@@ -144,14 +144,14 @@ class TestTransportRecording:
 
         assert result.returncode == 0, result.stdout + result.stderr
         recorded = _recorded(cli, first)
-        for expected in [("R3TR", "DOMA", N("ZERPL_D_SO_STATUS")),
-                         ("R3TR", "DTEL", N("ZERPL_E_SO_STATUS")),
+        for expected in [("R3TR", "DOMA", N("ZERPL_FX_D_STATUS")),
+                         ("R3TR", "DTEL", N("ZERPL_FX_E_STATUS")),
                          ("R3TR", "PROG", PROG),
-                         ("R3TR", "PROG", N("ZERPL_PO_REPORT")),
-                         ("R3TR", "FUGR", N("ZERPL_FG")),
-                         ("R3TR", "TRAN", N("ZERPL_VA03")),
-                         ("R3TR", "TRAN", N("ZERPL_ME2L")),
-                         ("R3TR", "TRAN", N("ZERPL_SO_LIST"))]:
+                         ("R3TR", "PROG", N("ZERPL_FX_REPORT")),
+                         ("R3TR", "FUGR", N("ZERPL_FX_FG")),
+                         ("R3TR", "TRAN", N("ZERPL_FX_DYN")),
+                         ("R3TR", "TRAN", N("ZERPL_FX_REP")),
+                         ("R3TR", "TRAN", N("ZERPL_FX_PARAM"))]:
             assert expected in recorded, f"{expected} not recorded on {first}: {sorted(recorded)}"
 
     @pytest.mark.order(2)
@@ -177,7 +177,7 @@ class TestTransportRecording:
                  "START-OF-SELECTION.", "* changed (test_41)\nSTART-OF-SELECTION.")
         _replace(repo / "zerpt_d_so_status.doma.xml",
                  "</DDTEXT>", " (test_41)</DDTEXT>")
-        _replace(repo / "zerpt_va03.tran.xml",
+        _replace(repo / "zerpt_fx_dyn.tran.xml",
                  "<TTEXT>Display Sales Order</TTEXT>",
                  "<TTEXT>Display Sales Order (test_41)</TTEXT>")
         second = _new_request(cli, PACKAGE, "change")
@@ -196,16 +196,16 @@ class TestTransportRecording:
         # corrNr), DDIC objects and transactions as R3TR.
         expected = {
             ("R3TR", "PROG", PROG),
-            ("R3TR", "PROG", N("ZERPL_PO_REPORT")),
-            ("LIMU", "FUNC", N("Z_ERPL_READ_ORDER")),   # one module, not the group
-            ("R3TR", "DOMA", N("ZERPL_D_SO_STATUS")),
-            ("R3TR", "TRAN", N("ZERPL_VA03")),
+            ("R3TR", "PROG", N("ZERPL_FX_REPORT")),
+            ("LIMU", "FUNC", N("Z_ERPL_FX_READ_ORDER")),   # one module, not the group
+            ("R3TR", "DOMA", N("ZERPL_FX_D_STATUS")),
+            ("R3TR", "TRAN", N("ZERPL_FX_DYN")),
         }
         assert expected <= recorded, f"missing: {sorted(expected - recorded)}; got {sorted(recorded)}"
-        unchanged = {("R3TR", "DTEL", N("ZERPL_E_SO_STATUS")),
-                     ("R3TR", "TRAN", N("ZERPL_ME2L")),
-                     ("R3TR", "TRAN", N("ZERPL_SO_LIST")),
-                     ("R3TR", "FUGR", N("ZERPL_FG"))}
+        unchanged = {("R3TR", "DTEL", N("ZERPL_FX_E_STATUS")),
+                     ("R3TR", "TRAN", N("ZERPL_FX_REP")),
+                     ("R3TR", "TRAN", N("ZERPL_FX_PARAM")),
+                     ("R3TR", "FUGR", N("ZERPL_FX_FG"))}
         assert not unchanged & recorded, f"unchanged parts recorded: {sorted(unchanged & recorded)}"
         ctx["after_change"] = recorded
 
@@ -271,7 +271,7 @@ class TestTransportRecording:
                                        "--transport", theirs_request, "--force")
 
             assert result.returncode == EXIT_TRANSPORT, result.stdout + result.stderr
-            entry = _entry(json.loads(result.stdout), "DOMA", N("ZERPL_D_SO_STATUS"))
+            entry = _entry(json.loads(result.stdout), "DOMA", N("ZERPL_FX_D_STATUS"))
             # SAP names the task the object is locked in (TK 247), part of my request.
             mine = {ctx["second"]} | {t["number"] for t in
                                       cli.run_ok("transport", "show", ctx["second"])["tasks"]}

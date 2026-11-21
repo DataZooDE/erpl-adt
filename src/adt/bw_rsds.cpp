@@ -88,13 +88,13 @@ Result<BwRsdsDetail, Error> BwReadRsdsDetail(
     if (name.empty()) {
         return Result<BwRsdsDetail, Error>::Err(Error{
             "BwReadRsdsDetail", "", std::nullopt, "name must not be empty",
-            std::nullopt, ErrorCategory::Internal});
+            std::nullopt, ErrorCategory::Validation});
     }
     if (source_system.empty()) {
         return Result<BwRsdsDetail, Error>::Err(Error{
             "BwReadRsdsDetail", "", std::nullopt,
             "source_system must not be empty", std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
 
     auto path = BuildRsdsPath(name, source_system, version);

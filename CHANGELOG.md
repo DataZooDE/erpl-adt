@@ -10,6 +10,13 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 - **[feature]** `abapgit deploy` deploys remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`), which it
   refused before (exit 8). ADT ignores the RFC flag on create; the deploy sets it in the module's metadata under the
   lock, and clears it again when the files drop it. Update function modules stay refused.
+- **[feature]** MCP `adt_activate`, `adt_run_tests`, `adt_run_atc` and `adt_check_syntax` report `passed` - the
+  verdict the CLI turns into exit 5/7/8, from the same rules (#84). For `adt_check_syntax` the text block stays the
+  message list; the structured content is `{result, passed}`.
+- **[feature]** Invalid input - a bad flag value, a malformed transport number, an unknown `--version`, a
+  misspelled flag on a strict command - is JSON error category `validation` instead of `internal`. The exit code
+  stays 99 (#84). The strict-flag refusal is now a complete JSON error (category, exit code, escaped message).
+- **[refactor]** `transport show` and MCP `adt_show_transport` share one JSON serializer (#84).
 - **[feature]** `transport release <request>` (and MCP `adt_release_transport`) releases the logon user's open
   tasks first, then the request - SAP refuses a request whose task is still open. The released tasks are
   reported (`released_tasks`). Another user's open task stops the release before anything is released.

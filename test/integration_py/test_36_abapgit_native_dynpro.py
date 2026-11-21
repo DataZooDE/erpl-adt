@@ -14,7 +14,7 @@ module and refuses NAT_TEXTS (no workbench API writes them).
 
 Realistic case: ZERPL_SO_SPLIT, a sales order cockpit - splitter screen 0100
 with the order list (subscreen 0110) left and the items (0120) right.
-Fixture: fixtures/abapgit/erpl_native/ (a separate folder: erpl_demo is
+Fixture: fixtures/abapgit/erpl_native/ (a separate folder: erpl_fixture is
 unchanged).
 
 Independent checks: the dynpro tables (HANA, read-only: D020S generation

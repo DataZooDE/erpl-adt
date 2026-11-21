@@ -62,7 +62,7 @@ erpl-adt logout
 | 2 | Not found | 8 | ATC priority-1 finding, or a syntax error (`source check`) |
 | 3 | Clone error | 9 | Transport error |
 | 4 | Pull error | 10 | Timeout (raise `--timeout`) |
-| 5 | Activation failed | 99 | Internal error, or a refused misspelled flag on a strict command |
+| 5 | Activation failed | 99 | Internal error, or invalid input (`category: validation` in the JSON error) |
 
 5, 7 and 8 are the same with and without `--json`; with `--json` the result is still printed on stdout.
 Errors go to stderr as JSON with `--json`. `source write --activate --json` prints one object (`written`,

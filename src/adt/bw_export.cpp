@@ -577,7 +577,7 @@ Result<BwInfoareaExport, Error> BwExportInfoarea(
         return Result<BwInfoareaExport, Error>::Err(Error{
             "BwExportInfoarea", "", std::nullopt,
             "infoarea_name must not be empty",
-            std::nullopt, ErrorCategory::Internal});
+            std::nullopt, ErrorCategory::Validation});
     }
 
     BwInfoareaExport exp;

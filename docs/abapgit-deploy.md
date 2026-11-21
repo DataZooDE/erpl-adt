@@ -9,31 +9,31 @@ erpl-adt from CI — all on the same files.
 
 ```bash
 # What would change? (changes no object — use it in pull-request checks)
-erpl-adt abapgit status ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit status ./my-repo --package ZMY_APP
 
 # Create/update everything in dependency order, then activate
-erpl-adt abapgit deploy ./erpl-demo --package ZERPL_DEMO --transport A4HK900146
+erpl-adt abapgit deploy ./my-repo --package ZMY_APP --transport A4HK900146
 
 # One object only (any of its files)
-erpl-adt abapgit deploy ./erpl-demo/src/zerpl_so_display.prog.xml --package '$TMP'
+erpl-adt abapgit deploy ./my-repo/src/zmy_report.prog.xml --package '$TMP'
 
 # Pull changes made in SE51/SE41/SE93 back into git (refreshes the files in place)
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO
+erpl-adt abapgit export ./my-repo --package ZMY_APP
 
 # Pull one object back (lands in the folder of its package)
-erpl-adt abapgit export ./erpl-demo --package ZERPL_DEMO --object PROG:ZERPL_SO_DISPLAY
+erpl-adt abapgit export ./my-repo --package ZMY_APP --object PROG:ZMY_REPORT
 
 # Start a repository from objects that already exist
-erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZERPL_SO_DISPLAY,TRAN:ZERPL_VA03
+erpl-adt abapgit export ./new-repo --package '$TMP' --object PROG:ZMY_REPORT,TRAN:ZMY01
 
 # Remove what the files describe (reverse dependency order)
-erpl-adt abapgit delete ./erpl-demo --package '$TMP'
+erpl-adt abapgit delete ./my-repo --package '$TMP'
 ```
 
 `<path>` is either the root of an abapGit repository (the folder holding
 `.abapgit.xml`) or a single object file. A single file inside a repository is
 resolved through the repository scan, so its folder decides its package
-(`src/sub/zfoo.prog.xml` → `ZERPL_DEMO_SUB`) and the ignore list applies;
+(`src/sub/zfoo.prog.xml` → `ZMY_APP_SUB`) and the ignore list applies;
 outside a repository, `--package` is used. All commands accept `--json`.
 Flags are checked strictly (as for every destructive command, see
 [cli-usage.md](cli-usage.md#unknown-flags)): an unknown flag such as `--dryrun` fails with exit
@@ -281,7 +281,7 @@ entry afterwards.
   program) are reported as `skipped: dependency DOMA X failed` and not
   attempted; `status` shows the same.
 * **Progress** — on a terminal (and without `--json`) deploy and delete print
-  one line per object to stderr: `[3/8] updating PROG ZERPL_SO_DISPLAY`.
+  one line per object to stderr: `[3/8] updating PROG ZMY_REPORT`.
 * **Export** — a refresh writes every object back into the folder it was
   scanned from; `--object` writes into the folder of the object's package
   (TADIR, mapped with the repository's folder logic) and refuses objects of
@@ -353,6 +353,18 @@ When several objects fail, the most severe category decides the exit code:
 1 > 99 > 10 > 9 > 6 > 5 > 8 > 2 — environment and guard-rail problems first,
 then problems that need a human (CTS, someone else's lock or change), then
 problems in the code being deployed.
+
+## Demo repository
+
+[DataZooDE/erpl-sap-demo](https://github.com/DataZooDE/erpl-sap-demo) (private) is the largest user of
+`abapgit deploy`: an S/4-shaped demo company on the ABAP trial (Z mirror tables, a data generator) with about 50
+look-alikes of SAP transactions (VA03, ME23N, MD04, COOIS, FBL5N, ...) and RFC-enabled BAPI mirrors. It does not
+check in abapGit files: it compiles screen specs and function group specs into them, byte for byte as SAP exports
+them, and deploys the result with `abapgit deploy` (then `--verify`: a second deploy must report every object
+unchanged).
+
+The live tests of erpl-adt itself deploy a separate small fixture (`test/integration_py/fixtures/abapgit/erpl_fixture`,
+objects `ZERPL_FX_*`), so the demo and the tests can share a system.
 
 ## Limitations
 

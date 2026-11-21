@@ -57,8 +57,10 @@ json RunTestsSchema() {
                 {"total_failed", Int("Number of methods that failed")},
                 {"total_skipped", Int("Number of methods skipped")},
                 {"all_passed", Bool("True when nothing failed")},
+                {"passed", Bool("The verdict: true when no test method failed (the CLI exits 7 "
+                                "otherwise)")},
                 {"classes", ArrayOf(test_class, "Per-class results")}},
-               {"total_methods", "total_failed", "all_passed", "classes"});
+               {"total_methods", "total_failed", "all_passed", "passed", "classes"});
 }
 
 // -- adt_run_atc ------------------------------------------------------------
@@ -70,10 +72,12 @@ json RunAtcSchema() {
                               {"message_title", Str("Short message title")}},
                              {"uri", "message", "priority"});
     return Obj({{"worklist_id", Str("ATC worklist this run created")},
+                {"variant", Str("The check variant that ran")},
                 {"error_count", Int("Findings of error severity")},
                 {"warning_count", Int("Findings of warning severity")},
+                {"passed", Bool("The verdict: false on a priority-1 finding (the CLI exits 8)")},
                 {"findings", ArrayOf(finding, "All findings from the run")}},
-               {"error_count", "warning_count", "findings"});
+               {"error_count", "warning_count", "passed", "findings"});
 }
 
 // -- adt_check_syntax -------------------------------------------------------
@@ -86,8 +90,10 @@ json CheckSyntaxSchema() {
                               {"line", Int("1-based line number")},
                               {"offset", Int("Column offset within the line")}},
                              {"type", "text", "line"});
-    return Obj({{"result", ArrayOf(message, "Syntax messages; empty when the object is clean")}},
-               {"result"});
+    return Obj({{"result", ArrayOf(message, "Syntax messages; empty when the object is clean")},
+                {"passed", Bool("The verdict: false on a message of type E, A or X (the CLI "
+                                "exits 8)")}},
+               {"result", "passed"});
 }
 
 // -- adt_read_table ---------------------------------------------------------
