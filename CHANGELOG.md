@@ -5,6 +5,8 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** `object create --type TABL/DS` creates dictionary structures (then `source write` the `define structure`
+  source, as for TABL/DT); BAPI-like function module interfaces need them.
 - **[feature]** `abapgit deploy` deploys remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`), which it
   refused before (exit 8). ADT ignores the RFC flag on create; the deploy sets it in the module's metadata under the
   lock, and clears it again when the files drop it. Update function modules stay refused.

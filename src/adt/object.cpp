@@ -90,6 +90,7 @@ const ObjectTypeInfo kObjectTypes[] = {
     {"DEVC/K",   "packages",             "pak:package",                "http://www.sap.com/adt/packages",              "pak"},
     {"DDLS/DF",  "ddic/ddl/sources",      "ddl:ddlSource",              "http://www.sap.com/adt/ddic/ddlsources",       "ddl"},
     {"TABL/DT",  "ddic/tables",          "blue:blueSource",            "http://www.sap.com/wbobj/blue",                "blue"},
+    {"TABL/DS",  "ddic/structures",      "blue:blueSource",            "http://www.sap.com/wbobj/blue",                "blue", "application/vnd.sap.adt.structures.v2+xml"},
     {"DTEL/DE",  "ddic/dataelements",    "blue:wbobj",                 "http://www.sap.com/adt/ddic/dataelements",     "blue"},
     {"MSAG/N",   "messageclass",         "mc:messageClass",            "http://www.sap.com/adt/messageclass",          "mc"},
 };
