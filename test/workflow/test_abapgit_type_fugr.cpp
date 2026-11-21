@@ -669,10 +669,13 @@ TEST_CASE("DOMA handler: a fixed value text over 60 characters is refused",
 // Crew F7: the other limits, one past each.
 TEST_CASE("DTEL and DOMA handlers: each text limit, at and past it", "[workflow][abapgit_dtel][text_limits]") {
     auto handlers = DefaultTypeHandlers();
-    for (const auto& [field, limit] : {std::pair<const char*, size_t>{"DDTEXT", 60},
-                                       std::pair<const char*, size_t>{"REPTEXT", 55},
-                                       std::pair<const char*, size_t>{"SCRTEXT_M", 20},
-                                       std::pair<const char*, size_t>{"SCRTEXT_L", 40}}) {
+    for (const auto& rule : {std::pair<const char*, size_t>{"DDTEXT", 60},
+                             std::pair<const char*, size_t>{"REPTEXT", 55},
+                             std::pair<const char*, size_t>{"SCRTEXT_M", 20},
+                             std::pair<const char*, size_t>{"SCRTEXT_L", 40}}) {
+        // Not a structured binding: a lambda below captures them (C++17).
+        const char* field = rule.first;
+        const size_t limit = rule.second;
         INFO(field);
         auto with = [&](size_t n) {
             return OneXml("zerpl_fx_e.dtel.xml", "LCL_OBJECT_DTEL",
