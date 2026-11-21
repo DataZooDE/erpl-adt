@@ -58,6 +58,12 @@ with `search … --type` (or `source read --type`) and pass the URI.
 10. **Find where an activation error is.** `--json activate` lists the texts without object or line (#90);
     `--json source check <name> --version inactive` returns `line`, `offset` and the include in `uri`
     (`.../includes/testclasses#start=70,4`) for each error — run it on each failed class.
+11. **Keep short texts within SAP's field lengths.** A function group text (`AREAT`) holds 40 characters: a longer
+    one is cut on create, and every later `abapgit deploy` of the same files is refused ("changing the short text
+    ... is not supported"); only deleting the group helps (#92). Function module texts: 74.
+12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write
+    /sap/bc/adt/ddic/structures/<name>/source/main` with a `define structure` source and `--activate`. RFC modules
+    pass everything by value and need dictionary types (no local types, no `TYPE REF TO`).
 
 ## Find
 
