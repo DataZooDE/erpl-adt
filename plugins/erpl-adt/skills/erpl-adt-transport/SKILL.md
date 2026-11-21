@@ -14,6 +14,8 @@ user-invocable: false
 
 1. **Releasing is irreversible.** A released request is exported to the transport directory; show its
    contents with `transport show` and confirm them with the user first (`/erpl-adt:release` does this).
+   `transport release` releases the user's own open tasks first (`released_tasks`); another user's open
+   task stops it before anything is released.
 2. **`$TMP` is local** — objects there cannot be transported. Use a transportable package for anything that
    should move.
 3. **Exit code 9** is a transport error (missing request, wrong owner, request already released).

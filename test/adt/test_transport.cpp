@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <string>
 
 using namespace erpl_adt;
@@ -35,6 +36,24 @@ void EnqueueListTransportsResponses(MockAdtSession& mock,
                                     const std::string& transports_xml) {
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, configs_xml}));
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, transports_xml}));
+}
+
+
+// A real request answer (transport_show.xml, A4HK900156) renumbered and
+// without its task: what GetTransport reads before a release.
+std::string RequestWithoutTasks(const std::string& number) {
+    auto xml = LoadFixture("transport/transport_show.xml");
+    const auto start = xml.find("<tm:task ");
+    const auto end = xml.find("</tm:task>", start) + std::string("</tm:task>").size();
+    xml.erase(start, end - start);
+    for (std::size_t pos; (pos = xml.find("A4HK900156")) != std::string::npos;) {
+        xml.replace(pos, 10, number);
+    }
+    return xml;
+}
+
+void EnqueueRequestWithoutTasks(MockAdtSession& mock, const std::string& number) {
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, RequestWithoutTasks(number)}));
 }
 
 } // anonymous namespace
@@ -207,8 +226,7 @@ TEST_CASE("CreateTransport: HTTP error propagated", "[adt][transport]") {
 
 TEST_CASE("ReleaseTransport: sends POST to release endpoint", "[adt][transport]") {
     MockAdtSession mock;
-    // The call probes that the object exists before acting.
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "NPLK900001");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900001");
@@ -221,8 +239,7 @@ TEST_CASE("ReleaseTransport: sends POST to release endpoint", "[adt][transport]"
 
 TEST_CASE("ReleaseTransport: accepts 204", "[adt][transport]") {
     MockAdtSession mock;
-    // The call probes that the object exists before acting.
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "NPLK900002");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({204, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900002");
@@ -231,8 +248,7 @@ TEST_CASE("ReleaseTransport: accepts 204", "[adt][transport]") {
 
 TEST_CASE("ReleaseTransport: unexpected status returns error", "[adt][transport]") {
     MockAdtSession mock;
-    // The call probes that the object exists before acting.
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "NPLK900001");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok({409, {}, ""}));
 
     auto result = ReleaseTransport(mock, "NPLK900001");
@@ -242,8 +258,7 @@ TEST_CASE("ReleaseTransport: unexpected status returns error", "[adt][transport]
 
 TEST_CASE("ReleaseTransport: HTTP error propagated", "[adt][transport]") {
     MockAdtSession mock;
-    // The call probes that the object exists before acting.
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "NPLK900001");
     mock.EnqueuePost(Result<HttpResponse, Error>::Err(
         Error{"Post", "", std::nullopt, "connection refused", std::nullopt}));
 
@@ -272,7 +287,7 @@ TEST_CASE("ReleaseTransport: a missing transport is not reported as released",
 // refused (#72; all three answers captured from A4H).
 TEST_CASE("ReleaseTransport: a released task is success", "[adt][transport]") {
     MockAdtSession mock;
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "A4HK900227");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_task_released.xml")}));
 
@@ -283,7 +298,7 @@ TEST_CASE("ReleaseTransport: a released task is success", "[adt][transport]") {
 TEST_CASE("ReleaseTransport: a refused release is a transport error with SAP's reason",
           "[adt][transport]") {
     MockAdtSession mock;
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "A4HK900226");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_task_not_released.xml")}));
 
@@ -298,7 +313,7 @@ TEST_CASE("ReleaseTransport: a refused release is a transport error with SAP's r
 TEST_CASE("ReleaseTransport: an export failure is not reported as released",
           "[adt][transport]") {
     MockAdtSession mock;
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+    EnqueueRequestWithoutTasks(mock, "A4HK900226");
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_pre_export_error.xml")}));
 
@@ -317,7 +332,7 @@ TEST_CASE("ReleaseTransport: an unreadable release answer is not reported as rel
                              "<tm:root xmlns:tm=\"http://www.sap.com/cts/adt/tm\"/>"}) {
         INFO(body);
         MockAdtSession mock;
-        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
+        EnqueueRequestWithoutTasks(mock, "A4HK900226");
         mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, body}));
 
         auto result = ReleaseTransport(mock, "A4HK900226");
@@ -325,6 +340,84 @@ TEST_CASE("ReleaseTransport: an unreadable release answer is not reported as rel
         CHECK(result.Error().category == ErrorCategory::TransportError);
         CHECK(result.Error().message.find("transport show A4HK900226") != std::string::npos);
     }
+}
+
+// A request is released with its tasks: SAP refuses a request whose task is
+// still open ("Referencing task ... not yet released"). The logon user's own
+// open tasks are released first; another user's open task stops the release
+// before anything is released - releasing cannot be undone, and only the
+// task's owner may release it.
+TEST_CASE("ReleaseTransport: own open tasks are released first, then the request",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("developer");  // compared case-insensitively
+    // Captured from A4H: request A4HK900156 with its open task A4HK900157.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900156");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().released_tasks == std::vector<std::string>{"A4HK900157"});
+    REQUIRE(mock.PostCallCount() == 2);
+    CHECK(mock.PostCalls()[0].path ==
+          "/sap/bc/adt/cts/transportrequests/A4HK900157/newreleasejobs");
+    CHECK(mock.PostCalls()[1].path ==
+          "/sap/bc/adt/cts/transportrequests/A4HK900156/newreleasejobs");
+}
+
+TEST_CASE("ReleaseTransport: another user's open task stops it before anything is released",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("DEVELOPER");
+    auto xml = LoadFixture("transport/transport_show.xml");
+    const auto task = xml.find("<tm:task ");
+    const auto owner = xml.find("tm:owner=\"DEVELOPER\"", task);
+    REQUIRE(owner != std::string::npos);
+    xml.replace(owner, std::string("tm:owner=\"DEVELOPER\"").size(), "tm:owner=\"BWDEVELOPER\"");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
+
+    auto result = ReleaseTransport(mock, "A4HK900156");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::TransportError);
+    CHECK(result.Error().message.find("A4HK900157") != std::string::npos);
+    CHECK(result.Error().message.find("BWDEVELOPER") != std::string::npos);
+    CHECK(mock.PostCallCount() == 0);
+}
+
+TEST_CASE("ReleaseTransport: a task that does not release stops before the request",
+          "[adt][transport]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("DEVELOPER");
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_not_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900156");
+    REQUIRE(result.IsErr());
+    CHECK(result.Error().category == ErrorCategory::TransportError);
+    CHECK(mock.PostCallCount() == 1);  // the request was not attempted
+}
+
+TEST_CASE("ReleaseTransport: a task number releases just that task", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("DEVELOPER");
+    // Captured from A4H: asked for the task, SAP answers with it beside its request.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_task.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900157");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().released_tasks.empty());
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path ==
+          "/sap/bc/adt/cts/transportrequests/A4HK900157/newreleasejobs");
 }
 
 // ===========================================================================

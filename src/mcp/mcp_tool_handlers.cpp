@@ -848,6 +848,9 @@ ToolResult HandleReleaseTransport(IAdtSession& session,
     nlohmann::json j;
     j["released"] = true;
     j["transport_number"] = *number;
+    // The logon user's open tasks, released first (SAP releases a request
+    // only after its tasks).
+    j["released_tasks"] = result.Value().released_tasks;
     return MakeOkResult(j);
 }
 
@@ -1173,7 +1176,10 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
 
     registry.Register(
         "adt_release_transport",
-        "Release a transport request for import.",
+        "Release a transport request for import - cannot be undone; review it "
+        "with adt_show_transport first. The logon user's open tasks are released "
+        "first (released_tasks); another user's open task stops it before "
+        "anything is released.",
         MakeSchema(
             {{"transport_number", StringProp("Transport number (e.g., NPLK900001)")}},
             {"transport_number"}),

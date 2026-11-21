@@ -2765,6 +2765,20 @@ int HandleTransportRelease(const CommandArgs& args) {
         return result.Error().ExitCode();
     }
 
+    // The logon user's open tasks went first: SAP releases a request only
+    // after its tasks.
+    const auto& tasks = result.Value().released_tasks;
+    if (fmt.IsJsonMode()) {
+        nlohmann::json j = {{"success", true},
+                            {"message", "Released transport: " + args.positional[0]},
+                            {"transport_number", args.positional[0]},
+                            {"released_tasks", tasks}};
+        fmt.PrintJson(j.dump());
+        return 0;
+    }
+    for (const auto& task : tasks) {
+        fmt.PrintSuccess("Released task: " + task);
+    }
     fmt.PrintSuccess("Released transport: " + args.positional[0]);
     return 0;
 }
@@ -8553,7 +8567,12 @@ void RegisterAllCommands(CommandRouter& router) {
         CommandHelp help;
         help.usage = "erpl-adt transport release <number>";
         help.args_description = "<number>    Transport number";
-        help.long_description = "Exit code 9 indicates release failure.";
+        help.long_description =
+            "Releasing cannot be undone: review the request first with "
+            "`erpl-adt transport show <number>`. A request is released with its "
+            "tasks, as SAP requires: your own open tasks are released first, then "
+            "the request. Another user's open task stops it before anything is "
+            "released. Exit code 9 is a release SAP refused (its reason is shown).";
         help.examples = {
             "erpl-adt transport release NPLK900001",
         };
