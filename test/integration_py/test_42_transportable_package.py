@@ -47,10 +47,18 @@ class TestTransportablePackage:
                        "--transport", request)
             assert ("R3TR", "CLAS", clas) in _entries(cli, request)
 
-            # Its task is still open. SAP releases a request only after its
+            # The new class is still inactive: SAP refuses to release its task,
+            # erpl-adt says why (exit 9), and nothing is released.
+            task = cli.run_ok("transport", "show", request)["tasks"][0]["number"]
+            refused = cli.run("transport", "release", request)
+            assert refused.returncode == 9, refused.stdout + refused.stderr
+            assert "is inactive" in refused.stderr, refused.stderr
+            assert cli.run_ok("transport", "show", request)["tasks"][0]["status"] == "modifiable"
+
+            # Activated, it releases. SAP releases a request only after its
             # tasks, so `transport release` releases my open task first, then
             # the request - and says so.
-            task = cli.run_ok("transport", "show", request)["tasks"][0]["number"]
+            cli.run_ok("activate", f"/sap/bc/adt/oo/classes/{clas.lower()}")
             release = cli.run("transport", "release", request)
             if release.returncode == 0:
                 assert task in json.loads(release.stdout)["released_tasks"], release.stdout

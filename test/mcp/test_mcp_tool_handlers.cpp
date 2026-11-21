@@ -940,17 +940,25 @@ TEST_CASE("adt_create_transport: missing params", "[mcp][handlers][transport]") 
 
 TEST_CASE("adt_release_transport: happy path", "[mcp][handlers][transport]") {
     MockAdtSession mock;
-    // The call probes that the object exists before acting.
-    mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<obj/>"}));
-    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("token123"));
-    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    mock.SetLogonUserName("DEVELOPER");
+    // Captured from A4H: request A4HK900220 with the user's open task
+    // A4HK900221 (holding a package), released first, then the request.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_locked.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
     auto registry = MakeRegistry(mock);
 
     auto result = CallTool(registry, "adt_release_transport",
-                           {{"transport_number", "NPLK900001"}});
+                           {{"transport_number", "A4HK900220"}});
+    CHECK_FALSE(result.is_error);
     auto j = ParseContent(result);
     CHECK(j["released"] == true);
-    CHECK(j["transport_number"] == "NPLK900001");
+    CHECK(j["transport_number"] == "A4HK900220");
+    REQUIRE(j["released_tasks"].size() == 1);
+    CHECK(j["released_tasks"][0] == "A4HK900221");
 }
 
 TEST_CASE("adt_release_transport: missing transport_number", "[mcp][handlers][transport]") {

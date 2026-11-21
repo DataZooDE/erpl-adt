@@ -351,21 +351,42 @@ TEST_CASE("ReleaseTransport: own open tasks are released first, then the request
           "[adt][transport]") {
     MockAdtSession mock;
     mock.SetLogonUserName("developer");  // compared case-insensitively
-    // Captured from A4H: request A4HK900156 with its open task A4HK900157.
+    // Captured from A4H: request A4HK900220 with its open task A4HK900221,
+    // which holds the package ZERPL_TR.
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
-        {200, {}, LoadFixture("transport/transport_show.xml")}));
+        {200, {}, LoadFixture("transport/transport_show_locked.xml")}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_task_released.xml")}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_task_released.xml")}));
 
-    auto result = ReleaseTransport(mock, "A4HK900156");
+    auto result = ReleaseTransport(mock, "A4HK900220");
     REQUIRE(result.IsOk());
-    CHECK(result.Value().released_tasks == std::vector<std::string>{"A4HK900157"});
+    CHECK(result.Value().released_tasks == std::vector<std::string>{"A4HK900221"});
     REQUIRE(mock.PostCallCount() == 2);
     CHECK(mock.PostCalls()[0].path ==
-          "/sap/bc/adt/cts/transportrequests/A4HK900157/newreleasejobs");
+          "/sap/bc/adt/cts/transportrequests/A4HK900221/newreleasejobs");
     CHECK(mock.PostCalls()[1].path ==
+          "/sap/bc/adt/cts/transportrequests/A4HK900220/newreleasejobs");
+}
+
+// An empty task is "unclassified" and cannot be released ("Task ... is
+// unclassified (it cannot be released)", measured on A4H); SAP drops it when
+// the request is released. It is neither released first nor a blocker.
+TEST_CASE("ReleaseTransport: an empty task is left to SAP", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.SetLogonUserName("DEVELOPER");
+    // Captured from A4H: request A4HK900156, its task A4HK900157 empty.
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show.xml")}));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/release_task_released.xml")}));
+
+    auto result = ReleaseTransport(mock, "A4HK900156");
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().released_tasks.empty());
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path ==
           "/sap/bc/adt/cts/transportrequests/A4HK900156/newreleasejobs");
 }
 
@@ -373,17 +394,17 @@ TEST_CASE("ReleaseTransport: another user's open task stops it before anything i
           "[adt][transport]") {
     MockAdtSession mock;
     mock.SetLogonUserName("DEVELOPER");
-    auto xml = LoadFixture("transport/transport_show.xml");
+    auto xml = LoadFixture("transport/transport_show_locked.xml");
     const auto task = xml.find("<tm:task ");
     const auto owner = xml.find("tm:owner=\"DEVELOPER\"", task);
     REQUIRE(owner != std::string::npos);
     xml.replace(owner, std::string("tm:owner=\"DEVELOPER\"").size(), "tm:owner=\"BWDEVELOPER\"");
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, xml}));
 
-    auto result = ReleaseTransport(mock, "A4HK900156");
+    auto result = ReleaseTransport(mock, "A4HK900220");
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::TransportError);
-    CHECK(result.Error().message.find("A4HK900157") != std::string::npos);
+    CHECK(result.Error().message.find("A4HK900221") != std::string::npos);
     CHECK(result.Error().message.find("BWDEVELOPER") != std::string::npos);
     CHECK(mock.PostCallCount() == 0);
 }
@@ -393,11 +414,11 @@ TEST_CASE("ReleaseTransport: a task that does not release stops before the reque
     MockAdtSession mock;
     mock.SetLogonUserName("DEVELOPER");
     mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
-        {200, {}, LoadFixture("transport/transport_show.xml")}));
+        {200, {}, LoadFixture("transport/transport_show_locked.xml")}));
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
         {200, {}, LoadFixture("transport/release_task_not_released.xml")}));
 
-    auto result = ReleaseTransport(mock, "A4HK900156");
+    auto result = ReleaseTransport(mock, "A4HK900220");
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::TransportError);
     CHECK(mock.PostCallCount() == 1);  // the request was not attempted

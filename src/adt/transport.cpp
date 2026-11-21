@@ -484,6 +484,10 @@ Result<ReleaseOutcome, Error> ReleaseTransport(
     std::vector<std::string> own;
     for (const auto& task : tr.tasks) {
         if (task.status != "modifiable") continue;
+        // An empty task is unclassified and cannot be released ("Task ... is
+        // unclassified (it cannot be released)"); SAP drops it when the
+        // request is released. Neither release it first nor let it block.
+        if (task.objects.empty()) continue;
         if (UpperAscii(task.owner) != me) {
             return Result<ReleaseOutcome, Error>::Err(Error{
                 "ReleaseTransport", "/sap/bc/adt/cts/transportrequests/" + tr.number,
