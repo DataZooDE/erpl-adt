@@ -46,6 +46,12 @@ with `search … --type` (or `source read --type`) and pass the URI.
    it is set by PUTting the module's metadata under the lock (what Eclipse's properties view does).
    `abapgit deploy` does this for function modules with `<REMOTE_CALL>R</REMOTE_CALL>`; an RFC module's
    parameters must be passed by value.
+9. **Generated ABAP: what activation refuses on A4H** (SAP names one problem per round, so check before writing):
+   method and other names longer than 30 characters; `<word>` in an ABAP Doc comment (`"! ...`) — it is
+   parsed as an HTML tag; offset/length access on `STRING` variables in assignments (`result = result(35)`;
+   use `substring( )`); `regex =` (POSIX is deprecated; use `pcre =`). A class's `testclasses` section is
+   written with `source write <class-uri> --section testclasses`; write every class first and activate them in
+   one `activate <uri>...` call, so classes that use each other activate together.
 
 ## Find
 
