@@ -164,18 +164,18 @@ class TestTransportRecording:
     @pytest.mark.order(3)
     def test_a_change_records_exactly_the_changed_parts(self, cli, ctx):
         repo = ctx["repo"] / "src"
-        _replace(repo / "zerpt_so_display.prog.screen_0200.abap",
+        _replace(repo / "zerpt_fx_dialog.prog.screen_0200.abap",
                  "PROCESS AFTER INPUT.", "PROCESS AFTER INPUT.\n* changed (test_41)")
-        prog_xml = repo / "zerpt_so_display.prog.xml"
+        prog_xml = repo / "zerpt_fx_dialog.prog.xml"
         _replace(prog_xml, "<TEXT>Sales Order</TEXT>",          # a GUI title (CUA)
                  "<TEXT>Sales Order (test_41)</TEXT>")
         _replace(prog_xml, "<ENTRY>Customer</ENTRY>",            # a text symbol (TPOOL)
                  "<ENTRY>Customer (test_41)</ENTRY>")
-        _replace(repo / "zerpt_fg.fugr.z_erpt_read_order.abap",
-                 "FUNCTION z_erpt_read_order.", "FUNCTION z_erpt_read_order.\n* changed (test_41)")
-        _replace(repo / "zerpt_po_report.prog.abap",
+        _replace(repo / "zerpt_fx_fg.fugr.z_erpt_fx_read_order.abap",
+                 "FUNCTION z_erpt_fx_read_order.", "FUNCTION z_erpt_fx_read_order.\n* changed (test_41)")
+        _replace(repo / "zerpt_fx_report.prog.abap",
                  "START-OF-SELECTION.", "* changed (test_41)\nSTART-OF-SELECTION.")
-        _replace(repo / "zerpt_d_so_status.doma.xml",
+        _replace(repo / "zerpt_fx_d_status.doma.xml",
                  "</DDTEXT>", " (test_41)</DDTEXT>")
         _replace(repo / "zerpt_fx_dyn.tran.xml",
                  "<TTEXT>Display Sales Order</TTEXT>",
@@ -219,13 +219,13 @@ class TestTransportRecording:
     @pytest.mark.order(5)
     def test_a_deleted_screen_is_recorded(self, cli, ctx):
         repo = ctx["repo"] / "src"
-        xml = repo / "zerpt_so_display.prog.xml"
+        xml = repo / "zerpt_fx_dialog.prog.xml"
         content = xml.read_text(encoding="utf-8")
-        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPT_SO_DISPLAY</PROGRAM>\n"
+        start = content.index("<item>\n     <HEADER>\n      <PROGRAM>ZERPT_FX_DIALOG</PROGRAM>\n"
                               "      <SCREEN>0300</SCREEN>")
         end = content.index("    </item>\n", start) + len("    </item>\n")
         xml.write_text(content[:start] + content[end:].lstrip(" "), encoding="utf-8")
-        (repo / "zerpt_so_display.prog.screen_0300.abap").unlink()
+        (repo / "zerpt_fx_dialog.prog.screen_0300.abap").unlink()
 
         result = cli.run("abapgit", "deploy", str(ctx["repo"]), "--package", PACKAGE,
                          "--transport", ctx["second"], "--force")
@@ -240,7 +240,7 @@ class TestTransportRecording:
 
     @pytest.mark.order(6)
     def test_a_released_request_is_refused(self, cli, ctx):
-        _replace(ctx["repo"] / "src" / "zerpt_d_so_status.doma.xml",
+        _replace(ctx["repo"] / "src" / "zerpt_fx_d_status.doma.xml",
                  " (test_41)</DDTEXT>", " (test_41 b)</DDTEXT>")
         result = cli.run("abapgit", "deploy", str(ctx["repo"]), "--package", PACKAGE,
                          "--transport", ctx["first"])
@@ -264,7 +264,7 @@ class TestTransportRecording:
         theirs_request = _new_request(colleague_cli, PACKAGE, "colleague")
         try:
             theirs = _repo_copy(tmp_path / "theirs")
-            domain = theirs / "src" / "zerpt_d_so_status.doma.xml"
+            domain = theirs / "src" / "zerpt_fx_d_status.doma.xml"
             _replace(domain, "</DDTEXT>", " (colleague)</DDTEXT>")
 
             result = colleague_cli.run("abapgit", "deploy", str(domain), "--package", PACKAGE,
