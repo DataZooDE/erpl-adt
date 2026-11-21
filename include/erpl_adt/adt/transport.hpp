@@ -83,11 +83,20 @@ struct TransportDetail {
     const std::string& target_package);
 
 // ---------------------------------------------------------------------------
-// ReleaseTransport — release a transport request.
+// ReleaseTransport — release a transport request (or a task).
 //
 // Endpoint: POST /sap/bc/adt/cts/transportrequests/{number}/newreleasejobs
+// A request is released with its tasks, as SAP requires (a task without
+// objects is left to SAP, which drops it): the logon user's
+// open tasks are released first, then the request. Another user's open task
+// stops it before anything is released (only its owner may release it).
+// Every step's release report is checked; the first failure stops.
 // ---------------------------------------------------------------------------
-[[nodiscard]] Result<void, Error> ReleaseTransport(
+struct ReleaseOutcome {
+    std::vector<std::string> released_tasks;  // the own tasks released first
+};
+
+[[nodiscard]] Result<ReleaseOutcome, Error> ReleaseTransport(
     IAdtSession& session,
     const std::string& transport_number);
 

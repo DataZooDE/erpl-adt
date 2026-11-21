@@ -5,6 +5,11 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** `transport release <request>` (and MCP `adt_release_transport`) releases the logon user's open
+  tasks first, then the request - SAP refuses a request whose task is still open. The released tasks are
+  reported (`released_tasks`). Another user's open task stops the release before anything is released.
+- **[docs]** `docs/abapgit-deploy.md`: a part erpl-adt cannot write is reported as `failed` with category `check`
+  (exit 8), as the JSON says; `refused` is the word for drift, guard rails and namespaces.
 - **[fix]** The MCP HTTP server (`mcp --http`, `catalog webui`) read request bodies without a limit - since a
   refused request is read to its end before its 403, a page on any origin could make it buffer an unbounded
   body. Bodies are limited to 16 MB (HTTP 413 above).

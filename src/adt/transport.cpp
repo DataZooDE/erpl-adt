@@ -9,6 +9,8 @@
 #include <tinyxml2.h>
 
 #include <optional>
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace erpl_adt {
@@ -435,43 +437,88 @@ Result<std::string, Error> CreateTransport(
 // ---------------------------------------------------------------------------
 // ReleaseTransport
 // ---------------------------------------------------------------------------
-Result<void, Error> ReleaseTransport(
-    IAdtSession& session,
-    const std::string& transport_number) {
-    const auto transport_uri =
-        "/sap/bc/adt/cts/transportrequests/" + transport_number;
+namespace {
 
-    // Releasing a transport that does not exist answered HTTP 200 with an
-    // empty body, and the CLI said "Released transport: X" — a claim about a
-    // one-way operation that had not happened. The release is a job the
-    // backend accepts without validating the number, so check the transport
-    // first.
-    if (auto missing = EnsureObjectExists(session, transport_uri,
-                                          "ReleaseTransport",
-                                          "Transport " + transport_number);
-        missing.IsErr()) {
-        return Result<void, Error>::Err(std::move(missing).Error());
-    }
-
-    auto url = transport_uri + "/newreleasejobs";
-
+// One release job, its report checked: HTTP 200 either way, the outcome is
+// the report (see ReleaseFailure).
+Result<void, Error> ReleaseOne(IAdtSession& session, const std::string& number) {
+    const auto url = "/sap/bc/adt/cts/transportrequests/" + number + "/newreleasejobs";
     auto response = session.Post(url, "", "application/xml");
     if (response.IsErr()) {
         return Result<void, Error>::Err(std::move(response).Error());
     }
-
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
         return Result<void, Error>::Err(
             Error::FromHttpStatus("ReleaseTransport", url, http.status_code, http.body));
     }
-    if (auto failure = ReleaseFailure(http.body, transport_number)) {
+    if (auto failure = ReleaseFailure(http.body, number)) {
         return Result<void, Error>::Err(Error{
             "ReleaseTransport", url, http.status_code, *failure, std::nullopt,
             ErrorCategory::TransportError});
     }
-
     return Result<void, Error>::Ok();
+}
+
+std::string UpperAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return s;
+}
+
+} // namespace
+
+Result<ReleaseOutcome, Error> ReleaseTransport(
+    IAdtSession& session,
+    const std::string& transport_number) {
+    // Read the request first: it must exist (a release job for an unknown
+    // number was accepted and reported as released), and SAP releases a
+    // request only after its tasks.
+    auto detail = GetTransport(session, transport_number);
+    if (detail.IsErr()) {
+        return Result<ReleaseOutcome, Error>::Err(std::move(detail).Error());
+    }
+    const auto& tr = detail.Value();
+
+    const auto me = UpperAscii(session.LogonUserName());
+    std::vector<std::string> own;
+    for (const auto& task : tr.tasks) {
+        if (task.status != "modifiable") continue;
+        // An empty task is unclassified and cannot be released ("Task ... is
+        // unclassified (it cannot be released)"); SAP drops it when the
+        // request is released. Neither release it first nor let it block.
+        if (task.objects.empty()) continue;
+        if (UpperAscii(task.owner) != me) {
+            return Result<ReleaseOutcome, Error>::Err(Error{
+                "ReleaseTransport", "/sap/bc/adt/cts/transportrequests/" + tr.number,
+                std::nullopt,
+                "Task " + task.number + " of " + task.owner + " is still open; only its "
+                "owner can release it. Nothing was released.",
+                std::nullopt, ErrorCategory::TransportError});
+        }
+        own.push_back(task.number);
+    }
+
+    ReleaseOutcome outcome;
+    // A failure after a task was released says so: that step is done.
+    const auto failed = [&outcome](Error err) {
+        if (!outcome.released_tasks.empty()) {
+            std::string done;
+            for (const auto& t : outcome.released_tasks) done += (done.empty() ? "" : ", ") + t;
+            err.message += " (tasks already released: " + done + ")";
+        }
+        return Result<ReleaseOutcome, Error>::Err(std::move(err));
+    };
+    for (const auto& task : own) {
+        if (auto released = ReleaseOne(session, task); released.IsErr()) {
+            return failed(std::move(released).Error());
+        }
+        outcome.released_tasks.push_back(task);
+    }
+    if (auto released = ReleaseOne(session, tr.number); released.IsErr()) {
+        return failed(std::move(released).Error());
+    }
+    return Result<ReleaseOutcome, Error>::Ok(std::move(outcome));
 }
 
 // ---------------------------------------------------------------------------

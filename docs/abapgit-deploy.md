@@ -271,7 +271,11 @@ entry afterwards.
   `action` (`created`, `updated`, `unchanged`, `deleted`, `missing`,
   `exported`, `failed`, `refused`, `skipped`), the written `parts`, SAP's
   `message`, `notes`, and for failures `category` and `exit_code`; the
-  top-level `exit_code` is the command's exit code.
+  top-level `exit_code` is the command's exit code. A part erpl-adt cannot
+  write (see *Limitations*) is `failed` with category `check` (exit 8),
+  decided before anything is written; `refused` is the deploy's word for drift,
+  guard rails (a transportable package without `--transport`, SAP objects) and
+  namespaces.
 * **Failures in dependency order** — when an object fails or is refused,
   later objects whose files name it (a data element's domain, a transaction's
   program) are reported as `skipped: dependency DOMA X failed` and not
@@ -371,7 +375,8 @@ problems in the code being deployed.
   files does not remove it from the system (as in abapGit).
 * Report variants: only system variants (`SAP&…`, `CUS&…`; client 000,
   transported with the program) — abapGit's `VARIS` holds no others, and a
-  user variant in the file is refused (exit 8). Variants are written after the
+  user variant in the file fails before anything is written (`failed`,
+  category `check`, exit 8). Variants are written after the
   program's activation (SAP checks them against the generated selection
   screen) and have no inactive version. Where abapGit unprotects a protected
   variant with a direct `UPDATE VARID` before replacing it, erpl-adt uses
@@ -389,10 +394,12 @@ problems in the code being deployed.
   directly, so - unlike other screens - there is no previous version to
   restore: a screen SAP cannot generate stays inactive and the object fails
   (exit 5). Field texts of a native screen (`NAT_TEXTS`, table `D021T`) are
-  refused (exit 8): abapGit inserts them into `D021T` directly and no
+  not written: the object fails before anything is written (`failed`, category
+  `check`, exit 8) - abapGit inserts them into `D021T` directly and no
   workbench API writes them. A plain splitter screen has none.
 * Transaction authorization-object checks (`AUTHORIZATIONS`, table `TSTCA`
-  with the `CINFO` bit x'04') are refused (exit 8). `RPY_TRANSACTION_INSERT`
+  with the `CINFO` bit x'04') are not written: the object fails before
+  anything is written (`failed`, category `check`, exit 8). `RPY_TRANSACTION_INSERT`
   has no parameter for them; classic SE93 (form in `LSEUKF01`) and abapGit's
   `SAVE_AUTHORIZATIONS` both `DELETE`/`INSERT TSTCA` and `UPDATE TSTC`
   directly, and the only class that writes them (`CL_TRAN_WBI_P`, the
@@ -401,7 +408,8 @@ problems in the code being deployed.
   the check in SE93. The same holds for report transactions with a variant
   (`CINFO` x'10') and translated short texts. Because an update is delete +
   insert, an existing transaction whose system version has such a check, a
-  variant flag or an OO type (x'08') is refused as well (exit 8, also with
+  variant flag or an OO type (x'08') fails as well before anything is written
+  (`failed`, category `check`, exit 8, also with
   `--force`): the re-insert would silently drop it. Verified live on A4H
   (#73) with `ZERPL_AUTH_TEST`, a report transaction on `ZERPL_PO_REPORT`
   with authorization object `S_CARRID` created in SE93 (no workbench API
