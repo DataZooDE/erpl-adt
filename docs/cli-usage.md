@@ -452,7 +452,7 @@ The deploy workflow is an idempotent state machine: `discover → create package
 | 8 | ATC check error, or a priority-1 ATC finding (`check`) / an error from `source check` |
 | 9 | Transport error |
 | 10 | Timeout |
-| 99 | Internal error |
+| 99 | Internal error, or invalid input (a bad flag value, a malformed number, a misspelled flag on a strict command) - the JSON error says which: category `internal` or `validation` |
 
 5, 7 and 8 also report *outcomes*: the run worked, but what it found should stop a
 script. They are the same in text and `--json` mode, and with `--json` the result

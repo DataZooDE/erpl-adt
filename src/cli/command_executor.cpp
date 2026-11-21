@@ -267,7 +267,8 @@ bool ColorMode(const CommandArgs& args) {
 }
 
 Error MakeValidationError(const std::string& message) {
-    return Error{"Validation", "", std::nullopt, message, std::nullopt};
+    return Error{"Validation", "", std::nullopt, message, std::nullopt,
+                 ErrorCategory::Validation};
 }
 
 Result<int, Error> ParseIntInRange(std::string_view raw,
@@ -2612,17 +2613,6 @@ int HandleTransportList(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 namespace {
 
-nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
-    nlohmann::json j = nlohmann::json::array();
-    for (const auto& o : objects) {
-        j.push_back({{"pgmid", o.pgmid},
-                     {"type", o.type},
-                     {"name", o.name},
-                     {"description", o.description},
-                     {"lock_status", o.lock_status}});
-    }
-    return j;
-}
 
 } // namespace
 
@@ -2650,24 +2640,7 @@ int HandleTransportShow(const CommandArgs& args) {
     const auto& tr = result.Value();
 
     if (fmt.IsJsonMode()) {
-        nlohmann::json tasks = nlohmann::json::array();
-        for (const auto& t : tr.tasks) {
-            tasks.push_back({{"number", t.number},
-                             {"description", t.description},
-                             {"owner", t.owner},
-                             {"status", t.status},
-                             {"type", t.type},
-                             {"objects", TransportObjectsJson(t.objects)}});
-        }
-        nlohmann::json j = {{"number", tr.number},
-                            {"description", tr.description},
-                            {"owner", tr.owner},
-                            {"status", tr.status},
-                            {"target", tr.target},
-                            {"type", tr.type},
-                            {"tasks", tasks},
-                            {"objects", TransportObjectsJson(tr.objects)}};
-        fmt.PrintJson(j.dump());
+        fmt.PrintJson(TransportDetailToJson(tr).dump());
         return 0;
     }
 
@@ -7170,24 +7143,16 @@ int HandleBwJob(const CommandArgs& args) {
 // Outcome reporters — exposed outside anonymous namespace for unit testing.
 // ---------------------------------------------------------------------------
 
-int ActivationExitCode(const ActivationResult& act) {
-    return act.failed > 0 ? 5 : 0;
-}
+// The outcome rules live on the ADT result types (#84); these map them to the
+// CLI's exit codes.
+int ActivationExitCode(const ActivationResult& act) { return act.Failed() ? 5 : 0; }
 
-int TestRunExitCode(const TestRunResult& run) {
-    return run.AllPassed() ? 0 : 7;
-}
+int TestRunExitCode(const TestRunResult& run) { return run.AllPassed() ? 0 : 7; }
 
-int AtcExitCode(const AtcResult& atc) {
-    return atc.ErrorCount() > 0 ? 8 : 0;
-}
+int AtcExitCode(const AtcResult& atc) { return atc.HasErrors() ? 8 : 0; }
 
 int SyntaxCheckExitCode(const std::vector<SyntaxMessage>& messages) {
-    const bool has_error = std::any_of(
-        messages.begin(), messages.end(), [](const SyntaxMessage& m) {
-            return m.type == "E" || m.type == "A" || m.type == "X";
-        });
-    return has_error ? 8 : 0;
+    return SyntaxHasError(messages) ? 8 : 0;
 }
 
 int ReportActivationOutcome(const ActivationResult& act,

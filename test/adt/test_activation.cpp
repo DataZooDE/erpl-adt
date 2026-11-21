@@ -837,3 +837,14 @@ TEST_CASE("ActivateObject: activation errors next to inactive objects are kept",
     CHECK(result.Value().error_messages[0] == "Field \"LV_X\" is unknown.");
     CHECK(session.GetCallCount() == 0);  // not a pre-audit: no inactive-list lookup
 }
+
+// #84: the outcome rule lives on the result type, so CLI (exit 5) and MCP
+// (passed) read it from one place.
+TEST_CASE("ActivationResult::Failed: any failed object", "[adt][activation]") {
+    ActivationResult act;
+    CHECK_FALSE(act.Failed());
+    act.activated = 1;
+    CHECK_FALSE(act.Failed());
+    act.failed = 1;
+    CHECK(act.Failed());
+}

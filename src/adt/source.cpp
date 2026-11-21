@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <optional>
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -287,6 +288,12 @@ Result<void, Error> WriteSourceOptimistic(
     return Result<void, Error>::Ok();
 }
 
+bool SyntaxHasError(const std::vector<SyntaxMessage>& messages) {
+    return std::any_of(messages.begin(), messages.end(), [](const SyntaxMessage& m) {
+        return m.type == "E" || m.type == "A" || m.type == "X";
+    });
+}
+
 // ---------------------------------------------------------------------------
 // CheckSyntax
 // ---------------------------------------------------------------------------
@@ -298,7 +305,7 @@ Result<std::vector<SyntaxMessage>, Error> CheckSyntax(
         return Result<std::vector<SyntaxMessage>, Error>::Err(Error{
             "CheckSyntax", source_uri, std::nullopt,
             "Invalid version '" + version + "'. Valid values: active, inactive",
-            std::nullopt, ErrorCategory::Internal});
+            std::nullopt, ErrorCategory::Validation});
     }
     // A check run against an object that is not there answers with an empty
     // message list, which reads as "no syntax errors". Same trap as the ATC

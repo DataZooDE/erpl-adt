@@ -35,6 +35,10 @@ struct AtcResult {
         return count;
     }
 
+    // The outcome rule: a priority-1 finding is an error (priority 2 and 3 are
+    // not). The CLI exits 8 on it, MCP reports passed=false (#84).
+    [[nodiscard]] bool HasErrors() const { return ErrorCount() > 0; }
+
     [[nodiscard]] int WarningCount() const {
         int count = 0;
         for (const auto& f : findings) {

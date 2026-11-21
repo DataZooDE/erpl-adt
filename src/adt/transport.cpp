@@ -532,7 +532,7 @@ Result<TransportDetail, Error> GetTransport(
     if (id.IsErr()) {
         return Result<TransportDetail, Error>::Err(Error{
             "GetTransport", "", std::nullopt, id.Error(), std::nullopt,
-            ErrorCategory::Internal});
+            ErrorCategory::Validation});
     }
     const auto url = "/sap/bc/adt/cts/transportrequests/" + id.Value().Value();
 
@@ -548,6 +548,45 @@ Result<TransportDetail, Error> GetTransport(
             Error::FromHttpStatus("GetTransport", url, http.status_code, http.body));
     }
     return ParseTransportDetail(http.body, id.Value().Value(), url);
+}
+
+// ---------------------------------------------------------------------------
+// TransportDetailToJson
+// ---------------------------------------------------------------------------
+namespace {
+
+nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& o : objects) {
+        j.push_back({{"pgmid", o.pgmid},
+                     {"type", o.type},
+                     {"name", o.name},
+                     {"description", o.description},
+                     {"lock_status", o.lock_status}});
+    }
+    return j;
+}
+
+} // namespace
+
+nlohmann::json TransportDetailToJson(const TransportDetail& detail) {
+    nlohmann::json tasks = nlohmann::json::array();
+    for (const auto& t : detail.tasks) {
+        tasks.push_back({{"number", t.number},
+                         {"description", t.description},
+                         {"owner", t.owner},
+                         {"status", t.status},
+                         {"type", t.type},
+                         {"objects", TransportObjectsJson(t.objects)}});
+    }
+    return {{"number", detail.number},
+            {"description", detail.description},
+            {"owner", detail.owner},
+            {"status", detail.status},
+            {"target", detail.target},
+            {"type", detail.type},
+            {"tasks", tasks},
+            {"objects", TransportObjectsJson(detail.objects)}};
 }
 
 } // namespace erpl_adt

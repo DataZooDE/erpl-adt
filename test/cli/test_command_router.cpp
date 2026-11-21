@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 
 #include <erpl_adt/cli/command_router.hpp>
 
@@ -646,6 +647,17 @@ TEST_CASE("CommandRouter: a strict command refuses an unknown flag without runni
     // Only that command is strict.
     const char* argv_b[] = {"erpl-adt", "g", "b", "--activte"};
     CHECK(DispatchCapturingStderr(router, 4, argv_b).code == 0);
+
+    // In JSON mode the refusal is a JSON error with category and exit code,
+    // properly escaped (#84).
+    const char* argv_json[] = {"erpl-adt", "--json", "g", "a", "--act\"ivte"};
+    auto j = DispatchCapturingStderr(router, 5, argv_json);
+    CHECK(j.code == 99);
+    const auto parsed = nlohmann::json::parse(j.err);
+    CHECK(parsed["error"]["category"] == "validation");
+    CHECK(parsed["error"]["exit_code"] == 99);
+    CHECK(parsed["error"]["message"].get<std::string>().find("Nothing was done") !=
+          std::string::npos);
 }
 
 TEST_CASE("CommandRouter: IsStrictFlags reports group and command strictness",

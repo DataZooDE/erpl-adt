@@ -185,6 +185,10 @@ enum class ErrorCategory {
     CheckError,
     TransportError,
     Timeout,
+    // Invalid input - a bad flag value, a malformed number, an unknown
+    // option. Exit code 99 like Internal (#84: kept, not breaking), but its
+    // own category so a script can tell it from an internal error.
+    Validation,
     Internal,
 };
 
@@ -223,6 +227,7 @@ struct Error {
             case ErrorCategory::CheckError:      return 8;
             case ErrorCategory::TransportError:  return 9;
             case ErrorCategory::Timeout:         return 10;
+            case ErrorCategory::Validation:      return 99;
             case ErrorCategory::Internal:        return 99;
         }
         return 99;
@@ -244,6 +249,7 @@ struct Error {
             case ErrorCategory::CheckError:      return "check";
             case ErrorCategory::TransportError:  return "transport";
             case ErrorCategory::Timeout:         return "timeout";
+            case ErrorCategory::Validation:      return "validation";
             case ErrorCategory::Internal:        return "internal";
         }
         return "internal";

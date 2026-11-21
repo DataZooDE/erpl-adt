@@ -98,7 +98,7 @@ Result<BwDataFlowDetail, Error> BwReadDataFlow(
     if (name.empty()) {
         return Result<BwDataFlowDetail, Error>::Err(Error{
             "BwReadDataFlow", "", std::nullopt,
-            "DataFlow name must not be empty", std::nullopt, ErrorCategory::Internal});
+            "DataFlow name must not be empty", std::nullopt, ErrorCategory::Validation});
     }
 
     const auto path = BuildObjectPath(name, version);

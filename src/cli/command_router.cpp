@@ -1,5 +1,7 @@
 #include <erpl_adt/cli/command_router.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <iostream>
 #include <set>
@@ -18,8 +20,14 @@ bool HasJsonFlag(int argc, const char* const* argv) {
 
 // Emit a JSON-formatted error object to stderr.
 void PrintJsonError(const std::string& message, std::ostream& out) {
-    out << R"({"error":{"message":")" << message << R"("}})";
-    out << "\n";
+    // Built with the JSON library (the message holds user input, e.g. a flag
+    // name) and in the shape of every other error: a usage error is
+    // category "validation", exit code 99 (#84).
+    out << nlohmann::json{{"error", {{"message", message},
+                                     {"category", "validation"},
+                                     {"exit_code", 99}}}}
+               .dump()
+        << "\n";
 }
 
 // Levenshtein distance, for "did you mean" hints on mistyped flags.

@@ -270,6 +270,8 @@ TEST_CASE("CheckSyntax: an unknown version is refused before any request",
     REQUIRE(result.IsErr());
     CHECK(result.Error().message.find("active") != std::string::npos);
     CHECK(result.Error().message.find("inactive") != std::string::npos);
+    CHECK(result.Error().category == ErrorCategory::Validation);  // #84
+    CHECK(result.Error().ExitCode() == 99);
     CHECK(mock.GetCallCount() == 0);
     CHECK(mock.PostCallCount() == 0);
 }
@@ -448,4 +450,21 @@ TEST_CASE("CheckSyntax: a missing object is not reported as clean",
     // The probe asks about the object, not the source sub-resource.
     REQUIRE(mock.GetCallCount() == 1);
     CHECK(mock.GetCalls()[0].path == "/sap/bc/adt/oo/classes/zzz_nope");
+}
+
+// #84: E, A and X are errors; W and I are not.
+TEST_CASE("SyntaxHasError: errors, aborts and exceptions", "[adt][source]") {
+    std::vector<SyntaxMessage> msgs;
+    CHECK_FALSE(SyntaxHasError(msgs));
+    SyntaxMessage w;
+    w.type = "W";
+    msgs.push_back(w);
+    CHECK_FALSE(SyntaxHasError(msgs));
+    for (const char* type : {"E", "A", "X"}) {
+        auto with = msgs;
+        SyntaxMessage e;
+        e.type = type;
+        with.push_back(e);
+        CHECK(SyntaxHasError(with));
+    }
 }
