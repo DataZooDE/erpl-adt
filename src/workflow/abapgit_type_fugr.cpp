@@ -187,11 +187,18 @@ public:
         }
         const auto& def = want.Value();
         for (const auto& fm : def.functions) {
-            if (!fm.remote_call.empty() || !fm.update_task.empty()) {
+            if (!fm.update_task.empty()) {
                 return R::Err(FugrError(
                     "Function module " + fm.name +
-                        ": RFC-enabled and update function modules are not supported by the "
-                        "deploy yet (REMOTE_CALL/UPDATE_TASK set). Nothing was changed.",
+                        ": update function modules are not supported by the deploy yet "
+                        "(UPDATE_TASK set). Nothing was changed.",
+                    ErrorCategory::CheckError));
+            }
+            if (!fm.remote_call.empty() && fm.remote_call != "R") {
+                return R::Err(FugrError(
+                    "Function module " + fm.name + ": REMOTE_CALL '" + fm.remote_call +
+                        "' is not supported by the deploy (only R, remote-enabled). Nothing was "
+                        "changed.",
                     ErrorCategory::CheckError));
             }
             if (desired.count(PartFile(key, fm.name, ".abap")) == 0) {
@@ -436,6 +443,16 @@ private:
                     return R::Err(created.Error());
                 }
             }
+            // The RFC flag is metadata (ADT ignores it on create): set it before
+            // the source, whose pass-by-value parameters an RFC module needs.
+            const std::string have_remote = it == have_fms.end() ? "" : it->second->remote_call;
+            if (fm.remote_call != have_remote) {
+                auto set = SetProcessingType(ctx, key.name, fm.name,
+                                             fm.remote_call == "R" ? "rfc" : "normal");
+                if (set.IsErr()) {
+                    return R::Err(set.Error());
+                }
+            }
             auto signature = BuildFmSignatureSource(fm, source);
             if (signature.IsErr()) {
                 return R::Err(signature.Error());
@@ -484,6 +501,21 @@ private:
         }
 
         return R::Ok();
+    }
+
+    static Result<void, Error> SetProcessingType(TypeContext& ctx, const std::string& group,
+                                                 const std::string& fm,
+                                                 const std::string& processing_type) {
+        auto uri = MakeUri(FunctionModuleUri(group, fm));
+        if (uri.IsErr()) {
+            return Result<void, Error>::Err(uri.Error());
+        }
+        auto guard = LockGuard::Acquire(ctx.session, uri.Value());
+        if (guard.IsErr()) {
+            return Result<void, Error>::Err(guard.Error());
+        }
+        return SetFunctionModuleProcessingType(ctx.session, group, fm, processing_type,
+                                               guard.Value().Handle(), Transport(ctx));
     }
 
     static std::string MainProgram(const FugrDefinition& def, const std::string& group) {

@@ -124,6 +124,53 @@ Result<void, Error> CreateFunctionModule(IAdtSession& session, const std::string
                       "application/vnd.sap.adt.functions.fmodules.v3+xml", transport);
 }
 
+Result<void, Error> SetFunctionModuleProcessingType(IAdtSession& session, const std::string& group,
+                                                    const std::string& name,
+                                                    const std::string& processing_type,
+                                                    const LockHandle& lock_handle,
+                                                    const std::optional<std::string>& transport) {
+    using R = Result<void, Error>;
+    static const std::string kMetaType = "application/vnd.sap.adt.functions.fmodules.v3+xml";
+    const auto uri = FunctionModuleUri(group, name);
+    HttpHeaders headers;
+    headers["Accept"] = kMetaType;
+    auto read = session.Get(uri, headers);
+    if (read.IsErr()) {
+        return R::Err(std::move(read).Error());
+    }
+    if (read.Value().status_code != 200) {
+        return R::Err(Error::FromHttpStatus("SetFunctionModuleProcessingType", uri,
+                                            read.Value().status_code, read.Value().body));
+    }
+    std::string meta = read.Value().body;
+    static const std::string kAttr = "fmodule:processingType=\"";
+    const auto at = meta.find(kAttr);
+    const auto end = at == std::string::npos ? std::string::npos : meta.find('"', at + kAttr.size());
+    if (end == std::string::npos) {
+        Error e;
+        e.operation = "SetFunctionModuleProcessingType";
+        e.endpoint = uri;
+        e.message = "Function module " + name +
+                    ": its metadata names no fmodule:processingType; not guessing where it goes";
+        e.category = ErrorCategory::Internal;
+        return R::Err(std::move(e));
+    }
+    meta.replace(at + kAttr.size(), end - at - kAttr.size(), processing_type);
+    std::string url = uri + "?lockHandle=" + UrlEncode(lock_handle.Value());
+    if (transport && !transport->empty()) {
+        url += "&corrNr=" + UrlEncode(*transport);
+    }
+    auto written = session.Put(url, meta, kMetaType);
+    if (written.IsErr()) {
+        return R::Err(std::move(written).Error());
+    }
+    if (written.Value().status_code != 200 && written.Value().status_code != 204) {
+        return R::Err(Error::FromHttpStatus("SetFunctionModuleProcessingType", url,
+                                            written.Value().status_code, written.Value().body));
+    }
+    return R::Ok();
+}
+
 Result<void, Error> CreateFunctionGroupInclude(IAdtSession& session, const std::string& group,
                                                const std::string& include,
                                                const std::string& description,

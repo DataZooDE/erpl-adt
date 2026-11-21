@@ -224,6 +224,30 @@ TEST_CASE("CreateObject: creates class and returns URI from response", "[adt][ob
     CHECK(call.path.find("corrNr=NPLK900001") != std::string::npos);
 }
 
+TEST_CASE("CreateObject: dictionary structure (TABL/DS) like Eclipse creates it", "[adt][object]") {
+    // POST /sap/bc/adt/ddic/structures with a blue:blueSource; the source (`define structure`) is written
+    // afterwards like a table's. Measured on A4H (2026-11-21).
+    MockAdtSession mock;
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {201, {},
+         "<blue:blueSource xmlns:blue=\"http://www.sap.com/wbobj/blue\" "
+         "xmlns:adtcore=\"http://www.sap.com/adt/core\" adtcore:name=\"ZFFD_S_ITEM\" "
+         "adtcore:type=\"TABL/DS\"/>"}));
+    CreateObjectParams params;
+    params.object_type = "TABL/DS";
+    params.name = "ZFFD_S_ITEM";
+    params.package_name = "$ZFFDEMO";
+    params.description = "BAPI item";
+    auto result = CreateObject(mock, params);
+    REQUIRE(result.IsOk());
+    CHECK(result.Value().Value() == "/sap/bc/adt/ddic/structures/zffd_s_item");
+    const auto& call = mock.PostCalls()[0];
+    CHECK(call.path.find("/sap/bc/adt/ddic/structures") == 0);
+    CHECK(call.content_type == "application/vnd.sap.adt.structures.v2+xml");
+    CHECK(call.body.find("blue:blueSource") != std::string::npos);
+    CHECK(call.body.find("adtcore:type=\"TABL/DS\"") != std::string::npos);
+}
+
 TEST_CASE("CreateObject: sends correct XML body", "[adt][object]") {
     MockAdtSession mock;
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(

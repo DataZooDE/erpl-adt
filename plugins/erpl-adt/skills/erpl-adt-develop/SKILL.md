@@ -37,6 +37,33 @@ with `search … --type` (or `source read --type`) and pass the URI.
    table (`TABL/DT`) needs `@AbapCatalog.enhancement.category`, `@AbapCatalog.tableCategory`,
    `@AbapCatalog.deliveryClass` and `@AbapCatalog.dataMaintenance` before `define table`.
 6. **`object run` executes code on the server.** Confirm with the user before running a class that changes data.
+7. **Field names in `define table` must not be ABAP reserved words.** Activation fails with "MONTHS is a reserved
+   word (choose another field name)" — `MONTHS` and `SECONDS` are refused; `TEXT`, `TYPE`, `NAME`, `CLASS`,
+   `CODE`, `VERSION`, `STATUS`, `MESSAGE` and `CURRENCY` activate. SAP names only one offending field per
+   activation, so a generated table with several gets several rounds: prefer descriptive names (`HIST_MONTHS`,
+   `DURATION_S`). `abap.tims`, `abap.int4`, `abap.lang`, `abap.dec(p,d)` and `abap.quan(23,3)` all activate.
+8. **The RFC flag of a function module is metadata, not source.** ADT ignores `fmodule:processingType` on create;
+   it is set by PUTting the module's metadata under the lock (what Eclipse's properties view does).
+   `abapgit deploy` does this for function modules with `<REMOTE_CALL>R</REMOTE_CALL>`; an RFC module's
+   parameters must be passed by value.
+9. **Generated ABAP: what activation refuses on A4H** (SAP names one problem per round, so check before writing):
+   method and other names longer than 30 characters; `<word>` in an ABAP Doc comment (`"! ...`) — it is
+   parsed as an HTML tag; offset/length access on `STRING` variables in assignments (`result = result(35)`;
+   use `substring( )`); `regex =` (POSIX is deprecated; use `pcre =`). A class's `testclasses` section is
+   written with `source write <class-uri> --section testclasses`; write every class first and activate them in
+   one `activate <uri>...` call, so classes that use each other activate together. Also refused: a table
+   expression or offset directly on a method result (`get( )[ key ]`, `get( )+4(2)` — assign it first); a
+   positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); a
+   `LOOP ... ASSIGNING <fs> WHERE` condition that uses `<fs>`; ABAP Doc (`"!`) before a chained `TYPES:`.
+10. **Find where an activation error is.** `--json activate` lists the texts without object or line (#90);
+    `--json source check <name> --version inactive` returns `line`, `offset` and the include in `uri`
+    (`.../includes/testclasses#start=70,4`) for each error — run it on each failed class.
+11. **Keep short texts within SAP's field lengths.** A function group text (`AREAT`) holds 40 characters: a longer
+    one is cut on create, and every later `abapgit deploy` of the same files is refused ("changing the short text
+    ... is not supported"); only deleting the group helps (#92). Function module texts: 74.
+12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write
+    /sap/bc/adt/ddic/structures/<name>/source/main` with a `define structure` source and `--activate`. RFC modules
+    pass everything by value and need dictionary types (no local types, no `TYPE REF TO`).
 
 ## Find
 
