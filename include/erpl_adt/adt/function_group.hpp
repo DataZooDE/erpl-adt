@@ -3,6 +3,7 @@
 #include <erpl_adt/adt/activation.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/core/result.hpp>
+#include <erpl_adt/core/types.hpp>
 
 #include <optional>
 #include <string>
@@ -34,6 +35,16 @@ namespace erpl_adt {
 [[nodiscard]] Result<void, Error> CreateFunctionGroupInclude(
     IAdtSession& session, const std::string& group, const std::string& include,
     const std::string& description, const std::optional<std::string>& transport);
+
+// The RFC flag of a function module is metadata, not source: ADT ignores
+// fmodule:processingType on create. Eclipse's properties view sets it by
+// GETting the module's metadata and PUTting it back with the new type under
+// the lock (`lock_handle`); measured on A4H. `processing_type` is ADT's value:
+// "normal" or "rfc".
+[[nodiscard]] Result<void, Error> SetFunctionModuleProcessingType(
+    IAdtSession& session, const std::string& group, const std::string& name,
+    const std::string& processing_type, const LockHandle& lock_handle,
+    const std::optional<std::string>& transport);
 
 // The main program of a function group: SAPL<group>, or /NS/SAPL<group> for
 // a namespaced group (upper case). The one place that spells this (crew F8).

@@ -55,7 +55,7 @@ code 99 and a "did you mean --dry-run?" hint, before anything runs.
      `status` that is only a note, see below);
    * unsupported object types and files are listed, never silently dropped;
    * each type handler validates the files (missing source or flow-logic
-     file, parts it cannot write such as TRAN authorization objects, RFC
+     file, parts it cannot write such as TRAN authorization objects, update
      function modules, documentation that names another object) — `status`
      reports these exactly as `deploy` would;
    * a file that cannot be read or parsed fails its object, and `status`
@@ -341,7 +341,7 @@ cache (see *Own deploys*).
 | 2 | object or path not found, package/folder problem |
 | 5 | SAP rejected an object (syntax, activation) |
 | 6 | lock conflict (someone holds the object) or drift (changed outside git) |
-| 8 | the deploy cannot write a part (unsupported part, RFC module) |
+| 8 | the deploy cannot write a part (unsupported part, update module) |
 | 9 | transport problem (missing `--transport`, object locked in another request) |
 | 10 | timeout, or the system answered "too many requests" |
 | 99 | usage error (unknown flag, invalid argument), a local file that cannot be read, parsed or written, or internal error |
@@ -362,6 +362,12 @@ problems in the code being deployed.
   record, so such a checkout reads as unchanged. Only CRLF pairs change: a
   lone CR in ABAP source stays content (in XML, a CR that is content is
   written as `&#13;` and kept). `export` writes LF, as abapGit does.
+* Remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`) are
+  deployed: ADT keeps the flag in the module's metadata
+  (`fmodule:processingType`) and ignores it on create, so the deploy sets it
+  by writing the metadata under the lock, before the source, as Eclipse's
+  properties view does. Update function modules (`UPDATE_TASK`) are refused
+  (exit 8).
 * Supported types: DOMA, DTEL, FUGR (function modules), PROG, TRAN. Classes,
   interfaces, tables (TABL) and packages (DEVC) are not created by `abapgit
   deploy`; create packages with `erpl-adt object create --type DEVC/K`, and

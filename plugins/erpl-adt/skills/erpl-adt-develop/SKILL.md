@@ -37,6 +37,15 @@ with `search … --type` (or `source read --type`) and pass the URI.
    table (`TABL/DT`) needs `@AbapCatalog.enhancement.category`, `@AbapCatalog.tableCategory`,
    `@AbapCatalog.deliveryClass` and `@AbapCatalog.dataMaintenance` before `define table`.
 6. **`object run` executes code on the server.** Confirm with the user before running a class that changes data.
+7. **Field names in `define table` must not be ABAP reserved words.** Activation fails with "MONTHS is a reserved
+   word (choose another field name)" — `MONTHS` and `SECONDS` are refused; `TEXT`, `TYPE`, `NAME`, `CLASS`,
+   `CODE`, `VERSION`, `STATUS`, `MESSAGE` and `CURRENCY` activate. SAP names only one offending field per
+   activation, so a generated table with several gets several rounds: prefer descriptive names (`HIST_MONTHS`,
+   `DURATION_S`). `abap.tims`, `abap.int4`, `abap.lang`, `abap.dec(p,d)` and `abap.quan(23,3)` all activate.
+8. **The RFC flag of a function module is metadata, not source.** ADT ignores `fmodule:processingType` on create;
+   it is set by PUTting the module's metadata under the lock (what Eclipse's properties view does).
+   `abapgit deploy` does this for function modules with `<REMOTE_CALL>R</REMOTE_CALL>`; an RFC module's
+   parameters must be passed by value.
 
 ## Find
 

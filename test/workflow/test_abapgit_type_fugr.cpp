@@ -306,8 +306,30 @@ TEST_CASE("FUGR handler: last changer per include, not the main program's",
     CHECK(by.at("zerpl_fg.fugr.xml").empty());  // AREAT: no changer recorded
 }
 
-TEST_CASE("FUGR handler: RFC modules are refused before anything is written",
+TEST_CASE("FUGR handler: update modules are refused before anything is written",
           "[workflow][abapgit_fugr]") {
+    auto handlers = DefaultTypeHandlers();
+    const auto& handler = *handlers.at("FUGR");
+    AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
+    AbapGitXml xml;
+    xml.serializer = "LCL_OBJECT_FUGR";
+    xml.serializer_version = "v1.0.0";
+    xml.values_xml =
+        "<AREAT>demo</AREAT><FUNCTIONS><item><FUNCNAME>Z_UPD</FUNCNAME>"
+        "<UPDATE_TASK>1</UPDATE_TASK></item></FUNCTIONS>";
+    ObjectFileSet desired{{"zerpl_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fg.fugr.z_upd.abap", "FUNCTION z_upd.\nENDFUNCTION.\n"}};
+    MockAdtSession session;
+    FakeEngine engine;
+    TypeContext ctx{session, engine, "$TMP", "", "E"};
+    auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
+    REQUIRE(plan.IsErr());
+    CHECK(plan.Error().message.find("update") != std::string::npos);
+    CHECK(session.PostCallCount() == 0);
+    CHECK(session.PutCallCount() == 0);
+}
+
+TEST_CASE("FUGR handler: RFC modules are planned, not refused", "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
     AbapGitObjectKey key{"FUGR", "ZERPL_FG"};
@@ -323,9 +345,44 @@ TEST_CASE("FUGR handler: RFC modules are refused before anything is written",
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
     auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
-    REQUIRE(plan.IsErr());
-    CHECK(plan.Error().message.find("RFC") != std::string::npos);
-    CHECK(session.PostCallCount() == 0);
+    REQUIRE(plan.IsOk());
+    CHECK(session.PostCallCount() == 0);  // planning writes nothing
+    CHECK(session.PutCallCount() == 0);
+}
+
+TEST_CASE("SetFunctionModuleProcessingType: lock-held PUT of the metadata with the new type",
+          "[workflow][abapgit_fugr]") {
+    // ADT ignores fmodule:processingType on create; Eclipse's properties view
+    // sets it by PUTting the module's metadata under the lock (A4H, 2026-11-21).
+    MockAdtSession session;
+    const std::string meta =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><fmodule:abapFunctionModule "
+        "fmodule:releaseState=\"notReleased\" fmodule:processingType=\"normal\" "
+        "adtcore:name=\"Z_RFC\" adtcore:type=\"FUGR/FF\" "
+        "xmlns:fmodule=\"http://www.sap.com/adt/functions/fmodules\" "
+        "xmlns:adtcore=\"http://www.sap.com/adt/core\"/>";
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, meta}));
+    session.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    auto r = SetFunctionModuleProcessingType(session, "ZERPL_FG", "Z_RFC", "rfc",
+                                             LockHandle::Create("LH1").Value(), std::nullopt);
+    REQUIRE(r.IsOk());
+    REQUIRE(session.GetCallCount() == 1);
+    CHECK(session.GetCalls()[0].path == "/sap/bc/adt/functions/groups/zerpl_fg/fmodules/z_rfc");
+    REQUIRE(session.PutCallCount() == 1);
+    const auto& put = session.PutCalls()[0];
+    CHECK(put.path == "/sap/bc/adt/functions/groups/zerpl_fg/fmodules/z_rfc?lockHandle=LH1");
+    CHECK(put.content_type == "application/vnd.sap.adt.functions.fmodules.v3+xml");
+    CHECK(put.body.find("fmodule:processingType=\"rfc\"") != std::string::npos);
+    CHECK(put.body.find("processingType=\"normal\"") == std::string::npos);
+}
+
+TEST_CASE("SetFunctionModuleProcessingType: unknown metadata shape is an error, not a guess",
+          "[workflow][abapgit_fugr]") {
+    MockAdtSession session;
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, "<fmodule:abapFunctionModule/>"}));
+    auto r = SetFunctionModuleProcessingType(session, "ZERPL_FG", "Z_RFC", "rfc",
+                                             LockHandle::Create("LH1").Value(), std::nullopt);
+    REQUIRE(r.IsErr());
     CHECK(session.PutCallCount() == 0);
 }
 
