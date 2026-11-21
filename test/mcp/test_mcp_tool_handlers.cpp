@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <erpl_adt/adt/transport.hpp>
 
 #include <algorithm>
 
@@ -445,6 +446,21 @@ TEST_CASE("adt_show_transport: request with its task", "[mcp][handlers][transpor
     REQUIRE(j["tasks"][0]["objects"].size() == 8);
     CHECK(j["tasks"][0]["objects"][0]["type"] == "DOMA");
     CHECK(j["objects"][0]["type"] == "RELE");
+}
+
+TEST_CASE("adt_show_transport: returns exactly TransportDetailToJson", "[mcp][handlers][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    auto registry = MakeRegistry(mock);
+
+    auto result = CallTool(registry, "adt_show_transport",
+                           {{"transport_number", "A4HK900260"}});
+    auto detail = GetTransport(mock, "A4HK900260");
+    REQUIRE(detail.IsOk());
+    CHECK(ParseContent(result) == TransportDetailToJson(detail.Value()));
 }
 
 TEST_CASE("adt_show_transport: is read-only", "[mcp][handlers][transport]") {

@@ -562,3 +562,29 @@ TEST_CASE("GetTransport: a task number answers with the task", "[adt][transport]
     CHECK(tr.type == "Development/Correction");
     CHECK(tr.tasks.empty());
 }
+
+// #84, point 2: one serializer for `transport show` (CLI) and
+// adt_show_transport (MCP) - the docs promise the same shape.
+TEST_CASE("TransportDetailToJson: the documented shape", "[adt][transport]") {
+    MockAdtSession mock;
+    mock.EnqueueGet(Result<HttpResponse, Error>::Ok(
+        {200, {}, LoadFixture("transport/transport_show_objects.xml")}));
+    auto detail = GetTransport(mock, "A4HK900260");
+    REQUIRE(detail.IsOk());
+
+    const auto j = TransportDetailToJson(detail.Value());
+    for (const char* key : {"number", "description", "owner", "status", "target", "type",
+                            "tasks", "objects"}) {
+        CHECK(j.contains(key));
+    }
+    CHECK(j["number"] == "A4HK900260");
+    CHECK(j["status"] == "released");
+    REQUIRE(j["objects"].size() == 9);
+    for (const char* key : {"pgmid", "type", "name", "description", "lock_status"}) {
+        CHECK(j["objects"][0].contains(key));
+    }
+    REQUIRE(j["tasks"].size() == 1);
+    for (const char* key : {"number", "description", "owner", "status", "type", "objects"}) {
+        CHECK(j["tasks"][0].contains(key));
+    }
+}

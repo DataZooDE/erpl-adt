@@ -2612,17 +2612,6 @@ int HandleTransportList(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 namespace {
 
-nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
-    nlohmann::json j = nlohmann::json::array();
-    for (const auto& o : objects) {
-        j.push_back({{"pgmid", o.pgmid},
-                     {"type", o.type},
-                     {"name", o.name},
-                     {"description", o.description},
-                     {"lock_status", o.lock_status}});
-    }
-    return j;
-}
 
 } // namespace
 
@@ -2650,24 +2639,7 @@ int HandleTransportShow(const CommandArgs& args) {
     const auto& tr = result.Value();
 
     if (fmt.IsJsonMode()) {
-        nlohmann::json tasks = nlohmann::json::array();
-        for (const auto& t : tr.tasks) {
-            tasks.push_back({{"number", t.number},
-                             {"description", t.description},
-                             {"owner", t.owner},
-                             {"status", t.status},
-                             {"type", t.type},
-                             {"objects", TransportObjectsJson(t.objects)}});
-        }
-        nlohmann::json j = {{"number", tr.number},
-                            {"description", tr.description},
-                            {"owner", tr.owner},
-                            {"status", tr.status},
-                            {"target", tr.target},
-                            {"type", tr.type},
-                            {"tasks", tasks},
-                            {"objects", TransportObjectsJson(tr.objects)}};
-        fmt.PrintJson(j.dump());
+        fmt.PrintJson(TransportDetailToJson(tr).dump());
         return 0;
     }
 

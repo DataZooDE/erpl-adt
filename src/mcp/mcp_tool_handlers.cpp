@@ -359,17 +359,6 @@ ToolResult HandleListTransports(IAdtSession& session,
 }
 
 // adt_show_transport
-nlohmann::json TransportObjectsJson(const std::vector<TransportObjectEntry>& objects) {
-    nlohmann::json j = nlohmann::json::array();
-    for (const auto& o : objects) {
-        j.push_back({{"pgmid", o.pgmid},
-                      {"type", o.type},
-                      {"name", o.name},
-                      {"description", o.description},
-                      {"lock_status", o.lock_status}});
-    }
-    return j;
-}
 
 ToolResult HandleShowTransport(IAdtSession& session,
                                const nlohmann::json& params) {
@@ -380,25 +369,7 @@ ToolResult HandleShowTransport(IAdtSession& session,
     auto result = GetTransport(session, *number);
     if (result.IsErr()) return MakeErrorResult(result.Error());
 
-    const auto& tr = result.Value();
-    nlohmann::json tasks = nlohmann::json::array();
-    for (const auto& t : tr.tasks) {
-        tasks.push_back({{"number", t.number},
-                          {"description", t.description},
-                          {"owner", t.owner},
-                          {"status", t.status},
-                          {"type", t.type},
-                          {"objects", TransportObjectsJson(t.objects)}});
-    }
-    nlohmann::json j = {{"number", tr.number},
-                        {"description", tr.description},
-                        {"owner", tr.owner},
-                        {"status", tr.status},
-                        {"target", tr.target},
-                        {"type", tr.type},
-                        {"tasks", tasks},
-                        {"objects", TransportObjectsJson(tr.objects)}};
-    return MakeOkResult(j);
+    return MakeOkResult(TransportDetailToJson(result.Value()));
 }
 
 // adt_read_table
