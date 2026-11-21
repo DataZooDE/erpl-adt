@@ -2302,20 +2302,35 @@ int HandleActivateRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto info_result = ResolveObjectInfo(*session, args.positional[0]);
-    if (info_result.IsErr()) {
-        fmt.PrintError(info_result.Error());
-        return info_result.Error().ExitCode();
+    // Several objects go into one activation request: SAP activates some
+    // only together (a function group's main program with its group), and
+    // says so with a pre-audit list naming them (#82).
+    std::vector<ActivateObjectParams> objects;
+    for (const auto& arg : args.positional) {
+        auto info_result = ResolveObjectInfo(*session, arg);
+        if (info_result.IsErr()) {
+            fmt.PrintError(info_result.Error());
+            return info_result.Error().ExitCode();
+        }
+        const auto& info = info_result.Value();
+        // A URI resolves to the URI alone; derive type and name from it, as
+        // `source write --activate` does - SAP needs them for an object
+        // inside another (a function group's main program, #82).
+        ActivateObjectParams params = info.type.empty()
+                                          ? ActivationParamsFromObjectUri(info.uri)
+                                          : ActivateObjectParams{};
+        if (!info.type.empty()) {
+            params.uri = info.uri;
+            params.type = info.type;
+            params.name = info.name;
+        }
+        if (objects.empty()) {
+            ft.SetStr("object_type", ClassifyObjectType(params.type));
+        }
+        objects.push_back(std::move(params));
     }
 
-    const auto& info = info_result.Value();
-    ft.SetStr("object_type", ClassifyObjectType(info.type));
-    ActivateObjectParams params;
-    params.uri = info.uri;
-    params.type = info.type;
-    params.name = info.name;
-
-    auto result = ActivateObject(*session, params);
+    auto result = ActivateObjects(*session, objects);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();
@@ -2335,7 +2350,11 @@ int HandleActivateRun(const CommandArgs& args) {
         fmt.PrintJson(j.dump());
         return ActivationExitCode(act);
     }
-    return ReportActivationOutcome(act, fmt, args.positional[0], std::cerr);
+    std::string label;
+    for (const auto& arg : args.positional) {
+        label += (label.empty() ? "" : ", ") + arg;
+    }
+    return ReportActivationOutcome(act, fmt, label, std::cerr);
 }
 
 // ---------------------------------------------------------------------------
@@ -8122,8 +8141,9 @@ void RegisterAllCommands(CommandRouter& router) {
     // -----------------------------------------------------------------------
     {
         CommandHelp help;
-        help.usage = "erpl-adt activate <name-or-uri> [flags]";
-        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI";
+        help.usage = "erpl-adt activate <name-or-uri>... [flags]";
+        help.args_description = "<name-or-uri>    Object name (e.g. ZCL_TEST) or full ADT URI; "
+            "several are activated in one request";
         help.long_description = "Activates inactive ABAP objects. Accepts an object name or URI. "
             "Names are resolved via search. Exits 5 when an object fails to "
             "activate, with --json too (the JSON still lists failed and error_messages).";
@@ -8131,6 +8151,7 @@ void RegisterAllCommands(CommandRouter& router) {
             "erpl-adt activate ZCL_MY_CLASS",
             "erpl-adt activate /sap/bc/adt/oo/classes/zcl_my_class",
             "erpl-adt --json activate ZCL_MY_CLASS",
+            "erpl-adt activate /sap/bc/adt/functions/groups/zfg/source/main /sap/bc/adt/functions/groups/zfg",
         };
         router.Register("activate", "run", "Activate an ABAP object",
                          HandleActivateRun, std::move(help));

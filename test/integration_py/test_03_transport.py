@@ -12,6 +12,8 @@ import re
 
 import pytest
 
+from cli_runner import release_with_tasks
+
 
 TRANSPORT_PATTERN = re.compile(r"^[A-Z0-9]{3}[A-Z]\d{6}$")
 
@@ -164,7 +166,7 @@ class TestTransportShow:
             "--package", "$TMP",
         )
         yield data["transport_number"]
-        cli.run("transport", "release", data["transport_number"])
+        release_with_tasks(cli, data["transport_number"])
 
     def test_show_names_the_request_and_its_task(self, cli, request_number):
         data = cli.run_ok("transport", "show", request_number)

@@ -1,10 +1,14 @@
 #include <erpl_adt/adt/activation.hpp>
+
+#include "atom_parser.hpp"
 #include "protocol_kernel.hpp"
 
 #include <tinyxml2.h>
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
+#include <set>
 #include <string>
 
 namespace erpl_adt {
@@ -43,6 +47,37 @@ std::string BuildActivationRequestXml(const std::vector<ActivateObjectParams>& o
     tinyxml2::XMLPrinter printer;
     doc.Print(&printer);
     return std::string(printer.CStr());
+}
+
+// Objects of a pre-audit list (ioc:inactiveObjects): what SAP wants activated
+// together with the requested object, each once. An entry without an object
+// only names the request the objects are recorded on.
+struct PreauditCompanion {
+    std::string label;  // "TYPE NAME"
+    std::string uri;
+};
+
+std::vector<PreauditCompanion> PreauditCompanions(const tinyxml2::XMLElement* list) {
+    std::vector<PreauditCompanion> out;
+    for (auto* entry = list->FirstChildElement(); entry;
+         entry = entry->NextSiblingElement()) {
+        if (!atom_parser::HasLocalName(entry, "entry")) continue;
+        const auto* object = atom_parser::FirstChildByLocalName(entry, "object");
+        const auto* ref = atom_parser::FirstChildByLocalName(object, "ref");
+        if (!ref) continue;
+        const char* type = ref->Attribute("adtcore:type");
+        const char* name = ref->Attribute("adtcore:name");
+        const char* uri = ref->Attribute("adtcore:uri");
+        PreauditCompanion item{std::string(type ? type : "") + " " + (name ? name : ""),
+                               uri ? uri : ""};
+        const bool seen = std::any_of(out.begin(), out.end(), [&item](const auto& c) {
+            return c.label == item.label;
+        });
+        if (!seen) {
+            out.push_back(std::move(item));
+        }
+    }
+    return out;
 }
 
 ActivationResult ParseActivationResultXml(std::string_view xml) {
@@ -106,16 +141,80 @@ ActivationResult ParseActivationResultXml(std::string_view xml) {
         }
     }
 
-    // Check for remaining inactive objects (partial failure).
-    const auto* inactive = root->FirstChildElement("ioc:inactiveObjects");
-    if (inactive && inactive->FirstChildElement("ioc:entry")) {
-        for (auto* entry = inactive->FirstChildElement("ioc:entry"); entry;
-             entry = entry->NextSiblingElement("ioc:entry")) {
-            ++result.failed;
-            ++result.total;
-        }
+    return result;
+}
+
+// A pre-audit list (#82): the answer's root, or (older format) a child of it.
+std::optional<std::vector<PreauditCompanion>> ParsePreaudit(std::string_view xml) {
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(xml.data(), xml.size()) != tinyxml2::XML_SUCCESS || !doc.RootElement()) {
+        return std::nullopt;
+    }
+    const auto* root = doc.RootElement();
+    const auto* list = atom_parser::HasLocalName(root, "inactiveObjects")
+                           ? root
+                           : atom_parser::FirstChildByLocalName(root, "inactiveObjects");
+    if (!list) {
+        return std::nullopt;
+    }
+    auto companions = PreauditCompanions(list);
+    if (companions.empty()) {
+        return std::nullopt;
+    }
+    return companions;
+}
+
+std::string Lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+constexpr const char* kInactiveObjectsPath = "/sap/bc/adt/activation/inactiveobjects";
+
+// SAP answered a pre-audit list instead of activating. The list looks the
+// same whether anything is inactive or not (measured on A4H), so the user's
+// inactive objects decide: none of the requested objects or their companions
+// inactive is "nothing to activate"; otherwise nothing was activated, and the
+// message names what is inactive and the one call that activates it.
+ActivationResult ResolvePreaudit(IAdtSession& session,
+                                 const std::vector<ActivateObjectParams>& objects,
+                                 const std::vector<PreauditCompanion>& companions) {
+    std::set<std::string> relevant;
+    for (const auto& o : objects) relevant.insert(Lower(o.uri));
+    for (const auto& c : companions) {
+        if (!c.uri.empty()) relevant.insert(Lower(c.uri));
     }
 
+    std::vector<PreauditCompanion> inactive;
+    HttpHeaders headers;
+    headers["Accept"] = "application/vnd.sap.adt.inactivectsobjects.v1+xml, application/xml";
+    auto response = session.Get(kInactiveObjectsPath, headers);
+    if (response.IsOk() && response.Value().status_code == 200) {
+        if (auto listed = ParsePreaudit(response.Value().body)) {
+            for (auto& entry : *listed) {
+                if (relevant.count(Lower(entry.uri)) > 0) inactive.push_back(std::move(entry));
+            }
+        }
+    } else {
+        inactive = companions;  // cannot tell: report what SAP listed
+    }
+
+    ActivationResult result;
+    if (inactive.empty()) {
+        return result;  // nothing to activate
+    }
+    std::string labels;
+    std::string uris;
+    for (const auto& c : inactive) {
+        labels += (labels.empty() ? "" : ", ") + c.label;
+        uris += " " + c.uri;
+    }
+    result.total = static_cast<int>(inactive.size());
+    result.failed = result.total;
+    result.error_messages.push_back(
+        "Not activated: SAP activates this only together with what is inactive with it: " +
+        labels + ". Activate them in one call: erpl-adt activate" + uris + " .");
     return result;
 }
 
@@ -249,12 +348,20 @@ Result<ActivationResult, Error> ActivateObjects(
             return Result<ActivationResult, Error>::Err(std::move(poll).Error());
         }
 
+        if (auto preaudit = ParsePreaudit(poll.Value().body)) {
+            return Result<ActivationResult, Error>::Ok(
+                ResolvePreaudit(session, objects, *preaudit));
+        }
         return Result<ActivationResult, Error>::Ok(ParseActivationResultXml(
             poll.Value().body));
     }
 
     // Synchronous: 200 with activation result.
     if (http.status_code == 200) {
+        if (auto preaudit = ParsePreaudit(http.body)) {
+            return Result<ActivationResult, Error>::Ok(
+                ResolvePreaudit(session, objects, *preaudit));
+        }
         return Result<ActivationResult, Error>::Ok(
             ParseActivationResultXml(http.body));
     }
@@ -335,6 +442,17 @@ ActivateObjectParams ActivationParamsFromObjectUri(const std::string& object_uri
             if (!part.empty() && (kind == "fmodules" || kind == "includes")) {
                 params.type = kind == "fmodules" ? "FUGR/FF" : "FUGR/I";
                 params.name = SegmentToName(part);
+                params.parent_uri = base + seg + first;
+            } else if (kind == "source") {
+                // ".../groups/<g>/source/main": the main program SAPL<g>
+                // (/NS/SAPL<g> for a namespaced group), as ADT lists it.
+                const std::string group = SegmentToName(first);
+                const auto end = group.size() > 1 && group[0] == '/' ? group.find('/', 1)
+                                                                     : std::string::npos;
+                params.type = "FUGR/I";
+                params.name = end == std::string::npos
+                                  ? "SAPL" + group
+                                  : group.substr(0, end + 1) + "SAPL" + group.substr(end + 1);
                 params.parent_uri = base + seg + first;
             }
         }

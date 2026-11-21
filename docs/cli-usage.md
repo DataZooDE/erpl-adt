@@ -143,6 +143,10 @@ erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001
 # Write and activate in one step
 erpl-adt source write ZCL_MY_CLASS --file impl.abap --transport NPLK900001 --activate
 
+# Activate several objects in one request - SAP activates some only together,
+# e.g. a function group's main program with its group (exit 5 names them)
+erpl-adt activate /sap/bc/adt/functions/groups/zfg/source/main /sap/bc/adt/functions/groups/zfg
+
 # Run syntax check (exit 8 on an error); --version inactive checks what was
 # written but not activated yet
 erpl-adt source check ZCL_MY_CLASS

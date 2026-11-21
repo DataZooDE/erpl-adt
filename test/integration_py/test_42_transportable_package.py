@@ -12,6 +12,8 @@ import random
 
 import pytest
 
+from cli_runner import release_with_tasks
+
 STRUCTURE_PACKAGE = "ZCLASSIC_DEVELOPMENT"
 
 
@@ -57,3 +59,4 @@ class TestTransportablePackage:
                     "--transport", request)
             cli.run("object", "delete", f"/sap/bc/adt/packages/{package.lower()}",
                     "--transport", request)
+            release_with_tasks(cli, request)
