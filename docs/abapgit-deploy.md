@@ -397,8 +397,11 @@ objects `ZERPL_FX_*`), so the demo and the tests can share a system.
   deployed: ADT keeps the flag in the module's metadata
   (`fmodule:processingType`) and ignores it on create, so the deploy sets it
   by writing the metadata under the lock, before the source, as Eclipse's
-  properties view does. Update function modules (`UPDATE_TASK`) are refused
-  (exit 8).
+  properties view does. Update function modules with immediate start
+  (`<UPDATE_TASK>1</UPDATE_TASK>`, V1) are deployed the same way
+  (`fmodule:processingType="update"`, `fmodule:updateTaskKind="startImmediate"`).
+  Other update kinds (2, 3, 5) and a module with both `REMOTE_CALL` and
+  `UPDATE_TASK` are refused before anything is written (exit 8).
 * Supported types: DOMA, DTEL, FUGR (function modules), PROG, TRAN. Classes,
   interfaces, tables (TABL) and packages (DEVC) are not created by `abapgit
   deploy`; create packages with `erpl-adt object create --type DEVC/K`, and

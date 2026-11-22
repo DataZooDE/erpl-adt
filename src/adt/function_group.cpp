@@ -128,7 +128,8 @@ Result<void, Error> SetFunctionModuleProcessingType(IAdtSession& session, const 
                                                     const std::string& name,
                                                     const std::string& processing_type,
                                                     const LockHandle& lock_handle,
-                                                    const std::optional<std::string>& transport) {
+                                                    const std::optional<std::string>& transport,
+                                                    const std::string& update_task_kind) {
     using R = Result<void, Error>;
     static const std::string kMetaType = "application/vnd.sap.adt.functions.fmodules.v3+xml";
     const auto uri = FunctionModuleUri(group, name);
@@ -156,6 +157,19 @@ Result<void, Error> SetFunctionModuleProcessingType(IAdtSession& session, const 
         return R::Err(std::move(e));
     }
     meta.replace(at + kAttr.size(), end - at - kAttr.size(), processing_type);
+    // fmodule:updateTaskKind: only an update module has it
+    static const std::string kKind = " fmodule:updateTaskKind=\"";
+    const auto kind_at = meta.find(kKind);
+    if (kind_at != std::string::npos) {
+        const auto kind_end = meta.find('"', kind_at + kKind.size());
+        if (kind_end != std::string::npos) {
+            meta.erase(kind_at, kind_end + 1 - kind_at);
+        }
+    }
+    if (!update_task_kind.empty()) {
+        const auto type_end = meta.find('"', at + kAttr.size());
+        meta.insert(type_end + 1, kKind + update_task_kind + "\"");
+    }
     std::string url = uri + "?lockHandle=" + UrlEncode(lock_handle.Value());
     if (transport && !transport->empty()) {
         url += "&corrNr=" + UrlEncode(*transport);

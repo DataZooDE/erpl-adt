@@ -193,12 +193,18 @@ public:
             return texts;
         }
         for (const auto& fm : def.functions) {
-            if (!fm.update_task.empty()) {
+            if (!fm.update_task.empty() && UpdateTaskKind(fm.update_task).empty()) {
                 return R::Err(FugrError(
-                    "Function module " + fm.name +
-                        ": update function modules are not supported by the deploy yet "
-                        "(UPDATE_TASK set). Nothing was changed.",
+                    "Function module " + fm.name + ": UPDATE_TASK '" + fm.update_task +
+                        "' is not supported by the deploy (only 1, update module with immediate "
+                        "start). Nothing was changed.",
                     ErrorCategory::CheckError));
+            }
+            if (!fm.update_task.empty() && !fm.remote_call.empty()) {
+                return R::Err(FugrError("Function module " + fm.name +
+                                            ": REMOTE_CALL and UPDATE_TASK exclude each other. "
+                                            "Nothing was changed.",
+                                        ErrorCategory::CheckError));
             }
             if (!fm.remote_call.empty() && fm.remote_call != "R") {
                 return R::Err(FugrError(
@@ -449,12 +455,16 @@ private:
                     return R::Err(created.Error());
                 }
             }
-            // The RFC flag is metadata (ADT ignores it on create): set it before
-            // the source, whose pass-by-value parameters an RFC module needs.
+            // The RFC and update flags are metadata (ADT ignores them on create): set
+            // them before the source, whose pass-by-value parameters such a module needs.
             const std::string have_remote = it == have_fms.end() ? "" : it->second->remote_call;
-            if (fm.remote_call != have_remote) {
-                auto set = SetProcessingType(ctx, key.name, fm.name,
-                                             fm.remote_call == "R" ? "rfc" : "normal");
+            const std::string have_update = it == have_fms.end() ? "" : it->second->update_task;
+            if (fm.remote_call != have_remote || fm.update_task != have_update) {
+                const std::string type = !fm.update_task.empty() ? "update"
+                                         : fm.remote_call == "R" ? "rfc"
+                                                                 : "normal";
+                auto set = SetProcessingType(ctx, key.name, fm.name, type,
+                                             UpdateTaskKind(fm.update_task));
                 if (set.IsErr()) {
                     return R::Err(set.Error());
                 }
@@ -509,9 +519,16 @@ private:
         return R::Ok();
     }
 
+    // abapGit's UPDATE_TASK (RS38L-UTASK) as ADT's fmodule:updateTaskKind; empty for
+    // a kind the deploy does not support (only 1, start immediately, is measured)
+    static std::string UpdateTaskKind(const std::string& update_task) {
+        return update_task == "1" ? "startImmediate" : "";
+    }
+
     static Result<void, Error> SetProcessingType(TypeContext& ctx, const std::string& group,
                                                  const std::string& fm,
-                                                 const std::string& processing_type) {
+                                                 const std::string& processing_type,
+                                                 const std::string& update_task_kind) {
         auto uri = MakeUri(FunctionModuleUri(group, fm));
         if (uri.IsErr()) {
             return Result<void, Error>::Err(uri.Error());
@@ -521,7 +538,8 @@ private:
             return Result<void, Error>::Err(guard.Error());
         }
         return SetFunctionModuleProcessingType(ctx.session, group, fm, processing_type,
-                                               guard.Value().Handle(), Transport(ctx));
+                                               guard.Value().Handle(), Transport(ctx),
+                                               update_task_kind);
     }
 
     static std::string MainProgram(const FugrDefinition& def, const std::string& group) {
