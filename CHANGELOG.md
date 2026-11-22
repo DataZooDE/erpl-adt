@@ -5,6 +5,13 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** `abapgit deploy` deploys update function modules with immediate start (V1,
+  `<UPDATE_TASK>1</UPDATE_TASK>`): like the RFC flag, ADT ignores the processing type on create, so the deploy sets
+  `fmodule:processingType="update"` with `fmodule:updateTaskKind="startImmediate"` in the module's metadata under
+  the lock (as SAP's own STATUS_UPDATE has them on A4H), and clears both when the files drop the flag. Other update
+  kinds (2 delayed, 3 no restart, 5 collective) are still refused before anything is written, and so is a module
+  that claims both REMOTE_CALL and UPDATE_TASK.
+
 ## v2026.11.22
 
 - **[feature]** `erpl-adt abapgit status | deploy | export | delete | cleanup` (#71): classic SAP GUI objects -
@@ -36,7 +43,7 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
   source, as for TABL/DT); BAPI-like function module interfaces need them.
 - **[feature]** `abapgit deploy` deploys remote-enabled function modules (`<REMOTE_CALL>R</REMOTE_CALL>`), which it
   refused before (exit 8). ADT ignores the RFC flag on create; the deploy sets it in the module's metadata under the
-  lock, and clears it again when the files drop it. Update function modules stay refused.
+  lock, and clears it again when the files drop it.
 - **[feature]** MCP `adt_activate`, `adt_run_tests`, `adt_run_atc` and `adt_check_syntax` report `passed` - the
   verdict the CLI turns into exit 5/7/8, from the same rules (#84). For `adt_check_syntax` the text block stays the
   message list; the structured content is `{result, passed}`.
