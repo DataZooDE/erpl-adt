@@ -46,7 +46,11 @@ with `search … --type` (or `source read --type`) and pass the URI.
 8. **The RFC flag of a function module is metadata, not source.** ADT ignores `fmodule:processingType` on create;
    it is set by PUTting the module's metadata under the lock (what Eclipse's properties view does).
    `abapgit deploy` does this for function modules with `<REMOTE_CALL>R</REMOTE_CALL>`; an RFC module's
-   parameters must be passed by value.
+   parameters must be passed by value. The same for **update modules** (`<UPDATE_TASK>1</UPDATE_TASK>`, V1 start
+   immediately): ADT's metadata is `fmodule:processingType="update" fmodule:updateTaskKind="startImmediate"`, and
+   the module source SAP exports starts its interface block with `*"*"Update Function Module:` / `*"` before
+   `*"*"Local Interface:`. Parameters by value, no EXPORTING; an `XSTRING` IMPORTING parameter is fine (a row
+   table serialized with `CALL TRANSFORMATION id`). Other update kinds are refused.
 9. **Generated ABAP: what activation refuses on A4H** (SAP names one problem per round, so check before writing):
    method and other names longer than 30 characters; `<word>` in an ABAP Doc comment (`"! ...`) — it is
    parsed as an HTML tag; offset/length access on `STRING` variables in assignments (`result = result(35)`;
@@ -54,7 +58,8 @@ with `search … --type` (or `source read --type`) and pass the URI.
    written with `source write <class-uri> --section testclasses`; write every class first and activate them in
    one `activate <uri>...` call, so classes that use each other activate together. Also refused: a table
    expression or offset directly on a method result (`get( )[ key ]`, `get( )+4(2)` — assign it first); a
-   positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); a
+   positional first argument next to named ones (`assert_true( x msg = ... )` — name `act =`); an unnamed
+   argument when the method has more than one optional IMPORTING parameter; a
    `LOOP ... ASSIGNING <fs> WHERE` condition that uses `<fs>`; ABAP Doc (`"!`) before a chained `TYPES:`.
 10. **Find where an activation error is.** `--json activate` gives each message's `object`, `include`
     (`main`, `testclasses`, ...), `line` and `column` in `messages`; text mode prints
@@ -66,6 +71,11 @@ with `search … --type` (or `source read --type`) and pass the URI.
 12. **Dictionary structures for RFC parameters:** `object create --type TABL/DS`, then `source write
     /sap/bc/adt/ddic/structures/<name>/source/main` with a `define structure` source and `--activate`. RFC modules
     pass everything by value and need dictionary types (no local types, no `TYPE REF TO`).
+13. **ABAP Unit with OSQL test doubles (measured on A4H):** `cl_osql_test_environment` redirects dynamic
+    statements too (`INSERT (name) FROM TABLE @<t>`); `ENQUEUE_*` in a test sets real locks of the test session
+    (`ENQUEUE_READ` sees them). An exception class inheriting from `CX_DYNAMIC_CHECK` that a method does not
+    declare arrives as `CX_SY_NO_HANDLER` (catch that and look at `previous`). Code under test can tell it runs
+    in ABAP Unit from the call stack (`SYSTEM_CALLSTACK`: an include `*CCAU` or a `CL_AUNIT*` program).
 
 ## Find
 
