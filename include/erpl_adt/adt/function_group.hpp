@@ -40,11 +40,14 @@ namespace erpl_adt {
 // fmodule:processingType on create. Eclipse's properties view sets it by
 // GETting the module's metadata and PUTting it back with the new type under
 // the lock (`lock_handle`); measured on A4H. `processing_type` is ADT's value:
-// "normal" or "rfc".
+// "normal", "rfc" or "update". An update module also carries
+// fmodule:updateTaskKind (`update_task_kind`, e.g. "startImmediate" for V1,
+// read from SAP's STATUS_UPDATE on A4H); it is set when given and removed
+// when empty.
 [[nodiscard]] Result<void, Error> SetFunctionModuleProcessingType(
     IAdtSession& session, const std::string& group, const std::string& name,
     const std::string& processing_type, const LockHandle& lock_handle,
-    const std::optional<std::string>& transport);
+    const std::optional<std::string>& transport, const std::string& update_task_kind = "");
 
 // The main program of a function group: SAPL<group>, or /NS/SAPL<group> for
 // a namespaced group (upper case). The one place that spells this (crew F8).

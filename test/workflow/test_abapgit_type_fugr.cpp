@@ -306,7 +306,30 @@ TEST_CASE("FUGR handler: last changer per include, not the main program's",
     CHECK(by.at("zerpl_fx_fg.fugr.xml").empty());  // AREAT: no changer recorded
 }
 
-TEST_CASE("FUGR handler: update modules are refused before anything is written",
+TEST_CASE("FUGR handler: an unsupported update kind is refused before anything is written",
+          "[workflow][abapgit_fugr]") {
+    auto handlers = DefaultTypeHandlers();
+    const auto& handler = *handlers.at("FUGR");
+    AbapGitObjectKey key{"FUGR", "ZERPL_FX_FG"};
+    AbapGitXml xml;
+    xml.serializer = "LCL_OBJECT_FUGR";
+    xml.serializer_version = "v1.0.0";
+    xml.values_xml =
+        "<AREAT>demo</AREAT><FUNCTIONS><item><FUNCNAME>Z_UPD</FUNCNAME>"
+        "<UPDATE_TASK>2</UPDATE_TASK></item></FUNCTIONS>";
+    ObjectFileSet desired{{"zerpl_fx_fg.fugr.xml", RenderAbapGitXml(xml)},
+                          {"zerpl_fx_fg.fugr.z_upd.abap", "FUNCTION z_upd.\nENDFUNCTION.\n"}};
+    MockAdtSession session;
+    FakeEngine engine;
+    TypeContext ctx{session, engine, "$TMP", "", "E"};
+    auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
+    REQUIRE(plan.IsErr());
+    CHECK(plan.Error().message.find("update") != std::string::npos);
+    CHECK(session.PostCallCount() == 0);
+    CHECK(session.PutCallCount() == 0);
+}
+
+TEST_CASE("FUGR handler: update modules (start immediately) are planned, not refused",
           "[workflow][abapgit_fugr]") {
     auto handlers = DefaultTypeHandlers();
     const auto& handler = *handlers.at("FUGR");
@@ -323,8 +346,7 @@ TEST_CASE("FUGR handler: update modules are refused before anything is written",
     FakeEngine engine;
     TypeContext ctx{session, engine, "$TMP", "", "E"};
     auto plan = handler.Plan(key, desired, ObjectState{}, ctx);
-    REQUIRE(plan.IsErr());
-    CHECK(plan.Error().message.find("update") != std::string::npos);
+    REQUIRE(plan.IsOk());
     CHECK(session.PostCallCount() == 0);
     CHECK(session.PutCallCount() == 0);
 }
@@ -374,6 +396,45 @@ TEST_CASE("SetFunctionModuleProcessingType: lock-held PUT of the metadata with t
     CHECK(put.content_type == "application/vnd.sap.adt.functions.fmodules.v3+xml");
     CHECK(put.body.find("fmodule:processingType=\"rfc\"") != std::string::npos);
     CHECK(put.body.find("processingType=\"normal\"") == std::string::npos);
+}
+
+TEST_CASE("SetFunctionModuleProcessingType: an update module gets its update task kind",
+          "[workflow][abapgit_fugr]") {
+    // SAP's STATUS_UPDATE (V1) on A4H: processingType="update" updateTaskKind="startImmediate"
+    MockAdtSession session;
+    const std::string meta =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><fmodule:abapFunctionModule "
+        "fmodule:releaseState=\"notReleased\" fmodule:processingType=\"normal\" "
+        "adtcore:name=\"Z_UPD\" adtcore:type=\"FUGR/FF\" "
+        "xmlns:fmodule=\"http://www.sap.com/adt/functions/fmodules\" "
+        "xmlns:adtcore=\"http://www.sap.com/adt/core\"/>";
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, meta}));
+    session.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    auto r = SetFunctionModuleProcessingType(session, "ZERPL_FG", "Z_UPD", "update",
+                                             LockHandle::Create("LH1").Value(), std::nullopt,
+                                             "startImmediate");
+    REQUIRE(r.IsOk());
+    REQUIRE(session.PutCallCount() == 1);
+    const auto& body = session.PutCalls()[0].body;
+    CHECK(body.find("fmodule:processingType=\"update\" fmodule:updateTaskKind=\"startImmediate\"") !=
+          std::string::npos);
+}
+
+TEST_CASE("SetFunctionModuleProcessingType: leaving update drops the update task kind",
+          "[workflow][abapgit_fugr]") {
+    MockAdtSession session;
+    const std::string meta =
+        "<fmodule:abapFunctionModule fmodule:processingType=\"update\" "
+        "fmodule:updateTaskKind=\"startImmediate\" adtcore:name=\"Z_UPD\"/>";
+    session.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, meta}));
+    session.EnqueuePut(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+    auto r = SetFunctionModuleProcessingType(session, "ZERPL_FG", "Z_UPD", "normal",
+                                             LockHandle::Create("LH1").Value(), std::nullopt);
+    REQUIRE(r.IsOk());
+    REQUIRE(session.PutCallCount() == 1);
+    const auto& body = session.PutCalls()[0].body;
+    CHECK(body.find("updateTaskKind") == std::string::npos);
+    CHECK(body.find("fmodule:processingType=\"normal\" adtcore:name") != std::string::npos);
 }
 
 TEST_CASE("SetFunctionModuleProcessingType: unknown metadata shape is an error, not a guess",
