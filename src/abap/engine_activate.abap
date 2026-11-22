@@ -69,14 +69,31 @@
     DATA(subrc) = sy-subrc.
     DATA(failures) = xsdbool( subrc <> 0 ).
     IF subrc <> 0.
-      emit_symsg( ).
+      " On an exception SAP does not pass p_checklist back: say what ended
+      " the call even when sy-msg holds nothing (#95).
+      IF sy-msgid IS INITIAL.
+        emit( kind = 'ERR' text = |RS_WORKING_OBJECTS_ACTIVATE ended with {
+          SWITCH string( subrc WHEN 1 THEN `EXCECUTION_ERROR` WHEN 2 THEN `CANCELLED`
+                               WHEN 3 THEN `INSERT_INTO_CORR_ERROR` ELSE `an exception` ) }| ).
+      ELSE.
+        emit_symsg( ).
+      ENDIF.
     ENDIF.
     IF checklist IS BOUND.
+      " The checklist lists warnings and infos with the errors (mtype); only
+      " an error fails the activation (#95: one syntax warning failed every
+      " program of the run).
       checklist->get_error_messages( IMPORTING p_error_tab = errors ).
       LOOP AT errors ASSIGNING FIELD-SYMBOL(<error>).
+        DATA(is_error) = xsdbool( <error>-mtype = swbm_c_message_type_error OR
+                                  <error>-mtype = swbm_c_message_type_bapi_e ).
         LOOP AT <error>-mtext INTO DATA(message).
-          emit( kind = 'ERR' text = |{ <error>-object_text }: { message }| ).
-          failures = abap_true.
+          IF is_error = abap_true.
+            emit( kind = 'ERR' text = |{ <error>-object_text }: { message }| ).
+            failures = abap_true.
+          ELSE.
+            emit( kind = 'WARN' text = |{ <error>-object_text }: { message }| ).
+          ENDIF.
         ENDLOOP.
       ENDLOOP.
     ENDIF.
@@ -114,8 +131,11 @@
         IF checklist IS BOUND.
           checklist->get_error_messages( IMPORTING p_error_tab = errors ).
           LOOP AT errors ASSIGNING FIELD-SYMBOL(<owner_error>).
+            DATA(owner_kind) = COND string(
+              WHEN <owner_error>-mtype = swbm_c_message_type_error OR
+                   <owner_error>-mtype = swbm_c_message_type_bapi_e THEN `ERR` ELSE `WARN` ).
             LOOP AT <owner_error>-mtext INTO DATA(owner_message).
-              emit( kind = 'ERR' text = |{ owner_left }: { <owner_error>-object_text }: { owner_message }| ).
+              emit( kind = owner_kind text = |{ owner_left }: { <owner_error>-object_text }: { owner_message }| ).
             ENDLOOP.
           ENDLOOP.
         ENDIF.

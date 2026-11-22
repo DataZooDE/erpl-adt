@@ -217,3 +217,21 @@ TEST_CASE("Engine source: DDIC deletes record the deletion on the given request"
         CHECK(body.find("= trkorr") != std::string::npos);
     }
 }
+
+// #95: the checklist of RS_WORKING_OBJECTS_ACTIVATE lists warnings and infos
+// with the errors (CL_WB_CHECKLIST->get_error_messages returns every type,
+// in mtype). A warning is not a failed activation; measured on A4H, one
+// program with a syntax warning ("LT_OPEN is a table with an empty primary
+// key") failed all programs of the run.
+TEST_CASE("Engine source: activation counts only error messages as failures",
+          "[classic_engine][activation]") {
+    const auto src = BuildEngineSource("ZCL_H", {});
+    const auto begin = src.find("METHOD activate_objects.");
+    REQUIRE(begin != std::string::npos);
+    const auto body = src.substr(begin, src.find("ENDMETHOD.", begin) - begin);
+    CHECK(body.find("mtype") != std::string::npos);
+    CHECK(body.find("swbm_c_message_type_error") != std::string::npos);
+    CHECK(body.find("kind = 'WARN'") != std::string::npos);
+    // An exception without a message still says what ended the call.
+    CHECK(body.find("RS_WORKING_OBJECTS_ACTIVATE ended with") != std::string::npos);
+}
