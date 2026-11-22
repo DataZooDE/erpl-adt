@@ -5,12 +5,14 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+## v2026.11.22.1
+
 - **[feature]** `abapgit deploy` deploys update function modules with immediate start (V1,
   `<UPDATE_TASK>1</UPDATE_TASK>`): like the RFC flag, ADT ignores the processing type on create, so the deploy sets
   `fmodule:processingType="update"` with `fmodule:updateTaskKind="startImmediate"` in the module's metadata under
   the lock (as SAP's own STATUS_UPDATE has them on A4H), and clears both when the files drop the flag. Other update
   kinds (2 delayed, 3 no restart, 5 collective) are still refused before anything is written, and so is a module
-  that claims both REMOTE_CALL and UPDATE_TASK.
+  that claims both REMOTE_CALL and UPDATE_TASK (#97).
 
 ## v2026.11.22
 
