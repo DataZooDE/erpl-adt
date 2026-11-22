@@ -5,6 +5,20 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+## v2026.11.22
+
+- **[feature]** `erpl-adt abapgit status | deploy | export | delete | cleanup` (#71): classic SAP GUI objects -
+  programs with dynpros, GUI status and titles, text pools and variants, transactions, function groups, domains, data
+  elements, translations and documentation - deployed from abapGit files in dependency order and exported back byte for
+  byte. A drift check refuses to overwrite a change made in SAP that is not in git; `status` changes nothing. See
+  `docs/abapgit-deploy.md`.
+- **[feature]** `screen create | read | delete`: disposable classic Dynpro screens (#66).
+- **[fix]** Leaving stateful mode closes the server-side stateful session (#70).
+- **[fix]** `abapgit deploy` no longer reports every program of a run `failed` when one of them has a syntax
+  warning (#95). SAP's activation checklist lists warnings with the errors; the deploy took a warning (e.g. "LT_OPEN is
+  a table with an empty primary key") for a failed activation, and as it named no object, failed all programs - while
+  all were active. Only errors count now. When the activation call itself ends with an exception, the error names it
+  instead of being empty.
 - **[fix]** `abapgit deploy` refuses an object whose short text is longer than its SAP field before writing it
   (#92) - like every other refused object; the rest of the repository deploys as usual: exit 8, naming the field
   and the limit (function group text 40, function module text 74, program title 70, data

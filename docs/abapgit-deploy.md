@@ -120,7 +120,8 @@ program for its transaction). The worklist activation
 with a syntax error cancels it for all; erpl-adt then activates each object
 still inactive on its own, so only the broken one stays inactive and fails
 (with SAP's messages, matched by whole object name: a message about `ZFOO_TOP`
-does not fail `ZFOO`).
+does not fail `ZFOO`). A syntax warning is not a failure: the activation's
+checklist lists warnings with the errors, and only errors count (#95).
 
 ### Own deploys
 
