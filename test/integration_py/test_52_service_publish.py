@@ -30,11 +30,12 @@ def _write_and_activate(cli, uri, path, source):
     assert activation["failed"] == 0, activation
 
 
-def _metadata_status(cli, service):
-    """HTTP status of the service's $metadata (the gateway, not ADT)."""
+def _metadata_status(cli, service, path=None):
+    """HTTP status of the service's $metadata (the gateway, not ADT); path: the V4 service path instead of V2's."""
     auth = base64.b64encode(f"{cli.user}:{cli.password}".encode()).decode()
+    base = path or f"/sap/opu/odata/sap/{service}"
     request = urllib.request.Request(
-        f"http://{cli.host}:{cli.port}/sap/opu/odata/sap/{service}/$metadata"
+        f"http://{cli.host}:{cli.port}{base}/$metadata"
         f"?sap-client={cli.client}",
         headers={"Authorization": f"Basic {auth}", "Accept": "application/xml"},
     )
@@ -45,11 +46,13 @@ def _metadata_status(cli, service):
         return e.code
 
 
-def _wait_for_metadata(cli, service, expected, attempts=10):
+def _wait_for_metadata(cli, service, published, attempts=10, path=None):
+    """Poll until the endpoint is up (200) or down again (anything else: A4H answers 403 for a service that is
+    not published, other systems 404)."""
     status = None
     for _ in range(attempts):
-        status = _metadata_status(cli, service)
-        if status == expected:
+        status = _metadata_status(cli, service, path)
+        if (status == 200) == published:
             return status
         time.sleep(2)
     return status
@@ -58,10 +61,20 @@ def _wait_for_metadata(cli, service, expected, attempts=10):
 @pytest.fixture
 def v2_binding(cli, tmp_path):
     """An activated V2 binding (category 1, Web API) over a view entity on TADIR."""
+    yield from _binding(cli, tmp_path, "V2")
+
+
+@pytest.fixture
+def v4_binding(cli, tmp_path):
+    """An activated V4 binding (category 1, Web API): yields (binding, service definition)."""
+    yield from _binding(cli, tmp_path, "V4", with_definition=True)
+
+
+def _binding(cli, tmp_path, version, with_definition=False):
     suffix = uuid4().hex[:8].upper()
     view = "ZI_ERPL104_" + suffix
     service_def = "ZERPL104_SD_" + suffix
-    binding = "ZERPL104_O2_" + suffix
+    binding = ("ZERPL104_O2_" if version == "V2" else "ZERPL104_O4_") + suffix
     created = []
     try:
         view_uri = _create(cli, "DDLS/DF", view)
@@ -83,16 +96,16 @@ def v2_binding(cli, tmp_path):
                             f"define service {service_def} {{ expose {view} as Objects; }}\n")
 
         binding_uri = _create(cli, "SRVB/SVB", binding,
-                              "--binding-type", "ODATA", "--binding-version", "V2",
+                              "--binding-type", "ODATA", "--binding-version", version,
                               "--binding-category", "1", "--service-definition", service_def)
         created.append(binding_uri)
         activation = cli.run_ok("activate", binding_uri)
         assert activation["failed"] == 0, activation
-        yield binding
+        yield (binding, service_def) if with_definition else binding
     finally:
         # A binding that is still published cannot always be deleted; take the
         # service down first (harmless when it was never published).
-        cli.run("service", "unpublish", binding)
+        cli.run("service", "unpublish", binding, "--odata", version.lower())
         for uri in reversed(created):
             cli.run("object", "delete", uri)
 
@@ -111,7 +124,7 @@ def test_publish_and_unpublish_v2_binding(cli, v2_binding):
     assert published["service_version"] == "0001"
     assert published["action"] == "publish"
 
-    assert _wait_for_metadata(cli, v2_binding, 200) == 200
+    assert _wait_for_metadata(cli, v2_binding, published=True) == 200
 
     unpublished = cli.run_ok("service", "unpublish", v2_binding, "--service-version", "0001",
                              "--odata", "v2")
@@ -119,7 +132,7 @@ def test_publish_and_unpublish_v2_binding(cli, v2_binding):
     assert unpublished["severity"] == "OK", unpublished
     assert unpublished["action"] == "unpublish"
 
-    assert _wait_for_metadata(cli, v2_binding, 404) == 404
+    assert _wait_for_metadata(cli, v2_binding, published=False) != 200
 
 
 @pytest.mark.object
@@ -128,3 +141,16 @@ def test_publish_unknown_binding_fails(cli):
     name = "ZERPL104_NOPE_" + uuid4().hex[:6].upper()
     result = cli.run("service", "publish", name)
     assert result.returncode != 0, result.stdout
+
+
+def test_publish_and_unpublish_v4_binding(cli, v4_binding):
+    # a Web API V4 binding answers under /sap/opu/odata4/sap/<binding>/srvd_a2x/sap/<service definition>/0001
+    binding, service_def = v4_binding
+    path = f"/sap/opu/odata4/sap/{binding.lower()}/srvd_a2x/sap/{service_def.lower()}/0001"
+    assert _metadata_status(cli, binding, path) != 200
+    published = cli.run_ok("service", "publish", binding, "--odata", "v4")
+    assert published["severity"] == "OK", published
+    assert _wait_for_metadata(cli, binding, published=True, path=path) == 200
+    unpublished = cli.run_ok("service", "unpublish", binding, "--odata", "v4")
+    assert unpublished["severity"] == "OK", unpublished
+    assert _wait_for_metadata(cli, binding, published=False, path=path) != 200
