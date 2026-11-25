@@ -5,6 +5,7 @@
 #include <erpl_adt/adt/classrun.hpp>
 #include <erpl_adt/adt/i_adt_session.hpp>
 #include <erpl_adt/adt/i_xml_codec.hpp>
+#include <erpl_adt/adt/service_binding.hpp>
 #include <erpl_adt/adt/source.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/cli/command_router.hpp>
@@ -128,6 +129,15 @@ int ReportActivationOutcome(const ActivationResult& act,
 int ReportClassRunOutcome(const ClassRunResult& cr,
                           OutputFormatter& fmt,
                           std::ostream& out);
+
+// Report the outcome of `service publish|unpublish` (#104). SAP answers the
+// job with HTTP 200 either way; the verdict is its SEVERITY. Exit 0 when it is
+// OK, 5 otherwise - in JSON mode too, where the JSON keeps severity and texts.
+[[nodiscard]] int ServicePublishExitCode(const ServicePublishResult& result);
+int ReportServicePublishOutcome(const ServicePublishResult& result,
+                                OutputFormatter& fmt,
+                                std::ostream& out,
+                                std::ostream& err);
 
 // Print an actionable TABL/DT annotation hint to err_stream when
 // source_uri contains "ddic/tables" and err.message contains "can't save".

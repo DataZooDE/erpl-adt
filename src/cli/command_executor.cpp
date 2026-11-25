@@ -54,6 +54,7 @@
 #include <erpl_adt/adt/search.hpp>
 #include <erpl_adt/adt/source.hpp>
 #include <erpl_adt/adt/screen.hpp>
+#include <erpl_adt/adt/service_binding.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
 #include <erpl_adt/adt/dumps.hpp>
@@ -155,7 +156,8 @@ inline std::string SectionUriSegment(const std::string& section) {
 
 const std::set<std::string> kNewStyleGroups = {
     "activate", "bw", "search", "object", "source", "test", "check",
-    "transport", "ddic", "package", "discover", "catalog", "screen", "abapgit", "dump"};
+    "transport", "ddic", "package", "discover", "catalog", "screen", "abapgit", "dump",
+    "service"};
 
 constexpr const char* kCredsFile = ".adt.creds";
 
@@ -2580,6 +2582,50 @@ int HandleDumpShow(const CommandArgs& args) {
     std::cout << "Time (UTC)     " << d.time << "\n";
     if (!d.text.empty()) std::cout << "\n" << d.text << "\n";
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// service publish / service unpublish (#104)
+// ---------------------------------------------------------------------------
+int RunServicePublishCommand(const CommandArgs& args, ServicePublishAction action) {
+    OutputFormatter fmt(JsonMode(args), ColorMode(args));
+    const char* verb = action == ServicePublishAction::Publish ? "publish" : "unpublish";
+
+    if (args.positional.empty()) {
+        fmt.PrintError(MakeValidationError(
+            std::string("Missing service binding name. Usage: erpl-adt service ") + verb +
+            " <binding> [--service-version 0001] [--odata v2|v4]"));
+        return 99;
+    }
+    auto odata = ParseODataVersion(GetFlag(args, "odata", "v2"));
+    if (odata.IsErr()) {
+        fmt.PrintError(MakeValidationError("--odata: " + odata.Error().message));
+        return 99;
+    }
+    const auto service_version = GetFlag(args, "service-version", "0001");
+    if (service_version.empty()) {
+        fmt.PrintError(MakeValidationError("--service-version must not be empty (e.g. 0001)"));
+        return 99;
+    }
+
+    auto session = RequireSession(args, fmt);
+    if (!session) return 99;
+    auto result = action == ServicePublishAction::Publish
+        ? PublishServiceBinding(*session, args.positional[0], service_version, odata.Value())
+        : UnpublishServiceBinding(*session, args.positional[0], service_version, odata.Value());
+    if (result.IsErr()) {
+        fmt.PrintError(result.Error());
+        return result.Error().ExitCode();
+    }
+    return ReportServicePublishOutcome(result.Value(), fmt, std::cout, std::cerr);
+}
+
+int HandleServicePublish(const CommandArgs& args) {
+    return RunServicePublishCommand(args, ServicePublishAction::Publish);
+}
+
+int HandleServiceUnpublish(const CommandArgs& args) {
+    return RunServicePublishCommand(args, ServicePublishAction::Unpublish);
 }
 
 // ---------------------------------------------------------------------------
@@ -7300,6 +7346,35 @@ int ReportClassRunOutcome(const ClassRunResult& cr,
     return 0;
 }
 
+int ServicePublishExitCode(const ServicePublishResult& result) {
+    return result.Succeeded() ? 0 : 5;
+}
+
+int ReportServicePublishOutcome(const ServicePublishResult& result,
+                                OutputFormatter& fmt,
+                                std::ostream& out,
+                                std::ostream& err) {
+    const int code = ServicePublishExitCode(result);
+    if (fmt.IsJsonMode()) {
+        fmt.PrintJson(ServicePublishResultToJson(result).dump());
+        return code;
+    }
+    const bool publish = result.action == ServicePublishAction::Publish;
+    const std::string label = result.binding + " (OData " + ODataVersionName(result.odata) +
+                              ", version " + result.service_version + ")";
+    if (code == 0) {
+        fmt.PrintSuccess(std::string(publish ? "Published: " : "Unpublished: ") + label);
+        if (!result.short_text.empty()) out << "  " << result.short_text << "\n";
+        if (!result.long_text.empty()) out << "  " << result.long_text << "\n";
+        return code;
+    }
+    err << (publish ? "Publish" : "Unpublish") << " of " << label << " failed (severity "
+        << (result.severity.empty() ? std::string("<none>") : result.severity) << ")\n";
+    if (!result.short_text.empty()) err << "  " << result.short_text << "\n";
+    if (!result.long_text.empty()) err << "  " << result.long_text << "\n";
+    return code;
+}
+
 void PrintTableAnnotationHintIfNeeded(const Error& err,
                                       const std::string& source_uri,
                                       std::ostream& err_stream) {
@@ -7481,7 +7556,8 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     // Group ordering.
     const std::vector<std::string> group_order = {
         "search", "object", "source", "activate", "test", "check", "dump",
-        "transport", "ddic", "package", "discover", "bw", "catalog", "screen", "abapgit"};
+        "transport", "ddic", "package", "discover", "service", "bw", "catalog", "screen",
+        "abapgit"};
 
     // Group display names and short descriptions (overrides for cleaner display).
     struct GroupMeta {
@@ -7500,6 +7576,7 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
         {"ddic",      {"DATA DICTIONARY", "Tables and CDS views"}},
         {"package",   {"PACKAGE", ""}},
         {"discover",  {"DISCOVER", ""}},
+        {"service",   {"SERVICE", "Publish and unpublish OData service bindings (SRVB)"}},
         {"bw",        {"BW", "SAP BW/4HANA Modeling operations"}},
         {"catalog",   {"CATALOG", "Unified cross-domain metadata catalog"}},
         {"screen",    {"SCREEN", "Disposable classic Dynpro (Screen Painter) screens"}},
@@ -8022,6 +8099,13 @@ void RegisterAllCommands(CommandRouter& router) {
     router.SetGroupExamples("discover", {
         "$ erpl-adt discover services",
         "$ erpl-adt --json discover services",
+    });
+
+    router.SetGroupDescription("service", "Publish and unpublish OData service bindings (SRVB)");
+    router.SetGroupExamples("service", {
+        "$ erpl-adt service publish ZUI_TRAVEL_O2",
+        "$ erpl-adt --json service publish ZUI_TRAVEL_O4 --odata v4",
+        "$ erpl-adt service unpublish ZUI_TRAVEL_O2",
     });
 
     router.SetGroupDescription(
@@ -8623,6 +8707,48 @@ void RegisterAllCommands(CommandRouter& router) {
         };
         router.Register("dump", "show", "Show a runtime error and where it happened",
                         HandleDumpShow, std::move(help));
+    }
+
+    // -----------------------------------------------------------------------
+    // service publish / unpublish (#104)
+    // -----------------------------------------------------------------------
+    const std::vector<FlagHelp> service_flags = {
+        {"service-version", "<version>", "Service version (default: 0001)", false},
+        {"odata", "<v2|v4>", "OData version of the binding (default: v2)", false},
+    };
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt service publish <binding> [flags]";
+        help.args_description = "<binding>    Service binding (SRVB) name, e.g. ZUI_TRAVEL_O2";
+        help.long_description =
+            "Publishes the OData service of an activated service binding, as the Publish "
+            "button of ADT's binding editor does; a V2 service then answers at "
+            "/sap/opu/odata/sap/<binding>. Prints SAP's severity and texts. Exits 5 when "
+            "SAP answers a severity other than OK, with --json too (the JSON keeps "
+            "severity, short_text and long_text).";
+        help.flags = service_flags;
+        help.examples = {
+            "erpl-adt service publish ZUI_TRAVEL_O2",
+            "erpl-adt service publish ZUI_TRAVEL_O2 --service-version 0001",
+            "erpl-adt --json service publish ZUI_TRAVEL_O4 --odata v4",
+        };
+        router.Register("service", "publish", "Publish an OData service binding",
+                        HandleServicePublish, std::move(help));
+    }
+    {
+        CommandHelp help;
+        help.usage = "erpl-adt service unpublish <binding> [flags]";
+        help.args_description = "<binding>    Service binding (SRVB) name, e.g. ZUI_TRAVEL_O2";
+        help.long_description =
+            "Removes the published OData service of a service binding (the binding itself "
+            "stays). Exits 5 when SAP answers a severity other than OK.";
+        help.flags = service_flags;
+        help.examples = {
+            "erpl-adt service unpublish ZUI_TRAVEL_O2",
+            "erpl-adt --json service unpublish ZUI_TRAVEL_O4 --odata v4",
+        };
+        router.Register("service", "unpublish", "Unpublish an OData service binding",
+                        HandleServiceUnpublish, std::move(help));
     }
 
     // -----------------------------------------------------------------------

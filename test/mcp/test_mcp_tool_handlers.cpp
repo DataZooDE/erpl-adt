@@ -98,7 +98,7 @@ const std::set<std::string>& NoArgTools() {
 TEST_CASE("RegisterAdtTools: registers all tools", "[mcp][handlers]") {
     MockAdtSession mock;
     auto registry = MakeRegistry(mock);
-    CHECK(registry.Tools().size() == 70);
+    CHECK(registry.Tools().size() == 72);
 }
 
 TEST_CASE("RegisterAdtTools: all tools have schemas", "[mcp][handlers]") {
@@ -1131,6 +1131,74 @@ TEST_CASE("adt_activate: messages name class, include and line", "[mcp][handlers
     CHECK(j["messages"][1]["line"] == 9);
 }
 
+// #104: publish / unpublish an OData service binding.
+TEST_CASE("adt_publish_service: OK answer and request shape", "[mcp][handlers][service]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         R"(<?xml version="1.0" encoding="utf-8"?><asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">)"
+         R"(<asx:values><DATA><SEVERITY>OK</SEVERITY>)"
+         R"(<SHORT_TEXT>Local Service Endpoint of service ZUI_ERPL_O2 is activated locally</SHORT_TEXT>)"
+         R"(<LONG_TEXT/></DATA></asx:values></asx:abap>)"}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_publish_service", {{"binding", "ZUI_ERPL_O2"}});
+    auto j = ParseContent(result);
+    CHECK(j["ok"] == true);
+    CHECK(j["severity"] == "OK");
+    CHECK(j["binding"] == "ZUI_ERPL_O2");
+    CHECK(j["odata"] == "v2");
+    CHECK(j["service_version"] == "0001");
+    CHECK(j["action"] == "publish");
+    CHECK(result.structured == j);
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path ==
+          "/sap/bc/adt/businessservices/odatav2/publishjobs?servicename=ZUI_ERPL_O2&serviceversion=0001");
+}
+
+TEST_CASE("adt_unpublish_service: v4 and version; ERROR keeps the texts with ok=false",
+          "[mcp][handlers][service]") {
+    MockAdtSession mock;
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok(
+        {200, {},
+         R"(<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0"><asx:values><DATA>)"
+         R"(<SEVERITY>ERROR</SEVERITY><SHORT_TEXT>Service ZUI_ERPL_O4 is not published</SHORT_TEXT>)"
+         R"(<LONG_TEXT>Nothing to unpublish.</LONG_TEXT></DATA></asx:values></asx:abap>)"}));
+    auto registry = MakeRegistry(mock);
+    auto result = CallTool(registry, "adt_unpublish_service",
+                           {{"binding", "ZUI_ERPL_O4"}, {"odata", "v4"}, {"service_version", "0002"}});
+    auto j = ParseContent(result);
+    CHECK(j["ok"] == false);
+    CHECK(j["severity"] == "ERROR");
+    CHECK(j["short_text"] == "Service ZUI_ERPL_O4 is not published");
+    CHECK(j["long_text"] == "Nothing to unpublish.");
+    CHECK(j["action"] == "unpublish");
+    CHECK(j["odata"] == "v4");
+    REQUIRE(mock.PostCallCount() == 1);
+    CHECK(mock.PostCalls()[0].path ==
+          "/sap/bc/adt/businessservices/odatav4/unpublishjobs?servicename=ZUI_ERPL_O4&serviceversion=0002");
+}
+
+TEST_CASE("adt_publish_service: parameter and HTTP errors", "[mcp][handlers][service]") {
+    MockAdtSession mock;
+    auto registry = MakeRegistry(mock);
+
+    auto missing = CallTool(registry, "adt_publish_service", nlohmann::json::object());
+    CHECK(missing.is_error);
+    auto bad_odata = CallTool(registry, "adt_publish_service",
+                              {{"binding", "ZUI_ERPL_O2"}, {"odata", "v3"}});
+    CHECK(bad_odata.is_error);
+    CHECK(mock.PostCallCount() == 0);
+
+    mock.EnqueueCsrfToken(Result<std::string, Error>::Ok("tok"));
+    mock.EnqueuePost(Result<HttpResponse, Error>::Ok({404, {}, ""}));
+    auto not_found = CallTool(registry, "adt_publish_service", {{"binding", "ZUI_NOPE"}});
+    REQUIRE(not_found.is_error);
+    const auto text = not_found.content[0]["text"].get<std::string>();
+    CHECK(text.find("PublishServiceBinding") != std::string::npos);
+}
+
 // #89: the agent's way to a short dump.
 TEST_CASE("adt_list_dumps and adt_show_dump: read the captured dump", "[mcp][handlers][dumps]") {
     MockAdtSession mock;
@@ -1454,7 +1522,7 @@ TEST_CASE("MCP end-to-end: tools/list returns all ADT tools", "[mcp][handlers][e
     REQUIRE(response.has_value());
 
     auto& tools = (*response)["result"]["tools"];
-    CHECK(tools.size() == 70);
+    CHECK(tools.size() == 72);
 
     // Verify expected tool names are present.
     std::set<std::string> names;
