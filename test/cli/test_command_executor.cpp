@@ -103,12 +103,12 @@ TEST_CASE("RegisterAllCommands registers all expected groups",
     RegisterAllCommands(router);
     auto groups = router.Groups();
 
-    CHECK(groups.size() == 15);
+    CHECK(groups.size() == 16);
 
     // Verify all groups present (sorted).
     std::set<std::string> expected = {
         "abapgit", "activate", "bw", "catalog", "check", "ddic", "discover", "dump", "object",
-        "package", "screen", "search", "source", "test", "transport"
+        "package", "screen", "search", "service", "source", "test", "transport"
     };
     std::set<std::string> actual(groups.begin(), groups.end());
     CHECK(actual == expected);
@@ -767,6 +767,134 @@ TEST_CASE("ResolveActivationObjects: an unknown name is the error, nothing resol
     REQUIRE(result.IsErr());
     CHECK(result.Error().category == ErrorCategory::NotFound);
     CHECK(mock.GetCallCount() == 1);  // ZCL_LATER was not looked up
+}
+
+// ---------------------------------------------------------------------------
+// service publish / unpublish (#104)
+// ---------------------------------------------------------------------------
+
+namespace {
+ServicePublishResult MakePublishResult(const std::string& severity) {
+    ServicePublishResult r;
+    r.binding = "ZUI_ERPL_O2";
+    r.service_version = "0001";
+    r.odata = ODataVersion::V2;
+    r.action = ServicePublishAction::Publish;
+    r.severity = severity;
+    r.short_text = severity == "OK"
+        ? "Local Service Endpoint of service ZUI_ERPL_O2 is activated locally"
+        : "Service binding ZUI_ERPL_O2 is not active";
+    r.long_text = severity == "OK" ? "" : "Activate the service binding first.";
+    return r;
+}
+}  // namespace
+
+TEST_CASE("service group has publish and unpublish", "[cli][executor][service]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    auto cmds = router.CommandsForGroup("service");
+    CHECK(cmds.size() == 2);
+}
+
+TEST_CASE("service publish: missing binding returns 99", "[cli][executor][service]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "service", "publish"};
+    CHECK(router.Dispatch(3, argv) == 99);
+    const char* argv2[] = {"erpl-adt", "service", "unpublish"};
+    CHECK(router.Dispatch(3, argv2) == 99);
+}
+
+TEST_CASE("service publish: unknown --odata returns 99 before connecting",
+          "[cli][executor][service]") {
+    CommandRouter router;
+    RegisterAllCommands(router);
+    const char* argv[] = {"erpl-adt", "service", "publish", "ZUI_ERPL_O2", "--odata", "v3"};
+    CHECK(router.Dispatch(6, argv) == 99);
+    const char* argv2[] = {"erpl-adt", "service", "unpublish", "ZUI_ERPL_O2", "--odata=v1"};
+    CHECK(router.Dispatch(5, argv2) == 99);
+}
+
+TEST_CASE("service publish: --odata and --service-version take values",
+          "[cli][executor][service]") {
+    const char* argv[] = {"erpl-adt", "service", "publish", "--odata", "v4",
+                          "--service-version", "0002", "ZUI_ERPL_O4"};
+    auto parsed = CommandRouter::Parse(8, argv);
+    REQUIRE(parsed.IsOk());
+    const auto& args = parsed.Value();
+    REQUIRE(args.positional.size() == 1);
+    CHECK(args.positional[0] == "ZUI_ERPL_O4");
+    CHECK(args.flags.at("odata") == "v4");
+    CHECK(args.flags.at("service-version") == "0002");
+}
+
+TEST_CASE("IsNewStyleCommand: service is a command group", "[cli][executor][service]") {
+    const char* argv[] = {"erpl-adt", "service", "publish", "ZUI_ERPL_O2"};
+    CHECK(IsNewStyleCommand(4, argv));
+}
+
+TEST_CASE("ReportServicePublishOutcome: OK in text mode exits 0", "[cli][executor][service]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    const int code = ReportServicePublishOutcome(MakePublishResult("OK"), fmt, out, err);
+    CHECK(code == 0);
+    CHECK(out.str().find("Published: ZUI_ERPL_O2 (OData v2, version 0001)") != std::string::npos);
+    CHECK(out.str().find("is activated locally") != std::string::npos);
+    CHECK(err.str().empty());
+}
+
+TEST_CASE("ReportServicePublishOutcome: unpublish OK says Unpublished", "[cli][executor][service]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    auto r = MakePublishResult("OK");
+    r.action = ServicePublishAction::Unpublish;
+    r.odata = ODataVersion::V4;
+    CHECK(ReportServicePublishOutcome(r, fmt, out, err) == 0);
+    CHECK(out.str().find("Unpublished: ZUI_ERPL_O2 (OData v4, version 0001)") != std::string::npos);
+}
+
+TEST_CASE("ReportServicePublishOutcome: ERROR in text mode exits 5 with SAP's texts",
+          "[cli][executor][service]") {
+    std::ostringstream out;
+    std::ostringstream err;
+    OutputFormatter fmt(/*json=*/false, /*color=*/false, out, err);
+    const int code = ReportServicePublishOutcome(MakePublishResult("ERROR"), fmt, out, err);
+    CHECK(code == 5);
+    CHECK(err.str().find("Publish of ZUI_ERPL_O2 (OData v2, version 0001) failed (severity ERROR)") !=
+          std::string::npos);
+    CHECK(err.str().find("Service binding ZUI_ERPL_O2 is not active") != std::string::npos);
+    CHECK(err.str().find("Activate the service binding first.") != std::string::npos);
+}
+
+TEST_CASE("ReportServicePublishOutcome: JSON keeps severity and texts; exit code follows severity",
+          "[cli][executor][service]") {
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        OutputFormatter fmt(/*json=*/true, /*color=*/false, out, err);
+        CHECK(ReportServicePublishOutcome(MakePublishResult("OK"), fmt, out, err) == 0);
+        auto j = nlohmann::json::parse(out.str());
+        CHECK(j["ok"] == true);
+        CHECK(j["severity"] == "OK");
+        CHECK(j["binding"] == "ZUI_ERPL_O2");
+        CHECK(j["odata"] == "v2");
+        CHECK(j["action"] == "publish");
+        CHECK(j["service_version"] == "0001");
+        CHECK(j["long_text"] == "");
+    }
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        OutputFormatter fmt(/*json=*/true, /*color=*/false, out, err);
+        CHECK(ReportServicePublishOutcome(MakePublishResult("ERROR"), fmt, out, err) == 5);
+        auto j = nlohmann::json::parse(out.str());
+        CHECK(j["ok"] == false);
+        CHECK(j["severity"] == "ERROR");
+        CHECK(j["short_text"] == "Service binding ZUI_ERPL_O2 is not active");
+        CHECK(j["long_text"] == "Activate the service binding first.");
+    }
 }
 
 // ---------------------------------------------------------------------------

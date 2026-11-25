@@ -191,6 +191,11 @@ DUMP — Runtime errors (short dumps, ST22)
   dump show <id>                          What it was, where it happened, the source line
       --full                              Add the whole formatted dump
 
+SERVICE — Publish and unpublish OData service bindings (SRVB)
+  service publish <binding>               Publish the binding's OData service (after activate)
+      --service-version <v>, --odata v2|v4  (defaults: 0001, v2)
+  service unpublish <binding>             Remove the published service (the binding stays)
+
 TRANSPORT — List, show, create, and release transports
   transport create --desc <text> --package <pkg>
   transport list [--owner <user>]           (default: the logon user)

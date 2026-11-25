@@ -5,7 +5,7 @@ description: >
   object read), reading and writing source (source read --version --section, source write --file, then activate;
   source check), activation (activate), ABAP Unit (test) and ATC (check, system check variant by default), creating objects
   (object create --type CLAS/OC, PROG/P, INTF/OI, DDLS/DF, TABL/DT, BDEF/BDO, SRVD/SRV, SRVB/SVB with binding
-  flags), deleting, locks (object lock/unlock, --session-file), running console classes (object run for
+  flags; service publish/unpublish for the binding's OData service), deleting, locks (object lock/unlock, --session-file), running console classes (object run for
   IF_OO_ADT_CLASSRUN), DDIC inspection (ddic table, ddic cds) and the ABAP Cloud rules agent-written code must
   follow. Use when reading, changing, creating, testing or executing ABAP classes, programs, CDS views or tables
   on an SAP system from a terminal or an agent.
@@ -114,7 +114,13 @@ erpl-adt --json object create --type SRVB/SVB --name ZORDER_BIND --package ZTEST
   --binding-type ODATA --binding-version V4 --binding-category 0 --service-definition ZORDER_SRV
 ```
 
-Then write and activate the source. Creating a service binding does not publish the service.
+Then write and activate the source. Creating a service binding does not publish the service; after
+activating the binding, publish it (exit 5 unless SAP's severity is OK; the JSON keeps its texts):
+
+```bash
+erpl-adt --json service publish ZORDER_BIND --odata v4     # --service-version 0001 is the default
+erpl-adt --json service unpublish ZORDER_BIND --odata v4
+```
 
 ## Run a console class
 

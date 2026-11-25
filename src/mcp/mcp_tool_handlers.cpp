@@ -32,6 +32,7 @@
 #include <erpl_adt/adt/object.hpp>
 #include <erpl_adt/adt/packages.hpp>
 #include <erpl_adt/adt/search.hpp>
+#include <erpl_adt/adt/service_binding.hpp>
 #include <erpl_adt/adt/source.hpp>
 #include <erpl_adt/adt/testing.hpp>
 #include <erpl_adt/adt/transport.hpp>
@@ -347,6 +348,25 @@ ToolResult HandleShowDump(IAdtSession& session, const nlohmann::json& params) {
 }
 
 // adt_run_atc
+// adt_publish_service / adt_unpublish_service (#104)
+ToolResult HandleServicePublishJob(IAdtSession& session, const nlohmann::json& params,
+                                   ServicePublishAction action) {
+    ToolResult err;
+    auto binding = RequireString(params, "binding", err);
+    if (!binding) return err;
+    auto odata = ParseODataVersion(OptString(params, "odata", "v2"));
+    if (odata.IsErr()) return MakeParamError("odata: " + odata.Error().message);
+    const auto service_version = OptString(params, "service_version", "0001");
+    if (service_version.empty()) return MakeParamError("service_version must not be empty");
+    auto result = action == ServicePublishAction::Publish
+        ? PublishServiceBinding(session, *binding, service_version, odata.Value())
+        : UnpublishServiceBinding(session, *binding, service_version, odata.Value());
+    if (result.IsErr()) return MakeErrorResult(result.Error());
+    // A refused job is still data the agent needs (severity, texts): ok=false
+    // carries the verdict, as passed does for the test and check tools.
+    return MakeOkResult(ServicePublishResultToJson(result.Value()));
+}
+
 ToolResult HandleRunAtc(IAdtSession& session,
                         const nlohmann::json& params) {
     ToolResult err;
@@ -1240,6 +1260,35 @@ void RegisterAdtTools(ToolRegistry& registry, IAdtSession& session) {
             nlohmann::json::array()),
         [&session](const nlohmann::json& params) {
             return HandleActivateObject(session, params);
+        });
+
+    registry.Register(
+        "adt_publish_service",
+        "Publish the OData service of an activated service binding (SRVB), as ADT's "
+        "Publish button does; a V2 service then answers at /sap/opu/odata/sap/<binding>. "
+        "Returns SAP's severity, short_text and long_text; ok is false when the "
+        "severity is not OK.",
+        MakeSchema(
+            {{"binding", StringProp("Service binding name, e.g. ZUI_TRAVEL_O2")},
+             {"service_version", StringProp("Service version (default: 0001)")},
+             {"odata", StringProp("OData version of the binding: v2 (default) or v4")}},
+            {"binding"}),
+        [&session](const nlohmann::json& params) {
+            return HandleServicePublishJob(session, params, ServicePublishAction::Publish);
+        });
+
+    registry.Register(
+        "adt_unpublish_service",
+        "Unpublish the OData service of a service binding (SRVB); the binding stays. "
+        "Returns SAP's severity, short_text and long_text; ok is false when the "
+        "severity is not OK.",
+        MakeSchema(
+            {{"binding", StringProp("Service binding name, e.g. ZUI_TRAVEL_O2")},
+             {"service_version", StringProp("Service version (default: 0001)")},
+             {"odata", StringProp("OData version of the binding: v2 (default) or v4")}},
+            {"binding"}),
+        [&session](const nlohmann::json& params) {
+            return HandleServicePublishJob(session, params, ServicePublishAction::Unpublish);
         });
 
     // === BW Modeling tools ===

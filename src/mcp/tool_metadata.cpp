@@ -51,6 +51,10 @@ const std::vector<ToolMetadata>& ToolMetadataTable() {
         {"adt_create_object",      "Create object",                 Writes()},
         {"adt_create_transport",   "Create transport request",      Writes()},
         {"adt_activate",           "Activate object",               Writes(true)},
+        // Publishing twice leaves the service published; unpublishing removes
+        // only the endpoint (the binding stays and can be published again).
+        {"adt_publish_service",    "Publish OData service",         Writes(true)},
+        {"adt_unpublish_service",  "Unpublish OData service",       Writes(true)},
 
         // -- ADT: destructive ------------------------------------------------
         // write_source overwrites source that may not exist anywhere else;

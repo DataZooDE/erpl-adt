@@ -218,6 +218,34 @@ When `object run` (or MCP `adt_run_class`) ends in a short dump, the error is ca
 - `ListDumps(session, options)` -- `GET /sap/bc/adt/runtime/dumps?$top=N[&$query=and(equals(user,U))][&from=...]`
 - `GetDump(session, id, full)` -- `GET /sap/bc/adt/runtime/dump/{id}` plus `/unformatted`, `/formatted`, `/summary`
 
+### service -- Publish OData service bindings (SRVB)
+
+```bash
+# A service definition and a V2 binding over it, activated (see `object create` above)
+erpl-adt object create --type SRVB/SVB --name ZORDER_BIND --package ZTEST --description "Order binding" \
+  --binding-type ODATA --binding-version V2 --binding-category 1 --service-definition ZORDER_SRV
+erpl-adt activate /sap/bc/adt/businessservices/bindings/zorder_bind
+
+# Publish it: the V2 service then answers at /sap/opu/odata/sap/ZORDER_BIND
+erpl-adt service publish ZORDER_BIND
+erpl-adt --json service publish ZORDER_BIND --service-version 0001 --odata v2
+
+# A V4 binding, and taking a service offline again (the binding stays)
+erpl-adt service publish ZORDER_BIND4 --odata v4
+erpl-adt service unpublish ZORDER_BIND
+```
+
+This is the Publish button of ADT's binding editor. The JSON has `binding`, `service_version`, `odata`,
+`action` (`publish` or `unpublish`), SAP's `severity`, `short_text` and `long_text`, and `ok`. SAP answers a
+job it refuses with HTTP 200 too; the verdict is the severity: anything but `OK` exits 5, with `--json` too
+(the JSON still carries the texts). The name is the service name, which is the binding's name for bindings
+`object create` makes (one service, version 0001). MCP: `adt_publish_service` / `adt_unpublish_service`
+(`binding`, `service_version`, `odata`).
+
+**API:**
+- `PublishServiceBinding(session, name, version, odata)` -- `POST /sap/bc/adt/businessservices/odatav2/publishjobs?servicename=NAME&serviceversion=VERSION` (V4: `.../odatav4/publishjobs`), body `<adtcore:objectReferences>` with one `<adtcore:objectReference adtcore:name="NAME"/>`; answer `asx:abap/asx:values/DATA/{SEVERITY,SHORT_TEXT,LONG_TEXT}`
+- `UnpublishServiceBinding(...)` -- the same against `.../unpublishjobs`
+
 ### transport -- Transport management
 
 ```bash
@@ -487,7 +515,7 @@ The deploy workflow is an idempotent state machine: `discover → create package
 | 2 | Package / NotFound error |
 | 3 | Clone error |
 | 4 | Pull error |
-| 5 | Activation error, or activation failed (`activate`, `source write --activate`, `source edit --activate`) |
+| 5 | Activation error, or activation failed (`activate`, `source write --activate`, `source edit --activate`), or SAP answered a severity other than OK (`service publish`, `service unpublish`) |
 | 6 | Lock conflict |
 | 7 | Test failure (`test`: a method failed) |
 | 8 | ATC check error, or a priority-1 ATC finding (`check`) / an error from `source check` |

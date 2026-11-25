@@ -118,6 +118,20 @@ json ActivateSchema() {
                {"activated", "failed", "error_messages", "messages", "passed"});
 }
 
+// -- adt_publish_service / adt_unpublish_service ----------------------------
+// SAP answers a refused job with HTTP 200; the agent branches on ok (#104).
+json ServicePublishSchema() {
+    return Obj({{"binding", Str("Service binding (service name) as sent")},
+                {"service_version", Str("Service version, e.g. 0001")},
+                {"odata", Str("OData version: v2 or v4")},
+                {"action", Str("publish or unpublish")},
+                {"severity", Str("SAP's SEVERITY, OK on success")},
+                {"short_text", Str("SAP's SHORT_TEXT")},
+                {"long_text", Str("SAP's LONG_TEXT, often empty")},
+                {"ok", Bool("The verdict: true when severity is OK (the CLI exits 5 otherwise)")}},
+               {"binding", "odata", "action", "severity", "ok"});
+}
+
 // -- adt_read_table ---------------------------------------------------------
 json ReadTableSchema() {
     const json field =
@@ -234,6 +248,8 @@ size_t ApplyToolOutputSchemas(ToolRegistry& registry) {
         {"adt_check_syntax", CheckSyntaxSchema()},
         {"adt_activate", ActivateSchema()},
         {"adt_read_table", ReadTableSchema()},
+        {"adt_publish_service", ServicePublishSchema()},
+        {"adt_unpublish_service", ServicePublishSchema()},
         {"catalog_search", CatalogSearchSchema()},
         {"catalog_lineage", CatalogLineageSchema()},
         {"abapgit_status", AbapGitReportSchema()},

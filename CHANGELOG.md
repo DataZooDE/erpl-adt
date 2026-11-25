@@ -5,6 +5,11 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+- **[feature]** Publish and unpublish OData service bindings (#104): `service publish <binding> [--service-version
+  0001] [--odata v2|v4]` and `service unpublish ...`, what ADT's Publish button does - an activated V2 binding then
+  answers at `/sap/opu/odata/sap/<binding>`. Text and `--json` output carry SAP's severity, short and long text;
+  a severity other than OK exits 5. MCP `adt_publish_service` / `adt_unpublish_service`.
+
 ## v2026.11.22.1
 
 - **[feature]** `abapgit deploy` deploys update function modules with immediate start (V1,
