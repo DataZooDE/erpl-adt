@@ -5,6 +5,8 @@ release); same-day re-cuts append `.N`. Earlier releases are described in their 
 
 ## Unreleased
 
+## v2026.11.25
+
 - **[feature]** Publish and unpublish OData service bindings (#104): `service publish <binding> [--service-version
   0001] [--odata v2|v4]` and `service unpublish ...`, what ADT's Publish button does - an activated V2 binding then
   answers at `/sap/opu/odata/sap/<binding>`. Text and `--json` output carry SAP's severity, short and long text;
