@@ -151,7 +151,7 @@ void DeleteHelper(IAdtSession& session, const std::string& helper_class) {
         return;
     }
     auto deleted = DeleteObjectWithAutoLock(session, object_uri.Value(), std::nullopt);
-    if (deleted.IsErr()) {
+    if (deleted.IsErr() && deleted.Error().category == ErrorCategory::LockConflict) {
         // One retry: a lock left by the run's own write can take a moment to clear.
         std::this_thread::sleep_for(std::chrono::seconds(2));
         deleted = DeleteObjectWithAutoLock(session, object_uri.Value(), std::nullopt);
@@ -235,6 +235,7 @@ HelperCleanupReport CleanupStaleHelpers(IAdtSession& session, const std::string&
         auto structure = GetObjectStructure(session, uri.Value());
         if (structure.IsErr()) {
             report.failed.emplace_back(hit.name, structure.Error().message);
+            if (structure.Error().IsSessionFailure()) break;
             continue;
         }
         if (!IsStaleHelper(structure.Value().info, user, now, min_age)) {
@@ -244,6 +245,7 @@ HelperCleanupReport CleanupStaleHelpers(IAdtSession& session, const std::string&
         auto deleted = DeleteObjectWithAutoLock(session, uri.Value(), std::nullopt);
         if (deleted.IsErr()) {
             report.failed.emplace_back(hit.name, deleted.Error().message);
+            if (deleted.Error().IsSessionFailure()) break;
         } else {
             report.deleted.push_back(hit.name);
         }
@@ -279,7 +281,7 @@ Result<std::string, Error> RunClassrunHelper(IAdtSession& session, IAdtSession& 
         return RunHelperClass(classrun_session, options.helper_class);
     }();
 
-    if (!options.keep_helper) {
+    if (!options.keep_helper && !(result.IsErr() && result.Error().IsSessionFailure())) {
         DeleteHelper(session, options.helper_class);
     }
     return result;
@@ -290,7 +292,11 @@ ClassrunEngineRunner::ClassrunEngineRunner(IAdtSession& session, IAdtSession& cl
     : session_(session), classrun_session_(classrun_session), options_(std::move(options)) {}
 
 ClassrunEngineRunner::~ClassrunEngineRunner() {
-    if (created_ && !options_.keep_helper) {
+    if (created_ && terminal_error_) {
+        LogWarn(kComponent, "Session failure left temporary helper " + options_.helper_class +
+                            "; remove it later with erpl-adt abapgit cleanup.");
+    }
+    if (created_ && !options_.keep_helper && !terminal_error_) {
         DeleteHelper(session_, options_.helper_class);
     }
 }
@@ -298,6 +304,7 @@ ClassrunEngineRunner::~ClassrunEngineRunner() {
 Result<std::vector<EngineOpResult>, Error> ClassrunEngineRunner::Run(
     const std::vector<EngineOp>& ops) {
     using R = Result<std::vector<EngineOpResult>, Error>;
+    if (terminal_error_) return R::Err(*terminal_error_);
     if (!created_) {
         auto local = CheckLocalPackage(options_);
         if (local.IsErr()) {
@@ -305,6 +312,7 @@ Result<std::vector<EngineOpResult>, Error> ClassrunEngineRunner::Run(
         }
         auto ensured = EnsureHelperClass(session_, options_);
         if (ensured.IsErr()) {
+            if (ensured.Error().IsSessionFailure()) terminal_error_ = ensured.Error();
             return R::Err(std::move(ensured).Error());
         }
         created_ = true;
@@ -313,10 +321,12 @@ Result<std::vector<EngineOpResult>, Error> ClassrunEngineRunner::Run(
         WriteAndActivate(session_, options_.helper_class,
                          BuildEngineSource(options_.helper_class, ops));
     if (written.IsErr()) {
+        if (written.Error().IsSessionFailure()) terminal_error_ = written.Error();
         return R::Err(std::move(written).Error());
     }
     auto output = RunHelperClass(classrun_session_, options_.helper_class);
     if (output.IsErr()) {
+        if (output.Error().IsSessionFailure()) terminal_error_ = output.Error();
         return R::Err(std::move(output).Error());
     }
     return ParseEngineOutput(output.Value(), ops.size());

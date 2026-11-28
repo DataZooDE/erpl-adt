@@ -162,8 +162,8 @@ def test_contract_lock_conflict_maps_to_exit_6():
     assert err["exit_code"] == 6
 
 
-def test_contract_lock_html_warmup_error_is_not_session_expiry():
-    """Reproduce the SAP ICF warm-up page reported in issue #60 end-to-end."""
+def test_contract_lock_html_session_refusal_is_actionable():
+    """Reproduce the SAP session refusal reported in issue #102 end-to-end."""
     def csrf(_):
         return 200, {"x-csrf-token": "stub-token"}, "<discovery/>"
 
@@ -185,7 +185,8 @@ def test_contract_lock_html_warmup_error_is_not_session_expiry():
     err = json.loads(result.stderr)["error"]
     assert err["category"] == "connection"
     assert "Service cannot be reached" in err["message"]
-    assert "starting" in err["hint"]
+    assert "SM05" in err["hint"]
+    assert "starting" not in err["hint"]
     assert "--session-file" not in err["hint"]
 
 

@@ -1417,6 +1417,28 @@ TEST_CASE("abapGit batching: a run that fails as a whole fails every object in i
     }
 }
 
+TEST_CASE("abapGit batching: session refusal stops unrelated later phases",
+          "[workflow][abapgit_deploy][exhaustion]") {
+    BatchFixture f;
+    f.engine.fail_run = Error::FromHttpStatus("RunClass", "/classrun", 429);
+    f.engine.fail_run_at = 1;  // DDIC, before independent ADT and program writes
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+    CHECK(report.Failed());
+    CHECK(f.engine.runs.size() == 2);  // initial read, failed DDIC batch
+    CHECK(f.log.empty());
+}
+
+TEST_CASE("abapGit batching: late session refusal preserves completed phases",
+          "[workflow][abapgit_deploy][exhaustion]") {
+    BatchFixture f;
+    f.engine.fail_run = Error::FromHttpStatus("RunClass", "/classrun", 429);
+    f.engine.fail_run_at = 2;
+    auto report = f.Workflow().Deploy(f.Demo(), f.Options());
+    for (size_t i = 0; i < 3; ++i) CHECK(report.objects[i].action == ObjectAction::Created);
+    for (size_t i = 3; i < 6; ++i) CHECK(report.objects[i].action == ObjectAction::Failed);
+    CHECK(f.engine.runs.size() == 3);
+}
+
 // ---------------------------------------------------------------------------
 // GitFileHistory against a real (temporary) git repository.
 // ---------------------------------------------------------------------------

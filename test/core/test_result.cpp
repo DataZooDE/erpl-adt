@@ -416,16 +416,34 @@ TEST_CASE("FromHttpStatus: 400 includes SAP message when available", "[error]") 
     CHECK(e.message.find("Malformed XML payload") != std::string::npos);
 }
 
-TEST_CASE("FromHttpStatus: SAP HTML service warm-up error is visible and retryable", "[error]") {
+TEST_CASE("FromHttpStatus: SAP session refusal preserves diagnosis", "[error]") {
     const std::string body =
         "<html><head><title>Service cannot be reached</title></head>"
         "<body>Session not found</body></html>";
     auto e = Error::FromHttpStatus("LockObject", "/ep", 400, body);
     CHECK(e.category == ErrorCategory::Connection);
-    CHECK(e.sap_error == "Service cannot be reached");
+    REQUIRE(e.sap_error.has_value());
+    CHECK(e.sap_error->find("Session not found") != std::string::npos);
     CHECK(e.message.find("Service cannot be reached") != std::string::npos);
     REQUIRE(e.hint.has_value());
-    CHECK(e.hint->find("starting") != std::string::npos);
+    CHECK(e.hint->find("SM05") != std::string::npos);
+    CHECK(e.hint->find("starting") == std::string::npos);
+    CHECK(e.IsSessionFailure());
+}
+
+TEST_CASE("FromHttpStatus: HTML diagnostic preserves body and excludes styling", "[error]") {
+    auto e = Error::FromHttpStatus("LockObject", "/ep", 400,
+        "<html><title>Service cannot be reached</title><body>"
+        "<style>not a diagnosis</style><script>not a diagnosis</script>"
+        "<p>400 <span>Session not found</span></p></body></html>");
+    CHECK(e.IsSessionFailure());
+    CHECK(e.sap_error == "Service cannot be reached: 400 Session not found");
+    auto unrelated = Error::FromHttpStatus("LockObject", "/ep", 400,
+        "<html><title>Service cannot be reached</title><body>"
+        "<p>Dispatcher starting</p></body></html>");
+    CHECK_FALSE(unrelated.IsSessionFailure());
+    CHECK(unrelated.message.find("Dispatcher starting") != std::string::npos);
+    CHECK(Error::FromHttpStatus("Op", "/ep", 429).IsSessionFailure());
 }
 
 TEST_CASE("FromHttpStatus: 404 maps to NotFound", "[error]") {
@@ -532,10 +550,10 @@ TEST_CASE("FromHttpStatus: empty body yields no sap_error", "[error]") {
     CHECK_FALSE(e.sap_error.has_value());
 }
 
-TEST_CASE("FromHttpStatus: HTML body without XML tags yields no sap_error", "[error]") {
+TEST_CASE("FromHttpStatus: HTML status text is retained even without a title", "[error]") {
     std::string body = "<html><body><h1>500 Internal Server Error</h1></body></html>";
     auto e = Error::FromHttpStatus("Op", "/ep", 500, body);
-    CHECK_FALSE(e.sap_error.has_value());
+    CHECK(e.sap_error == "500 Internal Server Error");
 }
 
 // ===========================================================================

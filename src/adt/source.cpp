@@ -220,16 +220,6 @@ Result<void, Error> WriteSource(
 
     const auto& http = response.Value();
     if (http.status_code != 200 && http.status_code != 204) {
-        if (http.status_code == 400 &&
-            http.body.find("Session not found") != std::string::npos) {
-            auto err = Error::FromHttpStatus("WriteSource", source_uri, http.status_code, http.body);
-            if (err.category != ErrorCategory::Connection) {
-                err.hint =
-                    "Stateful ADT session is missing/expired. Retry the command. "
-                    "For multi-step workflows, use --session-file to persist state.";
-            }
-            return Result<void, Error>::Err(std::move(err));
-        }
         if (http.status_code == 423 &&
             http.body.find("invalid lock handle") != std::string::npos) {
             auto err = Error::FromHttpStatus("WriteSource", source_uri, http.status_code, http.body);

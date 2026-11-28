@@ -208,6 +208,13 @@ struct Error {
     ErrorCategory category = ErrorCategory::Internal;
     std::optional<std::string> hint = std::nullopt;
 
+    // Set by the shared HTTP classifier, not inferred from translated display text.
+    bool session_failure = false;
+
+    [[nodiscard]] bool IsSessionFailure() const {
+        return session_failure || http_status == 429;
+    }
+
     /// Create an Error from an HTTP status code with human-readable messages.
     /// Extracts SAP error messages from XML response bodies.
     static Error FromHttpStatus(const std::string& operation,

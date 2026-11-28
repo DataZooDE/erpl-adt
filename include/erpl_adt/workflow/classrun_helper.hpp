@@ -101,6 +101,7 @@ private:
     IAdtSession& classrun_session_;
     ClassrunHelperOptions options_;
     bool created_ = false;
+    std::optional<Error> terminal_error_;
 };
 
 }  // namespace erpl_adt

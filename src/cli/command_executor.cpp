@@ -1634,14 +1634,6 @@ int HandleObjectLock(const CommandArgs& args) {
 
     auto result = LockObject(*session, uri_result.Value());
 
-    // On "Session not found", the loaded session file had a stale context.
-    // Clear it and retry once with a fresh stateful establishment.
-    if (result.IsErr() && result.Error().http_status == 400 &&
-        result.Error().message.find("Session not found") != std::string::npos) {
-        session->ResetStatefulSession();
-        result = LockObject(*session, uri_result.Value());
-    }
-
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
         return result.Error().ExitCode();

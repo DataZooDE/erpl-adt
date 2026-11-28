@@ -454,7 +454,7 @@ TEST_CASE("BwLockObject: 400 adds stateful session hint", "[adt][bw][object]") {
     auto result = BwLockObject(mock, "IOBJ", "0CALDAY");
     REQUIRE(result.IsErr());
     REQUIRE(result.Error().hint.has_value());
-    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+    CHECK(result.Error().hint->find("SM05") != std::string::npos);
     CHECK(result.Error().hint->find("stateful") != std::string::npos);
 }
 

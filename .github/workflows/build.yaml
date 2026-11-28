@@ -128,6 +128,15 @@ jobs:
         if: runner.os != 'Windows'
         run: python3 scripts/ci/webui_smoke.py --binary build/erpl-adt
 
+      - name: Set up uv for session lifecycle E2E
+        uses: astral-sh/setup-uv@v6
+
+      - name: Session lifecycle E2E (real CLI, local ICF fault server)
+        shell: bash
+        env:
+          ERPL_ADT_BINARY: ${{ github.workspace }}/build/erpl-adt${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: uv run --project test/integration_py pytest -q test/integration_py/test_52_session_exhaustion.py
+
       - name: Check the Claude Code plugin against the binary
         if: runner.os != 'Windows'
         run: python3 scripts/check_plugin_docs.py --binary build/erpl-adt
