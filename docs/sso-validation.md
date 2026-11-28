@@ -8,7 +8,7 @@ from a controlled local A4H trial, not the reporting company's installation.
 | Slice | Reproduced failure | Green coverage |
 |---|---|---|
 | PEM HTTPS | Client-certificate-required TLS handshake failed; plaintext certificate configuration was accepted | Successful mTLS; missing, mismatched and untrusted credentials fail; no Basic header |
-| Windows certificate selection | Certificate-store options were not handled | Protected-key TLS/session fixture implemented; Windows execution remains a CI gate |
+| Windows certificate selection | Certificate-store options were not handled | Protected-key TLS/session fixture passes on Windows; actual Secure Login provider acceptance remains open |
 | Session persistence | A certificate session accepted unrelated saved cookies | Origin/client/authentication/certificate binding rejects legacy and mismatched SSO sessions |
 | HTTP session lifecycle | A failed operation prevented later independent work | Cleanup precedes recovery; failed mutations are not replayed |
 | HTTPS resource URLs | Valid absolute same-origin URLs failed or unsafe origins were accepted | Same-origin normalization, cross-origin and downgrade rejection |
@@ -30,8 +30,8 @@ initial fixtures did not reach the intended behavior.
 `test/integration_py/test_55_sso_live.py` passed for both X.509 HTTPS and SNC RFC,
 with SAP password variables removed from each child MCP process. Each path:
 
-1. Authenticates and checks the mapped user/client.
-2. Reads ADT and BW discovery and searches BW.
+1. Authenticates in the configured SAP client and checks the mapped user.
+2. Reads ADT and BW discovery and searches the ABAP repository.
 3. Creates a disposable class, writes Unicode source, reads it, activates it and
    verifies the active source.
 4. Repeats three rejected-write followed by successful-write/activation cycles.
@@ -56,12 +56,28 @@ reviewed by the HTTPS owner; a third reviewer examined both paths' tests and
 factory integration. Findings above were fixed with regression coverage.
 Claude Code, Qwen and Muse were not used.
 
+## Regression results
+
+The Linux RFC-enabled build passed 1,863 offline C++ tests and 12 real-process
+authentication tests. The full existing SAP integration suite completed with
+484 passed, 78 skipped and one expected failure (55 minutes). Skips include
+unavailable trial-system capabilities and the two opt-in SSO tests, which passed
+separately as described above. The expected failure concerns missing BW catalog
+content. No unexpected failures remain in that run.
+
+Windows public CI passed all 1,861 C++ tests, including the non-exportable-key
+fixture, and 11 real-process authentication tests; the POSIX terminal test is
+not applicable there. The fixture uses a software key provider and does not
+establish compatibility with SAP Secure Login Client's provider.
+
+[Public CI](https://github.com/DataZooDE/erpl-adt/actions/runs/46151149872)
+passed on Linux, Windows and both macOS architectures at `e7d2035`. Private
+RFC-enabled CI has passed Linux and both macOS architectures; the updated
+Windows fixture run is still pending.
+
 ## Remaining acceptance gates
 
-- Complete the full existing Basic-auth SAP regression suite and investigate
-  failures; targeted SSO success does not replace this suite.
-- Run public HTTPS and private RFC-enabled CI on Linux, both macOS targets and
-  Windows. Local Linux success does not establish Windows compilation/runtime.
+- Complete the updated private RFC-enabled Windows CI run.
 - Verify the actual Windows Secure Login provider against a controlled SAP
   system, including credential renewal/expiry and reconnect behavior. A local
   non-exportable-key fixture is useful coverage, but is not this acceptance test.
