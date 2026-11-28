@@ -95,10 +95,10 @@ TEST_CASE("LockObject: 400 session not found adds actionable hint", "[adt][locki
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status == 400);
     REQUIRE(result.Error().hint.has_value());
-    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+    CHECK(result.Error().hint->find("SM05") != std::string::npos);
 }
 
-TEST_CASE("LockObject: HTML service warm-up error is not called session expiry", "[adt][locking]") {
+TEST_CASE("LockObject: HTML session refusal retains the shared diagnosis", "[adt][locking]") {
     MockAdtSession mock;
     auto uri = ObjectUri::Create("/sap/bc/adt/oo/classes/ZCL_ERR").Value();
     mock.EnqueuePost(Result<HttpResponse, Error>::Ok(

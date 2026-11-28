@@ -179,9 +179,17 @@ struct AdtSession::Impl {
     // another erpl-adt process continues this logon, so it must not be
     // logged off when this object goes away.
     bool keep_logon_ = false;
+    std::optional<Error> terminal_error_;
     // Kept for error messages: a transport failure that does not name the
     // server it tried is the hardest kind to diagnose.
     std::string base_url_;
+
+    void RememberSessionFailure(const char* operation, std::string_view path,
+                                int status, const std::string& body) {
+        if (terminal_error_ || (status != 400 && status != 429)) return;
+        auto error = Error::FromHttpStatus(operation, std::string(path), status, body);
+        if (error.IsSessionFailure()) terminal_error_ = std::move(error);
+    }
 
     Impl(const std::string& host,
          uint16_t port,
@@ -365,6 +373,9 @@ struct AdtSession::Impl {
     // Execute a GET, returning our HttpResponse.
     Result<HttpResponse, Error> DoGet(std::string_view path,
                                       const HttpHeaders& extra_headers) {
+        if (terminal_error_ && path != "/sap/public/bc/icf/logoff") {
+            return Result<HttpResponse, Error>::Err(*terminal_error_);
+        }
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
@@ -381,6 +392,7 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
         CaptureCookies(res->headers);
+        RememberSessionFailure("Get", path, res->status, res->body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
             res->status, ToHttpHeaders(res->headers), res->body});
     }
@@ -390,6 +402,7 @@ struct AdtSession::Impl {
                                        std::string_view body,
                                        std::string_view content_type,
                                        const HttpHeaders& extra_headers) {
+        if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
@@ -407,6 +420,7 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
         CaptureCookies(res->headers);
+        RememberSessionFailure("Post", path, res->status, res->body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
             res->status, ToHttpHeaders(res->headers), res->body});
     }
@@ -416,6 +430,7 @@ struct AdtSession::Impl {
                                       std::string_view body,
                                       std::string_view content_type,
                                       const HttpHeaders& extra_headers) {
+        if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
@@ -433,6 +448,7 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
         CaptureCookies(res->headers);
+        RememberSessionFailure("Put", path, res->status, res->body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
             res->status, ToHttpHeaders(res->headers), res->body});
     }
@@ -440,6 +456,7 @@ struct AdtSession::Impl {
     // Execute a DELETE, returning our HttpResponse.
     Result<HttpResponse, Error> DoDelete(std::string_view path,
                                          const HttpHeaders& extra_headers) {
+        if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
                                         stateful_);
@@ -456,6 +473,7 @@ struct AdtSession::Impl {
         LogResponse(res->status, res->headers, res->body);
         CaptureContextId(res->headers);
         CaptureCookies(res->headers);
+        RememberSessionFailure("Delete", path, res->status, res->body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
             res->status, ToHttpHeaders(res->headers), res->body});
     }
@@ -466,6 +484,7 @@ struct AdtSession::Impl {
     // by the BW endpoint and vice versa.
     Result<std::string, Error> DoFetchCsrfToken(
             std::string_view request_path = "") {
+        if (terminal_error_) return Result<std::string, Error>::Err(*terminal_error_);
         const bool bw = IsBwPath(request_path);
         const auto fetch_from = [&](const std::string& fetch_path) -> Result<std::string, Error> {
             HttpHeaders extra;
@@ -484,14 +503,14 @@ struct AdtSession::Impl {
                     MakeTransportError("FetchCsrfToken", fetch_path, http_error));
             }
             LogResponse(res->status, res->headers, res->body);
-            if (res->status != 200) {
-                return Result<std::string, Error>::Err(
-                    MakeSessionHttpError("FetchCsrfToken", fetch_path, res->status, res->body));
-            }
-
-            // Capture session cookies and context ID from the CSRF fetch response.
+            // Even a refused CSRF fetch can establish a security session.
             CaptureCookies(res->headers);
             CaptureContextId(res->headers);
+            if (res->status != 200) {
+                auto error = MakeSessionHttpError("FetchCsrfToken", fetch_path, res->status, res->body);
+                if (error.IsSessionFailure()) terminal_error_ = error;
+                return Result<std::string, Error>::Err(error);
+            }
 
             auto token = adt_utils::FindHeaderValueCi(
                 ToHttpHeaders(res->headers), "x-csrf-token");
@@ -558,10 +577,19 @@ bool HoldsLogonSession(const std::map<std::string, std::string>& cookies) {
 // on an ADT URL are answered 200 but end nothing; /sap/public/bc/icf/logoff
 // does. Best effort: on failure the session times out on the server.
 void AdtSession::EndServerSession() {
+    // Logoff needs the security cookie, not a new stateful ABAP context.
+    const bool stateful = impl_->stateful_;
+    impl_->stateful_ = false;
     auto ended = impl_->DoGet("/sap/public/bc/icf/logoff", {});
-    if (ended.IsErr()) {
-        LogDebug("http", "Logging off failed (the session will time out on the server): " +
-                             ended.Error().message);
+    impl_->stateful_ = stateful;
+    if (ended.IsErr() || ended.Value().status_code < 200 || ended.Value().status_code >= 300) {
+        auto error = ended.IsErr() ? ended.Error() : Error::FromHttpStatus(
+            "Logoff", "/sap/public/bc/icf/logoff", ended.Value().status_code, ended.Value().body);
+        error.session_failure = true;
+        if (!impl_->terminal_error_) impl_->terminal_error_ = error;
+        LogWarn("http", "Logging off failed; stopping further work and retaining the session "
+                        "for final cleanup: " + error.message);
+        return;
     }
     for (auto it = impl_->cookies_.begin(); it != impl_->cookies_.end();) {
         const auto& name = it->first;
@@ -581,7 +609,7 @@ void AdtSession::EndServerSession() {
 // away, so a CI job running hundreds of commands as one user leaves nothing
 // open on the server.
 AdtSession::~AdtSession() {
-    if (!impl_ || impl_->keep_logon_ ||
+    if (!impl_ || (impl_->keep_logon_ && !impl_->terminal_error_) ||
         (!HoldsLogonSession(impl_->cookies_) && impl_->cookies_.count("sap-contextid") == 0)) {
         return;
     }
@@ -735,10 +763,16 @@ void AdtSession::SetStateful(bool enabled) {
 }
 
 void AdtSession::ResetStatefulSession() {
-    impl_->csrf_token.reset();
-    impl_->bw_csrf_token_.reset();
-    impl_->sap_context_id_.clear();
-    impl_->cookies_.clear();
+    if (impl_->terminal_error_) return;
+    if (HoldsLogonSession(impl_->cookies_) || impl_->cookies_.count("sap-contextid") > 0) {
+        EndServerSession();
+    }
+    if (!impl_->terminal_error_) {
+        impl_->csrf_token.reset();
+        impl_->bw_csrf_token_.reset();
+        impl_->sap_context_id_.clear();
+        impl_->cookies_.clear();
+    }
 }
 
 bool AdtSession::IsStateful() const {

@@ -49,8 +49,7 @@ std::optional<std::string> ExtractXmlMessage(const std::string& body,
     return msg;
 }
 
-// ICF failures can be HTML rather than an ADT XML error. The page title is
-// the useful diagnostic; the body can contain unrelated session text.
+// ICF failures can be HTML rather than an ADT XML error.
 std::optional<std::string> ExtractHtmlTitle(const std::string& body) {
     const auto lower = Lowercase(body);
     auto title_pos = lower.find("<title");
@@ -71,7 +70,43 @@ std::optional<std::string> ExtractHtmlTitle(const std::string& body) {
     if (first == std::string::npos || first >= content_end) return std::nullopt;
     auto last = body.find_last_not_of(" \t\r\n", content_end - 1);
     if (last == std::string::npos || last < first) return std::nullopt;
-    return body.substr(first, last - first + 1);
+    return body.substr(first, std::min<size_t>(last - first + 1, 512));
+}
+
+// Keep visible diagnostic text, never CSS, scripts or embedded images. SAP's
+// title is often generic; the status/reason lives in the body (issues #102/103).
+std::optional<std::string> ExtractHtmlDiagnostic(const std::string& body) {
+    const auto title = ExtractHtmlTitle(body);
+    const auto lower = Lowercase(body);
+    auto start = lower.find("<body");
+    if (start == std::string::npos) return title;
+    start = lower.find('>', start);
+    if (start == std::string::npos) return title;
+    std::string text;
+    const auto end = std::min(body.size(), start + 16384);
+    for (size_t i = start + 1; i < end && text.size() < 512;) {
+        if (body[i] == '<') {
+            if (lower.compare(i, 7, "</body>") == 0) break;
+            if (lower.compare(i, 7, "<script") == 0 || lower.compare(i, 6, "<style") == 0) {
+                const auto close = lower.find(lower.compare(i, 7, "<script") == 0
+                                                  ? "</script>" : "</style>", i);
+                if (close == std::string::npos) break;
+                i = close;
+            }
+            const auto close = body.find('>', i);
+            if (close == std::string::npos) break;
+            i = close + 1;
+            if (!text.empty() && text.back() != ' ') text += ' ';
+        } else if (std::isspace(static_cast<unsigned char>(body[i]))) {
+            if (!text.empty() && text.back() != ' ') text += ' ';
+            ++i;
+        } else {
+            text += body[i++];
+        }
+    }
+    while (!text.empty() && text.back() == ' ') text.pop_back();
+    if (text.empty()) return title;
+    return title && text != *title ? *title + ": " + text : text;
 }
 
 // Try to extract a human-readable SAP error message from an XML response body.
@@ -94,7 +129,7 @@ std::optional<std::string> ExtractSapError(const std::string& body) {
     msg = ExtractXmlMessage(body, "localizedMessage");
     if (msg.has_value()) return msg;
 
-    return ExtractHtmlTitle(body);
+    return ExtractHtmlDiagnostic(body);
 }
 
 // The T100 message class of an ADT exception (<entry key="T100KEY-ID">),
@@ -141,17 +176,28 @@ Error Error::FromHttpStatus(const std::string& operation,
                             int status_code,
                             const std::string& response_body) {
     auto sap_error = ExtractSapError(response_body);
+    const bool session_missing = status_code == 400 &&
+        ((sap_error && Lowercase(*sap_error).find("session not found") != std::string::npos) ||
+         (response_body.find('<') == std::string::npos &&
+          Lowercase(response_body).find("session not found") != std::string::npos));
+    if (session_missing) {
+        sap_error = sap_error.value_or("SAP session refused");
+        if (Lowercase(*sap_error).find("session not found") == std::string::npos) {
+            *sap_error += ": 400 Session not found";
+        }
+    }
 
     ErrorCategory category;
     std::string message;
 
     switch (status_code) {
         case 400:
-            if (sap_error.has_value() &&
+            if (session_missing || (sap_error.has_value() &&
                 Lowercase(*sap_error).find("service cannot be reached") !=
-                    std::string::npos) {
+                    std::string::npos)) {
                 category = ErrorCategory::Connection;
-                message = "SAP service unavailable: " + *sap_error;
+                message = (session_missing ? "SAP refused the stateful session: "
+                                           : "SAP service unavailable: ") + *sap_error;
             } else {
                 category = ErrorCategory::Internal;
                 message = sap_error.has_value()
@@ -234,6 +280,18 @@ Error Error::FromHttpStatus(const std::string& operation,
     if (status_code == 400 && category == ErrorCategory::Connection) {
         error.hint = "The SAP service may still be starting. Wait a few minutes "
                      "and retry; if it persists, check service availability.";
+    }
+    error.session_failure = session_missing;
+    if (session_missing) {
+        error.hint = "SAP refused the stateful session. The user may have too many open "
+                     "security sessions, or the context has expired. Check SM05 / SM04; "
+                     "end unused sessions or wait for http/security_session_timeout "
+                     "(often 30 minutes). Older clients may not log off. This run has stopped.";
+    }
+    if (status_code == 429) {
+        if (sap_error) error.message += ": " + *sap_error;
+        error.hint = "SAP refused further requests/logons. This run has stopped; check "
+                     "SM05 / SM04 for open sessions and wait before starting a new run.";
     }
     if (category == ErrorCategory::Authentication) {
         // The most common cause is a credential source the caller did not

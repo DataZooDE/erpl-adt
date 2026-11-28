@@ -298,10 +298,10 @@ TEST_CASE("WriteSource: 400 Session not found adds actionable hint", "[adt][sour
     REQUIRE(result.IsErr());
     CHECK(result.Error().http_status == 400);
     REQUIRE(result.Error().hint.has_value());
-    CHECK(result.Error().hint->find("--session-file") != std::string::npos);
+    CHECK(result.Error().hint->find("SM05") != std::string::npos);
 }
 
-TEST_CASE("WriteSource: HTML service warm-up error is not called session expiry", "[adt][source]") {
+TEST_CASE("WriteSource: HTML session refusal retains the shared diagnosis", "[adt][source]") {
     MockAdtSession mock;
     auto handle = LockHandle::Create("h").Value();
     mock.EnqueuePut(Result<HttpResponse, Error>::Ok(

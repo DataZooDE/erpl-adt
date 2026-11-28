@@ -484,6 +484,15 @@ void RunBatch(IEngineRunner& engine, std::vector<Work>& works, AbapGitRunReport&
     }
     auto run = engine.Run(ops);
     if (run.IsErr()) {
+        if (run.Error().IsSessionFailure()) {
+            for (auto& w : works) {
+                if (!w.broken && (ddic || !w.plan.writes.empty() ||
+                                  !w.plan.activate.empty() || !w.plan.after_activation.empty())) {
+                    FailWork(w, report, run.Error());
+                }
+            }
+            return;
+        }
         for (size_t k = 0; k < ops.size(); ++k) {
             if (owner_of[k] != kNoOwner && !works[owner_of[k]].broken) {
                 FailWork(works[owner_of[k]], report, run.Error());
@@ -530,6 +539,18 @@ void RunPlans(IAdtSession& session, IEngineRunner& engine, std::vector<Work>& wo
         auto done = w.plan.adt(ctx);
         if (done.IsErr()) {
             FailWork(w, report, done.Error());
+            if (done.Error().IsSessionFailure()) {
+                bool pending_adt = false;
+                for (auto& remaining : works) {
+                    if (&remaining == &w) pending_adt = true;
+                    if (!remaining.broken && ((pending_adt && remaining.plan.adt) ||
+                        !remaining.plan.writes.empty() || !remaining.plan.activate.empty() ||
+                        !remaining.plan.after_activation.empty())) {
+                        FailWork(remaining, report, done.Error());
+                    }
+                }
+                return;
+            }
             continue;
         }
         auto& parts = report.objects[w.outcome].parts;

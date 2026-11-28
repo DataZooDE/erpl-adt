@@ -376,6 +376,8 @@ nlohmann::json AbapGitReportJson(const PreparedAbapGitRun& run, const AbapGitRun
         if (o.error.has_value()) {
             e["category"] = o.error->CategoryName();
             e["exit_code"] = o.error->ExitCode();
+            if (o.error->hint) e["hint"] = *o.error->hint;
+            if (o.error->http_status) e["http_status"] = *o.error->http_status;
         }
         j["objects"].push_back(e);
     }
@@ -416,6 +418,7 @@ std::string AbapGitReportText(const PreparedAbapGitRun& run, const AbapGitRunRep
         if (!o.message.empty()) {
             out << "\n    " << o.message;
         }
+        if (o.error && o.error->hint) out << "\n    Hint: " << *o.error->hint;
         for (const auto& note : o.notes) {
             out << "\n    note: " << note;
         }

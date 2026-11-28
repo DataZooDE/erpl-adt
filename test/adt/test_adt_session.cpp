@@ -984,6 +984,7 @@ TEST_CASE("AdtSession: ResetStatefulSession clears cookies and CSRF token", "[ad
         res.set_content("<ok/>", "text/xml");
     });
 
+    svr.Get("/sap/public/bc/icf/logoff", [](const httplib::Request&, httplib::Response& res) { res.status = 200; });
     LocalServer server(svr);
     auto session = MakeTestSession(server.Port());
     session->SetStateful(true);
@@ -1127,7 +1128,7 @@ TEST_CASE("AdtSession: leaving stateful mode closes the server session",
         REQUIRE(close_cookies.size() == 1);
         // The close is sent inside the session it ends.
         CHECK(close_cookies[0].find("sap-contextid=CTX-1") != std::string::npos);
-        CHECK(close_session_types[0] == "stateful");
+        CHECK(close_session_types[0].empty());
     }
 
     // Afterwards the closed context is no longer sent.
@@ -1249,4 +1250,59 @@ TEST_CASE("AdtSession: a session saved to or loaded from a file stays logged on"
     std::filesystem::remove(path);
     std::lock_guard<std::mutex> lock(s.mu);
     CHECK(s.logoff_cookies.empty());
+}
+
+
+TEST_CASE("AdtSession: failed CSRF fetch retains logon for cleanup", "[adt][session][exhaustion]") {
+    httplib::Server svr;
+    std::atomic<int> requests{0};
+    std::atomic<int> closes{0};
+    svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
+        if (req.path == "/sap/public/bc/icf/logoff") {
+            if (req.get_header_value("Cookie").find("SAP_SESSIONID_A4H_001=FAILED") != std::string::npos) ++closes;
+            res.status = 200;
+            return;
+        }
+        ++requests;
+        res.set_header("Set-Cookie", "SAP_SESSIONID_A4H_001=FAILED; path=/");
+        res.status = 400;
+        res.set_content("<html><title>Service cannot be reached</title><body>400 Session not found</body></html>", "text/html");
+    });
+    LocalServer server(svr);
+    {
+        auto session = MakeTestSession(server.Port());
+        REQUIRE(session->FetchCsrfToken().IsErr());
+        REQUIRE(session->Post("/write", "", "text/plain").IsErr());
+    }
+    CHECK(requests == 1);
+    CHECK(closes == 1);
+}
+
+TEST_CASE("AdtSession: failed logoff blocks new work and preserves cleanup cookie", "[adt][session][exhaustion]") {
+    httplib::Server svr;
+    std::atomic<int> work{0};
+    std::atomic<int> closes{0};
+    std::atomic<int> matching_cookies{0};
+    svr.Get(".*", [&](const httplib::Request& req, httplib::Response& res) {
+        if (req.path == "/sap/public/bc/icf/logoff") {
+            ++closes;
+            if (req.get_header_value("Cookie").find("SAP_SESSIONID_A4H_001=ORIGINAL") != std::string::npos) ++matching_cookies;
+            res.status = closes == 1 ? 503 : 200;
+        } else {
+            ++work;
+            res.set_header("Set-Cookie", "SAP_SESSIONID_A4H_001=ORIGINAL; path=/");
+            res.headers.emplace("Set-Cookie", "sap-contextid=CTX; path=/");
+        }
+    });
+    LocalServer server(svr);
+    {
+        auto session = MakeTestSession(server.Port());
+        session->SetStateful(true);
+        REQUIRE(session->Get("/work").IsOk());
+        session->SetStateful(false);
+        CHECK(session->Get("/more-work").IsErr());
+    }
+    CHECK(work == 1);
+    CHECK(closes == 2);
+    CHECK(matching_cookies == 2);
 }

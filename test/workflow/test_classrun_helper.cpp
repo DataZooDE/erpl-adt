@@ -227,3 +227,22 @@ TEST_CASE("IsStaleHelper: only own, old, genuine helper classes", "[workflow][cl
     // unknown change time: keep
     CHECK_FALSE(IsStaleHelper(Helper("ZCL_ERPLHLP_017E06DD", "DEVELOPER", ""), "DEVELOPER", now, age));
 }
+
+
+TEST_CASE("ClassrunEngineRunner: session refusal stops retries and helper deletion", "[workflow][classrun_helper][exhaustion]") {
+    for (int status : {400, 429}) {
+        MockAdtSession mock;
+        MockAdtSession classrun;
+        mock.EnqueueGet(Result<HttpResponse, Error>::Ok({200, {}, ""}));
+        mock.EnqueuePost(Result<HttpResponse, Error>::Ok({status, {},
+            "<html><title>Service cannot be reached</title><body>400 Session not found</body></html>"}));
+        {
+            ClassrunEngineRunner runner(mock, classrun, Options());
+            CHECK(runner.Run({DomaGetOp("ZA", "E")}).IsErr());
+            CHECK(runner.Run({DomaGetOp("ZB", "E")}).IsErr());
+        }
+        CHECK(mock.PostCallCount() == 1);
+        CHECK(mock.DeleteCallCount() == 0);
+        CHECK(classrun.GetCallCount() == 0);
+    }
+}
