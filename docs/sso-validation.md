@@ -72,15 +72,21 @@ establish compatibility with SAP Secure Login Client's provider.
 
 [Public CI](https://github.com/DataZooDE/erpl-adt/actions/runs/46151149872)
 passed on Linux, Windows and both macOS architectures at `e7d2035`. Private
-RFC-enabled CI has passed Linux and both macOS architectures; the updated
-Windows fixture run is still pending.
+RFC-enabled CI has passed all four platforms. The
+[Windows run](https://github.com/DataZooDE/erpl-proto/actions/runs/46150901978)
+passed 1,860 C++ tests and 111 Rust tests, including protected-key TLS/session
+cleanup. It built `9c32dda`; subsequent code changes only corrected the Python
+fixture's loopback address, leaving compiled sources identical.
 
 ## Remaining acceptance gates
 
-- Complete the updated private RFC-enabled Windows CI run.
 - Verify the actual Windows Secure Login provider against a controlled SAP
   system, including credential renewal/expiry and reconnect behavior. A local
   non-exportable-key fixture is useful coverage, but is not this acceptance test.
+  The available Windows VM reaches A4H on HTTP, HTTPS and RFC, but has no
+  detected Secure Login Client installation or current-user certificates.
+  An additional native Windows-to-SAP test using a temporary non-exportable
+  CNG certificate is prepared but has not yet run.
 - Resolve distribution terms before shipping an RFC-enabled release. The
   optional dependency retains its own license; no RFC binaries are published
   by the private validation workflow.
