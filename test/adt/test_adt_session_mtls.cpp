@@ -311,8 +311,12 @@ private:
         provider_info.pwszProvName = const_cast<wchar_t*>(MS_ENH_RSA_AES_PROV_W);
         provider_info.dwProvType = PROV_RSA_AES;
         provider_info.dwKeySpec = AT_KEYEXCHANGE;
+        // The Windows API defaults to SHA1RSA when this argument is null.
+        // Modern TLS peers reject that signature even for a trusted test cert.
+        CRYPT_ALGORITHM_IDENTIFIER signature{};
+        signature.pszObjId = const_cast<char*>(szOID_RSA_SHA256RSA);
         certificate_ = CertCreateSelfSignCertificate(provider_, &subject_blob, 0,
-            &provider_info, nullptr, nullptr, nullptr, nullptr);
+            &provider_info, &signature, nullptr, nullptr, nullptr);
         REQUIRE(certificate_);
         store_ = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, L"MY");
         REQUIRE(store_);
@@ -331,6 +335,7 @@ private:
         const std::unique_ptr<X509, decltype(&X509_free)> certificate(
             d2i_X509(nullptr, &encoded, static_cast<long>(certificate_->cbCertEncoded)), X509_free);
         REQUIRE(certificate);
+        REQUIRE(X509_get_signature_nid(certificate.get()) == NID_sha256WithRSAEncryption);
         const std::unique_ptr<BIO, decltype(&BIO_free)> output(BIO_new_file(cert_path.c_str(), "w"), BIO_free);
         REQUIRE(output);
         REQUIRE(PEM_write_bio_X509(output.get(), certificate.get()) == 1);
@@ -395,6 +400,7 @@ TEST_CASE("Windows store certificate uses a non-exportable key for TLS and sessi
         session->SetStateful(true);
         const std::string body("a\0b", 3);
         const auto result = session->Post("/sap/bc/adt/test", body, "application/octet-stream");
+        INFO((result.IsErr() ? result.Error().ToString() : "request succeeded"));
         REQUIRE(result.IsOk());
         CHECK(result.Value().status_code == 200);
         CHECK(result.Value().body == body);
