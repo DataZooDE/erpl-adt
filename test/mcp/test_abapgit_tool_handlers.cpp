@@ -54,9 +54,9 @@ struct Tools {
     explicit Tools(const fs::path& root) {
         AbapGitToolOptions options;
         options.root = root;
-        options.make_classrun_session = [this]() -> std::unique_ptr<IAdtSession> {
+        options.make_classrun_session = [this]() -> Result<std::unique_ptr<IAdtSession>, Error> {
             ++classrun_sessions;
-            return std::make_unique<MockAdtSession>();
+            return Result<std::unique_ptr<IAdtSession>, Error>::Ok(std::make_unique<MockAdtSession>());
         };
         RegisterAbapGitTools(registry, session, std::move(options));
     }
@@ -271,4 +271,29 @@ TEST_CASE("McpDeployRecordDirectory: no git work tree uses the server cache, not
     const auto cache = box.base / "cache";
     const auto dir = McpDeployRecordDirectory(box.root, box.root / "repo", cache);
     CHECK(dir.lexically_relative(cache).begin()->string() == "mcp-deployed");
+}
+
+TEST_CASE("abapgit tools propagate independent session authentication failure", "[mcp][abapgit][sso]") {
+    Sandbox box;
+    std::ofstream(box.root / "repo" / ".abapgit.xml")
+        << "<asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\">"
+           "<asx:values><DATA><MASTER_LANGUAGE>E</MASTER_LANGUAGE>"
+           "<STARTING_FOLDER>/src/</STARTING_FOLDER></DATA></asx:values></asx:abap>";
+    MockAdtSession session;
+    ToolRegistry registry;
+    AbapGitToolOptions options;
+    options.root = box.root;
+    options.make_classrun_session = []() -> Result<std::unique_ptr<IAdtSession>, Error> {
+        Error error;
+        error.category = ErrorCategory::Authentication;
+        error.message = "SNC credential expired while opening classrun session";
+        return Result<std::unique_ptr<IAdtSession>, Error>::Err(std::move(error));
+    };
+    RegisterAbapGitTools(registry, session, std::move(options));
+    auto result = registry.Execute("abapgit_status", {{"path", "repo"}, {"package", "$TMP"}});
+    REQUIRE(result.is_error);
+    CHECK(Text(result).find("SNC credential expired") != std::string::npos);
+    CHECK(nlohmann::json::parse(Text(result)).at("error").at("category") == "authentication");
+    CHECK(session.GetCallCount() == 0);
+    CHECK(session.PostCallCount() == 0);
 }

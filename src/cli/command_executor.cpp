@@ -1,3 +1,5 @@
+#include <erpl_adt/config/session_factory.hpp>
+#include <erpl_adt/config/authentication.hpp>
 #include <erpl_adt/cli/command_executor.hpp>
 
 #include <erpl_adt/core/connection_env.hpp>
@@ -162,6 +164,17 @@ const std::set<std::string> kNewStyleGroups = {
 constexpr const char* kCredsFile = ".adt.creds";
 
 struct SavedCredentials {
+    std::string client_certificate_thumbprint;
+    std::string sysnr;
+    std::string snc_library;
+    std::string snc_partner;
+    std::string snc_name;
+    std::string snc_qop;
+
+    std::string auth = "basic";
+    std::string client_certificate;
+    std::string client_key;
+    std::string ca_certificate;
     std::string host;
     uint16_t port = 50000;
     std::string user;
@@ -176,7 +189,18 @@ bool SaveCredentials(const SavedCredentials& creds) {
     j["host"] = creds.host;
     j["port"] = creds.port;
     j["user"] = creds.user;
-    j["password"] = creds.password;
+    if (creds.auth == "basic") j["password"] = creds.password;
+    j["auth"] = creds.auth;
+    if (!creds.client_certificate_thumbprint.empty()) j["client_certificate_thumbprint"] = creds.client_certificate_thumbprint;
+    if (!creds.sysnr.empty()) j["sysnr"] = creds.sysnr;
+    if (!creds.snc_library.empty()) j["snc_library"] = creds.snc_library;
+    if (!creds.snc_partner.empty()) j["snc_partner"] = creds.snc_partner;
+    if (!creds.snc_name.empty()) j["snc_name"] = creds.snc_name;
+    if (!creds.snc_qop.empty()) j["snc_qop"] = creds.snc_qop;
+
+    if (!creds.client_certificate.empty()) j["client_certificate"] = creds.client_certificate;
+    if (!creds.client_key.empty()) j["client_key"] = creds.client_key;
+    if (!creds.ca_certificate.empty()) j["ca_certificate"] = creds.ca_certificate;
     j["client"] = creds.client;
     j["use_https"] = creds.use_https;
     if (!creds.language.empty()) {
@@ -210,6 +234,17 @@ std::optional<SavedCredentials> LoadCredentials() {
     try {
         auto j = nlohmann::json::parse(ifs);
         SavedCredentials creds;
+        creds.auth = j.value("auth", "basic");
+        creds.client_certificate_thumbprint = j.value("client_certificate_thumbprint", "");
+        creds.sysnr = j.value("sysnr", "");
+        creds.snc_library = j.value("snc_library", "");
+        creds.snc_partner = j.value("snc_partner", "");
+        creds.snc_name = j.value("snc_name", "");
+        creds.snc_qop = j.value("snc_qop", "");
+
+        creds.client_certificate = j.value("client_certificate", "");
+        creds.client_key = j.value("client_key", "");
+        creds.ca_certificate = j.value("ca_certificate", "");
         creds.host = j.value("host", "");
         creds.port = j.value("port", static_cast<uint16_t>(50000));
         creds.user = j.value("user", "");
@@ -323,121 +358,38 @@ std::string ResolveConnectionSetting(const CommandArgs& args,
     return saved.empty() ? fallback : saved;
 }
 
-// Resolve the effective logon user the same way CreateSession does:
-// explicit flag > environment > saved credentials > default.
-std::string ResolveUserName(const CommandArgs& args) {
-    auto creds = LoadCredentials();
-    return ResolveConnectionSetting(args, "user", "USER",
-                                    creds ? creds->user : "", "DEVELOPER");
-}
-
-// Create an AdtSession from CommandArgs flags.
-Result<std::unique_ptr<AdtSession>, Error> CreateSession(const CommandArgs& args) {
-    auto creds = LoadCredentials();
-
-    auto host = ResolveConnectionSetting(args, "host", "HOST",
-                                        creds ? creds->host : "", "localhost");
-    auto port_str = ResolveConnectionSetting(
-        args, "port", "PORT", creds ? std::to_string(creds->port) : "", "50000");
-    auto port_result = ParsePort(port_str);
-    if (port_result.IsErr()) {
-        return Result<std::unique_ptr<AdtSession>, Error>::Err(
-            std::move(port_result).Error());
-    }
-    auto port = port_result.Value();
-    auto use_https = HasFlag(args, "https")
-                         ? GetFlag(args, "https") == "true"
-                         : (creds ? creds->use_https : false);
-    auto user = ResolveConnectionSetting(args, "user", "USER",
-                                         creds ? creds->user : "", "DEVELOPER");
-    auto client_str = ResolveConnectionSetting(args, "client", "CLIENT",
-                                               creds ? creds->client : "", "001");
-    auto password = GetFlag(args, "password");
-
-    // Resolve password: explicit flag > --password-env > ERPL_ADT_PASSWORD /
-    // SAP_PASSWORD > saved creds.
-    if (password.empty() && HasFlag(args, "password-env")) {
-        const char* env_val = std::getenv(GetFlag(args, "password-env").c_str());
-        if (env_val != nullptr) {
-            password = env_val;
-        }
-    }
-    if (password.empty()) {
-        auto env = ConnectionEnvValue("PASSWORD");
-        if (env.has_value()) {
-            password = *env;
-        }
-    }
-    if (password.empty() && creds) {
-        password = creds->password;
-    }
-
-    auto client_result = SapClient::Create(client_str);
-    if (client_result.IsErr()) {
-        return Result<std::unique_ptr<AdtSession>, Error>::Err(
-            MakeValidationError("Invalid --client: " + client_result.Error()));
-    }
-    auto sap_client = std::move(client_result).Value();
-
-    AdtSessionOptions opts;
-    // SAP logon language: --language flag > environment > saved creds >
-    // default (EN).
-    auto language_str = ResolveConnectionSetting(args, "language", "LANGUAGE",
-                                                creds ? creds->language : "", "");
-    if (!language_str.empty()) {
-        auto lang_result = SapLanguage::Create(language_str);
-        if (lang_result.IsErr()) {
-            return Result<std::unique_ptr<AdtSession>, Error>::Err(
-                MakeValidationError("Invalid --language: " + lang_result.Error()));
-        }
-        opts.language = std::move(lang_result).Value();
-    }
-    if (HasFlag(args, "timeout")) {
-        auto timeout_result = ParseIntInRange(
-            GetFlag(args, "timeout"),
-            1,
-            std::numeric_limits<int>::max(),
-            "--timeout");
-        if (timeout_result.IsErr()) {
-            return Result<std::unique_ptr<AdtSession>, Error>::Err(
-                std::move(timeout_result).Error());
-        }
-        opts.read_timeout = std::chrono::seconds(timeout_result.Value());
-    }
-    if (use_https) {
-        opts.disable_tls_verify = GetFlag(args, "insecure") == "true";
-    }
-
-    auto session = std::make_unique<AdtSession>(host, port, use_https, user,
-                                                password, sap_client, opts);
-
-    // Load session file if present.
-    auto session_file = GetFlag(args, "session-file");
+// Every command and helper session uses the same connection resolver/factory.
+Result<std::unique_ptr<IAdtSession>, Error> CreateSession(const CommandArgs& args) {
+    auto configuration = ResolveSessionConfiguration(args.flags);
+    if (configuration.IsErr()) return Result<std::unique_ptr<IAdtSession>, Error>::Err(configuration.Error());
+    auto created = CreateAdtSession(configuration.Value());
+    if (created.IsErr()) return created;
+    auto session = std::move(created).Value();
+    const auto session_file = GetFlag(args, "session-file");
     if (!session_file.empty()) {
         std::ifstream probe(session_file);
         if (probe.good()) {
-            (void)session->LoadSession(session_file);
+            auto loaded = session->LoadSession(session_file);
+            if (loaded.IsErr()) return Result<std::unique_ptr<IAdtSession>, Error>::Err(loaded.Error());
         }
     }
-
-    return Result<std::unique_ptr<AdtSession>, Error>::Ok(std::move(session));
+    return Result<std::unique_ptr<IAdtSession>, Error>::Ok(std::move(session));
 }
 
-std::unique_ptr<AdtSession> RequireSession(const CommandArgs& args,
-                                           OutputFormatter& fmt) {
-    auto session_result = CreateSession(args);
-    if (session_result.IsErr()) {
-        fmt.PrintError(session_result.Error());
-        return nullptr;
+Result<std::unique_ptr<IAdtSession>, Error> RequireSession(
+    const CommandArgs& args, OutputFormatter& fmt) {
+    auto session = CreateSession(args);
+    if (session.IsErr()) {
+        fmt.PrintError(session.Error());
     }
-    return std::move(session_result).Value();
+    return session;
 }
 
-// Save session file after stateful operations.
-void MaybeSaveSession(const AdtSession& session, const CommandArgs& args) {
-    auto session_file = GetFlag(args, "session-file");
-    if (!session_file.empty()) {
-        (void)session.SaveSession(session_file);
+void MaybeSaveSession(const IAdtSession& session, const CommandArgs& args) {
+    const auto path = GetFlag(args, "session-file");
+    if (!path.empty()) {
+        const auto saved = session.SaveSession(path);
+        if (saved.IsErr()) std::cerr << "Error: " << saved.Error().message << "\n";
     }
 }
 
@@ -926,10 +878,9 @@ int HandleSearchQuery(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     SearchOptions opts;
     opts.query = args.positional[0];
     if (HasFlag(args, "max")) {
@@ -1002,10 +953,9 @@ int HandleObjectRead(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     // Accept object name or ADT URI.
     std::string resolved_uri;
@@ -1111,20 +1061,15 @@ int HandleObjectCreate(const CommandArgs& args) {
     }
     if (HasFlag(args, "responsible")) {
         params.responsible = GetFlag(args, "responsible");
-    } else if (obj_type == "DEVC/K") {
-        // SAP rejects package creation without a person responsible
-        // ("Enter a valid user, not , as the person responsible"), so default
-        // it to the logon user rather than failing.
-        params.responsible = ResolveUserName(args);
     }
     if (HasFlag(args, "software-component")) {
         params.software_component = GetFlag(args, "software-component");
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
+    if (!params.responsible && obj_type == "DEVC/K") params.responsible = session->LogonUserName();
     auto result = CreateObject(*session, params);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -1178,10 +1123,9 @@ int HandleObjectDelete(const CommandArgs& args) {
         explicit_handle = std::move(handle_result).Value();
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (explicit_handle.has_value()) {
         // Explicit handle: use it directly (advanced / session-file mode).
@@ -1320,17 +1264,15 @@ int HandleScreenCreate(const CommandArgs& args) {
     params.columns = HasFlag(args, "columns") ? std::stoi(GetFlag(args, "columns")) : 83;
     params.fields = fields_result.Value();
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     // A separate, independently-authenticated session for the classrun step
     // — see workflow/screen_workflow.hpp for why reusing `session` there can
     // see a stale generated-program buffer.
-    auto classrun_session = RequireSession(args, fmt);
-    if (!classrun_session) {
-        return 99;
-    }
+    auto classrun_session_result = RequireSession(args, fmt);
+    if (classrun_session_result.IsErr()) return classrun_session_result.Error().ExitCode();
+    auto classrun_session = std::move(classrun_session_result).Value();
 
     auto result = RunScreenCreateWorkflow(*session, *classrun_session, params);
     if (result.IsErr()) {
@@ -1361,14 +1303,12 @@ int HandleScreenRead(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
-    auto classrun_session = RequireSession(args, fmt);
-    if (!classrun_session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
+    auto classrun_session_result = RequireSession(args, fmt);
+    if (classrun_session_result.IsErr()) return classrun_session_result.Error().ExitCode();
+    auto classrun_session = std::move(classrun_session_result).Value();
 
     auto result = RunScreenReadWorkflow(*session, *classrun_session, target_result.Value());
     if (result.IsErr()) {
@@ -1421,14 +1361,12 @@ int HandleScreenDelete(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
-    auto classrun_session = RequireSession(args, fmt);
-    if (!classrun_session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
+    auto classrun_session_result = RequireSession(args, fmt);
+    if (classrun_session_result.IsErr()) return classrun_session_result.Error().ExitCode();
+    auto classrun_session = std::move(classrun_session_result).Value();
 
     auto result = RunScreenDeleteWorkflow(*session, *classrun_session, target_result.Value());
     if (result.IsErr()) {
@@ -1626,10 +1564,9 @@ int HandleObjectLock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     session->SetStateful(true);
 
     auto result = LockObject(*session, uri_result.Value());
@@ -1686,10 +1623,9 @@ int HandleObjectUnlock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = UnlockObject(*session, uri_result.Value(), handle_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -1727,10 +1663,9 @@ int HandleSourceRead(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const auto& arg = args.positional[0];
 
@@ -1953,10 +1888,9 @@ int HandleSourceEdit(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const auto& arg = args.positional[0];
     std::string base_uri;
@@ -2080,10 +2014,9 @@ int HandleSourceWrite(const CommandArgs& args) {
         transport = GetFlag(args, "transport");
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     // Resolve name or URI to a full source URI.
     const auto& arg = args.positional[0];
@@ -2222,10 +2155,9 @@ int HandleSourceCheck(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     // Resolve name or URI to a full source URI.
     const auto& arg = args.positional[0];
@@ -2320,10 +2252,9 @@ int HandleActivateRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto resolved = ResolveActivationObjects(*session, args.positional);
     if (resolved.IsErr()) {
@@ -2365,10 +2296,9 @@ int HandleTestRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto uri_result = ResolveObjectUri(*session, args.positional[0]);
     if (uri_result.IsErr()) {
@@ -2462,8 +2392,9 @@ int HandleObjectRun(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     // A few seconds early: the client's clock and SAP's may differ a little.
     const auto started = DumpTime(std::chrono::system_clock::now() - std::chrono::seconds(10));
@@ -2505,8 +2436,9 @@ int HandleDumpList(const CommandArgs& args) {
     if (HasFlag(args, "owner")) options.owner = GetFlag(args, "owner");
     if (HasFlag(args, "since")) options.since = GetFlag(args, "since");
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = ListDumps(*session, options);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2542,8 +2474,9 @@ int HandleDumpShow(const CommandArgs& args) {
             "Missing dump id. Usage: erpl-adt dump show <id> (ids: erpl-adt dump list)"));
         return 99;
     }
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = GetDump(*session, args.positional[0], HasFlag(args, "full"));
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2600,8 +2533,9 @@ int RunServicePublishCommand(const CommandArgs& args, ServicePublishAction actio
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = action == ServicePublishAction::Publish
         ? PublishServiceBinding(*session, args.positional[0], service_version, odata.Value())
         : UnpublishServiceBinding(*session, args.positional[0], service_version, odata.Value());
@@ -2635,10 +2569,9 @@ int HandleCheckRun(const CommandArgs& args) {
 
     // Empty: RunAtcCheck runs the system check variant, as Eclipse does.
     auto variant = GetFlag(args, "variant", "");
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto uri_result = ResolveObjectUri(*session, args.positional[0]);
     if (uri_result.IsErr()) {
@@ -2695,13 +2628,11 @@ int HandleTransportList(const CommandArgs& args) {
     // `transport list --user=ADMIN` used to do — the documented example could
     // never have worked. The owner filter is --owner, and it defaults to
     // whoever we are logged on as.
-    auto user = HasFlag(args, "owner") ? GetFlag(args, "owner")
-                                       : ResolveUserName(args);
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
+    const auto user = HasFlag(args, "owner") ? GetFlag(args, "owner") : session->LogonUserName();
     auto result = ListTransports(*session, user);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2753,10 +2684,9 @@ int HandleTransportShow(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = GetTransport(*session, args.positional[0]);
     if (result.IsErr()) {
@@ -2821,10 +2751,9 @@ int HandleTransportCreate(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = CreateTransport(*session, desc, pkg);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2854,10 +2783,9 @@ int HandleTransportRelease(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = ReleaseTransport(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -2895,10 +2823,9 @@ int HandleDdicTable(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (HasFlag(args, "raw")) {
         auto url = "/sap/bc/adt/ddic/tables/" + args.positional[0];
@@ -3011,10 +2938,9 @@ int HandleDdicCds(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = GetCdsSource(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -3140,10 +3066,9 @@ int HandleCatalogBuild(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = CatalogBuild(*session, *options);
     if (result.IsErr()) {
@@ -3439,10 +3364,9 @@ int HandleCatalogSync(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto store_result = DuckDbCatalogStore::Open(args.positional[0]);
     if (store_result.IsErr()) {
@@ -3577,10 +3501,9 @@ int HandlePackageList(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = ListPackageContents(*session, args.positional[0]);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -3643,10 +3566,9 @@ int HandlePackageTree(const CommandArgs& args) {
         opts.max_depth = depth_result.Value();
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = ListPackageTree(*session, opts);
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -3697,10 +3619,9 @@ int HandlePackageExists(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     auto result = ResolvePackageExistence(*session, pkg_result.Value());
     if (result.IsErr()) {
         fmt.PrintError(result.Error());
@@ -3729,10 +3650,9 @@ int HandlePackageExists(const CommandArgs& args) {
 int HandleDiscoverServices(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
-    auto session = RequireSession(args, fmt);
-    if (!session) {
-        return 99;
-    }
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     XmlCodec codec;
     auto result = Discover(*session, codec);
     if (result.IsErr()) {
@@ -3806,8 +3726,9 @@ int HandleDiscoverServices(const CommandArgs& args) {
 int HandleBwDiscover(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwDiscover(*session);
     if (result.IsErr()) {
@@ -3848,8 +3769,9 @@ int HandleBwSearch(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwSearchOptions opts;
     opts.query = args.positional[0];
@@ -3981,8 +3903,9 @@ int HandleBwRead(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwReadOptions opts;
     if (args.positional.size() >= 1) {
@@ -4137,8 +4060,9 @@ int HandleBwLock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
     session->SetStateful(true);
 
     BwLockOptions lock_options;
@@ -4200,8 +4124,9 @@ int HandleBwUnlock(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwUnlockObject(*session, args.positional[0],
                                   args.positional[1]);
@@ -4255,8 +4180,9 @@ int HandleBwSave(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwSaveOptions opts;
     opts.object_type = args.positional[0];
@@ -4296,8 +4222,9 @@ int HandleBwDelete(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwDeleteOptions opts;
     opts.object_type = args.positional[0];
@@ -4328,8 +4255,9 @@ int HandleBwActivate(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwActivateOptions opts;
 
@@ -4437,8 +4365,9 @@ int HandleBwXref(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwXrefOptions opts;
     opts.object_type = args.positional[0];
@@ -4523,8 +4452,9 @@ int HandleBwNodes(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwNodesOptions opts;
     opts.object_type = args.positional[0];
@@ -4589,8 +4519,9 @@ int HandleBwNodes(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwSearchMetadata(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwGetSearchMetadata(*session);
     if (result.IsErr()) {
@@ -4628,8 +4559,9 @@ int HandleBwFavorites(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
     auto sub_action = args.positional.empty() ? "list" : args.positional[0];
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (sub_action == "clear") {
         auto result = BwDeleteAllBackendFavorites(*session);
@@ -4693,8 +4625,9 @@ int HandleBwNodePath(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwGetNodePath(*session, object_uri);
     if (result.IsErr()) {
@@ -4727,8 +4660,9 @@ int HandleBwNodePath(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwApplicationLog(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     // The mandatory parameters are defaulted in BwGetApplicationLog, so the
     // CLI and the MCP tool behave the same; only explicit flags are passed.
@@ -4777,8 +4711,9 @@ int HandleBwMessage(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwMessageTextOptions opts;
     opts.identifier = args.positional[0];
@@ -4827,8 +4762,9 @@ int HandleBwValidate(const CommandArgs& args) {
     // "validate" was never one of them.
     opts.action = GetFlag(args, "action", "exists");
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwValidateObject(*session, opts);
     if (result.IsErr()) {
@@ -4870,8 +4806,9 @@ int HandleBwMove(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwListMoveRequests(*session);
     if (result.IsErr()) {
@@ -4911,8 +4848,9 @@ int HandleBwCreate(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwCreateOptions opts;
     opts.object_type = args.positional[0];
@@ -4988,8 +4926,9 @@ int HandleBwValueHelp(const CommandArgs& args) {
     if (HasFlag(args, "type")) opts.object_type = GetFlag(args, "type");
     if (HasFlag(args, "infoprovider")) opts.infoprovider = GetFlag(args, "infoprovider");
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwGetValueHelp(*session, opts);
     if (result.IsErr()) {
@@ -5017,8 +4956,9 @@ int HandleBwValueHelp(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwVirtualFolders(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     std::optional<std::string> package_name;
     std::optional<std::string> object_type;
@@ -5051,8 +4991,9 @@ int HandleBwVirtualFolders(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwDataVolumes(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     std::optional<std::string> infoprovider;
     std::optional<int> max_rows;
@@ -5095,8 +5036,9 @@ int HandleBwReporting(const CommandArgs& args) {
             "Usage: erpl-adt bw reporting <compid> [--dbgmode] [--metadata-only] [--incl-metadata]"));
         return 99;
     }
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwReportingOptions opts;
     opts.compid = args.positional[0];
@@ -5153,8 +5095,9 @@ int HandleBwQueryProperties(const CommandArgs& args) {
             "[--version=<a|m>]"));
         return 99;
     }
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto result = BwGetQueryProperties(*session, args.positional[0],
                                        GetFlag(args, "type"),
@@ -5189,8 +5132,9 @@ int HandleBwReadTrfn(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto name = args.positional[0];
     auto version = GetFlag(args, "version", "a");
@@ -5283,8 +5227,9 @@ int HandleBwReadAdso(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto name = args.positional[0];
     auto version = GetFlag(args, "version", "a");
@@ -5357,8 +5302,9 @@ int HandleBwReadDtp(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     auto name = args.positional[0];
     auto version = GetFlag(args, "version", "a");
@@ -5448,8 +5394,9 @@ int HandleBwReadRsds(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const auto name = args.positional[0];
     const auto source_system = GetFlag(args, "source-system");
@@ -5656,8 +5603,9 @@ int HandleBwReadQuery(const CommandArgs& args) {
         }
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     std::string resolved_ct;
     {
@@ -6050,8 +5998,9 @@ int HandleBwReadDmod(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const auto name = args.positional[0];
     const auto version = GetFlag(args, "version", "a");
@@ -6115,8 +6064,9 @@ int HandleBwLineage(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwLineageGraphOptions opts;
     opts.dtp_name = args.positional[0];
@@ -6318,8 +6268,9 @@ int HandleBwExport(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     BwExportOptions opts;
     opts.infoarea_name = args.positional[0];
@@ -6371,8 +6322,9 @@ int HandleBwExportQuery(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const std::string name = args.positional[0];
     BwExportOptions opts;
@@ -6405,8 +6357,9 @@ int HandleBwExportCube(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const std::string name = args.positional[0];
     BwExportOptions opts;
@@ -6438,8 +6391,9 @@ int HandleBwTransport(const CommandArgs& args) {
 
     auto sub_action = args.positional[0];
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (sub_action == "check" || sub_action == "list") {
         BwTransportCheckOptions options;
@@ -6676,8 +6630,9 @@ int HandleBwLocks(const CommandArgs& args) {
     auto sub_action = args.positional[0];
 
     if (sub_action == "list") {
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         BwListLocksOptions opts;
         if (HasFlag(args, "user")) {
@@ -6734,8 +6689,9 @@ int HandleBwLocks(const CommandArgs& args) {
     }
 
     if (sub_action == "delete") {
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         BwDeleteLockOptions opts;
         if (!HasFlag(args, "user")) {
@@ -6781,8 +6737,9 @@ int HandleBwLocks(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwDbInfo(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (HasFlag(args, "raw")) {
         HttpHeaders headers;
@@ -6844,8 +6801,9 @@ int HandleBwDbInfo(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwSysInfo(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (HasFlag(args, "raw")) {
         HttpHeaders headers;
@@ -6897,8 +6855,9 @@ int HandleBwSysInfo(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwChangeability(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (HasFlag(args, "raw")) {
         HttpHeaders headers;
@@ -6951,8 +6910,9 @@ int HandleBwChangeability(const CommandArgs& args) {
 // ---------------------------------------------------------------------------
 int HandleBwAdtUri(const CommandArgs& args) {
     OutputFormatter fmt(JsonMode(args), ColorMode(args));
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     if (HasFlag(args, "raw")) {
         HttpHeaders headers;
@@ -7016,8 +6976,9 @@ int HandleBwJob(const CommandArgs& args) {
     auto sub_action = args.positional[0];
 
     if (sub_action == "list") {
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         auto result = BwListJobs(*session);
         if (result.IsErr()) {
@@ -7050,8 +7011,9 @@ int HandleBwJob(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Missing job GUID"));
             return 99;
         }
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         auto result = BwGetJobResult(*session, args.positional[1]);
         if (result.IsErr()) {
@@ -7083,8 +7045,9 @@ int HandleBwJob(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Missing job GUID"));
             return 99;
         }
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         auto result = BwCancelJob(*session, args.positional[1]);
         if (result.IsErr()) {
@@ -7100,8 +7063,9 @@ int HandleBwJob(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Missing job GUID"));
             return 99;
         }
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         auto result = BwRestartJob(*session, args.positional[1]);
         if (result.IsErr()) {
@@ -7117,8 +7081,9 @@ int HandleBwJob(const CommandArgs& args) {
             fmt.PrintError(MakeValidationError("Missing job GUID"));
             return 99;
         }
-        auto session = RequireSession(args, fmt);
-        if (!session) return 99;
+        auto session_result = RequireSession(args, fmt);
+        if (session_result.IsErr()) return session_result.Error().ExitCode();
+        auto session = std::move(session_result).Value();
 
         auto result = BwCleanupJob(*session, args.positional[1]);
         if (result.IsErr()) {
@@ -7134,8 +7099,9 @@ int HandleBwJob(const CommandArgs& args) {
         return 99;
     }
 
-    auto session = RequireSession(args, fmt);
-    if (!session) return 99;
+    auto session_result = RequireSession(args, fmt);
+    if (session_result.IsErr()) return session_result.Error().ExitCode();
+    auto session = std::move(session_result).Value();
 
     const auto& guid = args.positional[1];
 
@@ -7696,11 +7662,22 @@ void PrintTopLevelHelp(const CommandRouter& router, std::ostream& out, bool colo
     const GlobalFlag global_flags[] = {
         {"--host <host>",           "SAP hostname (default: localhost)"},
         {"--port <port>",           "SAP port (default: 50000)"},
-        {"--user <user>",           "SAP username (default: DEVELOPER)"},
+        {"--user <user>",           "Basic username; expected mapped user for SSO"},
         {"--password <pass>",       "SAP password"},
         {"--password-env <var>",    "Read password from env var (default: SAP_PASSWORD)"},
         {"--client <num>",          "SAP client (default: 001)"},
         {"--language <iso>",        "SAP logon language (ISO, e.g. EN, DE; default: EN)"},
+        {"--auth <mode>",           "Authentication: basic (default), x509, snc"},
+        {"--config <file>",         "YAML connection profile"},
+        {"--client-certificate <file>", "PEM client certificate chain (X.509)"},
+        {"--client-key <file>",     "PEM private key (X.509)"},
+        {"--ca-certificate <file>", "PEM server trust bundle (HTTPS)"},
+        {"--client-certificate-thumbprint <sha1>", "Windows current-user MY certificate (X.509)"},
+        {"--sysnr <nn>",            "RFC system number (SNC, default: 00)"},
+        {"--snc-library <file>",    "SNC mechanism library (SNC)"},
+        {"--snc-partner <name>",    "Expected SAP SNC identity (SNC)"},
+        {"--snc-name <name>",       "Own SNC identity (default: mechanism credential)"},
+        {"--snc-qop <level>",       "SNC protection: 1, 2, 3, 9 (default: 9)"},
         {"--https",                 "Use HTTPS"},
         {"--insecure",              "Skip TLS verification (with --https)"},
         {"--json",                  "JSON output"},
@@ -7765,7 +7742,7 @@ void PrintLoginHelp(std::ostream& out, bool color) {
     a.Bold("FLAGS").Nl();
     out << "  --host <host>         SAP hostname (required in flag mode)\n";
     out << "  --user <user>         SAP username (required in flag mode)\n";
-    out << "  --password <pass>     SAP password (required in flag mode, or use --password-env)\n";
+    out << "  --password <pass>     SAP password (Basic authentication only)\n";
     out << "  --password-env <var>  Read password from env var (default: SAP_PASSWORD)\n";
     out << "  --port <port>         SAP port (default: 50000)\n";
     out << "  --client <num>        SAP client (default: 001)\n";
@@ -10146,8 +10123,9 @@ int HandleLogin(int argc, const char* const* argv) {
     };
 
     // Check if any login-specific flags were provided.
-    bool has_login_flags = !get("host").empty() || !get("user").empty() ||
-                           !get("password").empty() || !get("password-env").empty();
+    const bool has_login_flags = std::any_of(flags.begin(), flags.end(), [](const auto& entry) {
+        return entry.first != "json" && entry.first != "verbose" && entry.first != "quiet";
+    });
 
     if (!has_login_flags && IsStdinTty()) {
         // Wizard mode: load existing creds as defaults.
@@ -10195,22 +10173,60 @@ int HandleLogin(int argc, const char* const* argv) {
     auto port_str = get("port", "50000");
     auto use_https = get("https") == "true";
 
+    const auto auth = ParseAuthenticationMode(get("auth", "basic"));
+    if (auth.IsErr()) {
+        std::cerr << "Error: " << auth.Error().message << "\n";
+        return 99;
+    }
+    const bool basic = auth.Value() == AuthenticationMode::Basic;
+    const bool x509 = auth.Value() == AuthenticationMode::X509;
+    const bool pem = !get("client-certificate").empty() && !get("client-key").empty();
+    const bool native = !get("client-certificate-thumbprint").empty();
+    if (x509 && (!use_https || pem == native ||
+        (native && (!get("client-certificate").empty() || !get("client-key").empty() || !get("ca-certificate").empty())))) {
+        std::cerr << "Error: X.509 requires HTTPS and PEM certificate/key or Windows certificate thumbprint (OS trust)\n";
+        return 99;
+    }
+    if (!x509 && (!get("client-certificate").empty() || !get("client-key").empty() || native)) {
+        std::cerr << "Error: Client certificate credentials require --auth x509\n";
+        return 99;
+    }
+    if (auth.Value() != AuthenticationMode::Snc &&
+        (!get("sysnr").empty() || !get("snc-library").empty() || !get("snc-partner").empty() ||
+         !get("snc-name").empty() || !get("snc-qop").empty())) {
+        std::cerr << "Error: SNC settings require --auth snc\n";
+        return 99;
+    }
+    if (auth.Value() == AuthenticationMode::Snc) {
+        if (use_https || !get("ca-certificate").empty() || flags.count("insecure")) {
+            std::cerr << "Error: HTTPS settings cannot be used with RFC/SNC\n";
+            return 99;
+        }
+        const auto number = get("sysnr", "00");
+        const auto qop = get("snc-qop", "9");
+        if (number.size() != 2 || number.find_first_not_of("0123456789") != std::string::npos ||
+            get("snc-library").empty() || get("snc-partner").empty() ||
+            (qop != "1" && qop != "2" && qop != "3" && qop != "9")) {
+            std::cerr << "Error: SNC requires two-digit --sysnr, --snc-library, --snc-partner and --snc-qop 1, 2, 3 or 9\n";
+            return 99;
+        }
+    }
     if (host.empty()) {
         std::cerr << "Error: --host is required for login\n";
         return 99;
     }
-    if (user.empty()) {
+    if (basic && user.empty()) {
         std::cerr << "Error: --user is required for login\n";
         return 99;
     }
-    if (password.empty()) {
+    if (basic && password.empty()) {
         auto env_var = get("password-env", "SAP_PASSWORD");
         const char* env_val = std::getenv(env_var.c_str());
         if (env_val != nullptr) {
             password = env_val;
         }
     }
-    if (password.empty()) {
+    if (basic && password.empty()) {
         std::cerr << "Error: --password is required for login\n";
         return 99;
     }
@@ -10241,7 +10257,18 @@ int HandleLogin(int argc, const char* const* argv) {
     creds.host = host;
     creds.port = port_result.Value();
     creds.user = user;
-    creds.password = password;
+    creds.password = basic ? password : "";
+    creds.auth = std::string(AuthenticationModeName(auth.Value()));
+    creds.client_certificate = get("client-certificate");
+    creds.client_key = get("client-key");
+    creds.ca_certificate = get("ca-certificate");
+    creds.client_certificate_thumbprint = get("client-certificate-thumbprint");
+    creds.sysnr = get("sysnr");
+    creds.snc_library = get("snc-library");
+    creds.snc_partner = get("snc-partner");
+    creds.snc_name = get("snc-name");
+    creds.snc_qop = get("snc-qop");
+
     creds.client = std::move(client_result).Value().Value();
     creds.use_https = use_https;
     creds.language = language;

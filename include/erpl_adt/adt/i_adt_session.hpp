@@ -105,6 +105,24 @@ public:
 
     [[nodiscard]] virtual Result<std::string, Error> FetchCsrfToken() = 0;
 
+    // HTTP sessions may persist cookies between CLI invocations. Other
+    // transports reject persistence instead of pretending to restore a handle.
+    [[nodiscard]] virtual Result<void, Error> SaveSession(const std::string&) const {
+        Error error;
+        error.category = ErrorCategory::Validation;
+        error.message = "This transport does not support session files";
+        return Result<void, Error>::Err(std::move(error));
+    }
+    [[nodiscard]] virtual Result<void, Error> LoadSession(const std::string&) {
+        Error error;
+        error.category = ErrorCategory::Validation;
+        error.message = "This transport does not support session files";
+        return Result<void, Error>::Err(std::move(error));
+    }
+
+    // Invoked only between independent operations, never within a workflow.
+    virtual void RecoverForNextOperation() {}
+
     // -- Async polling -------------------------------------------------------
 
     [[nodiscard]] virtual Result<PollResult, Error> PollUntilComplete(

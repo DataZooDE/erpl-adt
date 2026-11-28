@@ -1,3 +1,4 @@
+#include <erpl_adt/config/session_factory.hpp>
 #include <erpl_adt/adt/adt_session.hpp>
 #include <erpl_adt/adt/xml_codec.hpp>
 #include <erpl_adt/cli/command_executor.hpp>
@@ -455,119 +456,25 @@ int HandleMcpServer(int argc, const char* const* argv) {
         return (it != flags.end()) ? it->second : def;
     };
 
-    // Load saved credentials as fallback.
-    constexpr const char* kCredsFile = ".adt.creds";
-    std::string saved_host, saved_user, saved_password, saved_client = "001";
-    std::string saved_language;
-    uint16_t saved_port = 50000;
-    bool saved_https = false;
-    {
-        std::ifstream ifs(kCredsFile);
-        if (ifs) {
-            try {
-                auto j = nlohmann::json::parse(ifs);
-                saved_host = j.value("host", "");
-                saved_port = j.value("port", static_cast<uint16_t>(50000));
-                saved_user = j.value("user", "");
-                saved_password = j.value("password", "");
-                saved_client = j.value("client", "001");
-                saved_https = j.value("use_https", false);
-                saved_language = j.value("language", "");
-            } catch (const nlohmann::json::exception&) {
-                // Ignore malformed creds file.
-            }
-        }
+    auto configuration = ResolveSessionConfiguration(flags);
+    if (configuration.IsErr()) {
+        std::cerr << "Error: " << configuration.Error().message << "\n";
+        return kExitInternal;
     }
-
-    // Connection settings: explicit flag > environment (ERPL_ADT_* / SAP_*) >
-    // saved credentials > default.
-    auto resolve = [&](const std::string& flag, const std::string& env_setting,
-                       const std::string& saved, const std::string& fallback) {
-        if (flags.count(flag)) {
-            return get(flag);
-        }
-        auto env = ConnectionEnvValue(env_setting);
-        if (env.has_value()) {
-            return *env;
-        }
-        return saved.empty() ? fallback : saved;
-    };
-
-    auto host = resolve("host", "HOST", saved_host, "localhost");
-    auto port_str = resolve(
-        "port", "PORT",
-        saved_port != 50000 ? std::to_string(saved_port) : "", "50000");
-    uint16_t port = 0;
+    auto created = CreateAdtSession(configuration.Value());
+    if (created.IsErr()) {
+        std::cerr << "Error: " << created.Error().message << "\n";
+        return created.Error().ExitCode();
+    }
+    auto session = std::move(created).Value();
+    const auto& connection = configuration.Value().connection;
+    const auto& host = connection.host;
+    const auto port = connection.port;
+    const auto sap_client = *connection.client;
     std::string parse_error;
-    if (!ParsePort(port_str, &port, &parse_error)) {
-        std::cerr << "Error: " << parse_error << "\n";
-        return kExitInternal;
-    }
-    auto use_https = flags.count("https")
-                         ? get("https") == "true"
-                         : saved_https;
-    auto user = resolve("user", "USER", saved_user, "DEVELOPER");
-    auto client_str = resolve("client", "CLIENT", saved_client, "001");
-    auto password = get("password");
-
-    // Resolve password: explicit flag > --password-env > ERPL_ADT_PASSWORD /
-    // SAP_PASSWORD > saved creds.
-    if (password.empty() && flags.count("password-env")) {
-        const char* env_val = std::getenv(get("password-env").c_str());
-        if (env_val != nullptr) {
-            password = env_val;
-        }
-    }
-    if (password.empty()) {
-        auto env = ConnectionEnvValue("PASSWORD");
-        if (env.has_value()) {
-            password = *env;
-        }
-    }
-    if (password.empty()) {
-        password = saved_password;
-    }
-
-    auto client_result = SapClient::Create(client_str);
-    if (client_result.IsErr()) {
-        std::cerr << "Error: Invalid --client: " << client_result.Error() << "\n";
-        return kExitInternal;
-    }
-    auto sap_client = std::move(client_result).Value();
-
-    AdtSessionOptions opts;
-    // SAP logon language: explicit --language flag > saved creds > default (EN).
-    auto language_str = resolve("language", "LANGUAGE", saved_language, "");
-    if (!language_str.empty()) {
-        auto lang_result = SapLanguage::Create(language_str);
-        if (lang_result.IsErr()) {
-            std::cerr << "Error: Invalid --language: " << lang_result.Error() << "\n";
-            return kExitInternal;
-        }
-        opts.language = std::move(lang_result).Value();
-    }
-    if (!get("timeout").empty()) {
-        int timeout_seconds = 0;
-        if (!ParseIntInRange(get("timeout"),
-                             1,
-                             std::numeric_limits<int>::max(),
-                             "--timeout",
-                             &timeout_seconds,
-                             &parse_error)) {
-            std::cerr << "Error: " << parse_error << "\n";
-            return kExitInternal;
-        }
-        opts.read_timeout = std::chrono::seconds(timeout_seconds);
-    }
-    if (use_https && get("insecure") == "true") {
-        opts.disable_tls_verify = true;
-    }
-
-    auto session = std::make_unique<AdtSession>(host, port, use_https, user,
-                                                password, sap_client, opts);
 
     // Create tool registry and register all ADT tools.
-    ToolRegistry registry;
+    ToolRegistry registry([&session] { session->RecoverForNextOperation(); });
     RegisterAdtTools(registry, *session);
 
     // abapgit_* tools, confined to one folder: --abapgit-root > YAML
@@ -591,9 +498,8 @@ int HandleMcpServer(int argc, const char* const* argv) {
                       << "\n";
             return kExitInternal;
         }
-        abapgit.make_classrun_session = [=]() -> std::unique_ptr<IAdtSession> {
-            return std::make_unique<AdtSession>(host, port, use_https, user, password,
-                                                sap_client, opts);
+        abapgit.make_classrun_session = [=]() {
+            return CreateAdtSession(configuration.Value());
         };
         abapgit.system = host + ":" + std::to_string(port) + "/" + sap_client.Value();
         RegisterAbapGitTools(registry, *session, std::move(abapgit));
@@ -952,21 +858,19 @@ int main(int argc, const char* argv[]) {
         config.repos = std::move(sorted).Value();
     }
 
-    // Step 7: Create AdtSession.
-    SapClient sap_client = config.connection.client.value_or(
-        SapClient::Create("001").Value());
-    AdtSessionOptions session_opts;
-    session_opts.read_timeout = std::chrono::seconds(config.timeout_seconds);
-    session_opts.language = config.connection.language;
-
-    auto session = std::make_unique<AdtSession>(
-        config.connection.host,
-        config.connection.port,
-        config.connection.use_https,
-        config.connection.user,
-        config.connection.password,
-        sap_client,
-        session_opts);
+    // Step 7: Use the same transport factory as CLI/MCP and helper sessions.
+    SessionConfiguration session_configuration;
+    session_configuration.connection = config.connection;
+    if (!session_configuration.connection.client) {
+        session_configuration.connection.client = SapClient::Create("001").Value();
+    }
+    session_configuration.options.read_timeout = std::chrono::seconds(config.timeout_seconds);
+    auto created = CreateAdtSession(session_configuration);
+    if (created.IsErr()) {
+        PrintError(created.Error(), config.json_output);
+        return created.Error().ExitCode();
+    }
+    auto session = std::move(created).Value();
 
     // Step 8: Create XmlCodec.
     auto codec = std::make_unique<XmlCodec>();

@@ -2,6 +2,7 @@
 
 #include <erpl_adt/adt/adt_session.hpp>
 #include <erpl_adt/core/types.hpp>
+#include <erpl_adt/config/authentication.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -17,6 +18,17 @@ struct ConnectionConfig {
     std::optional<SapClient> client;
     std::string user;
     std::string password;
+    std::optional<AuthenticationMode> auth; // unset preserves legacy Basic mode
+    std::optional<std::string> client_certificate;
+    std::optional<std::string> client_key;
+    std::optional<std::string> ca_certificate;
+    std::optional<std::string> client_certificate_thumbprint;
+    std::optional<std::string> snc_library;
+    std::optional<std::string> snc_partner;
+    std::optional<std::string> snc_name;
+    std::optional<std::string> sysnr;
+    std::optional<std::string> snc_qop;
+
     std::optional<std::string> password_env; // env var name to read password from
     std::optional<SapLanguage> language;     // SAP logon language; defaults to EN
 };

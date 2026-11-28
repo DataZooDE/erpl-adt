@@ -135,6 +135,20 @@ Result<AppConfig, Error> LoadFromYaml(std::string_view file_path) {
         if (conn["password"]) {
             config.connection.password = conn["password"].as<std::string>();
         }
+        if (conn["client_certificate_thumbprint"]) config.connection.client_certificate_thumbprint = conn["client_certificate_thumbprint"].as<std::string>();
+        if (conn["snc_library"]) config.connection.snc_library = conn["snc_library"].as<std::string>();
+        if (conn["snc_partner"]) config.connection.snc_partner = conn["snc_partner"].as<std::string>();
+        if (conn["snc_name"]) config.connection.snc_name = conn["snc_name"].as<std::string>();
+        if (conn["sysnr"]) config.connection.sysnr = conn["sysnr"].as<std::string>();
+        if (conn["snc_qop"]) config.connection.snc_qop = conn["snc_qop"].as<std::string>();
+        if (conn["auth"]) {
+            auto mode = ParseAuthenticationMode(conn["auth"].as<std::string>());
+            if (mode.IsErr()) return Result<AppConfig, Error>::Err(mode.Error());
+            config.connection.auth = mode.Value();
+        }
+        if (conn["client_certificate"]) config.connection.client_certificate = conn["client_certificate"].as<std::string>();
+        if (conn["client_key"]) config.connection.client_key = conn["client_key"].as<std::string>();
+        if (conn["ca_certificate"]) config.connection.ca_certificate = conn["ca_certificate"].as<std::string>();
         if (conn["password_env"]) {
             config.connection.password_env = conn["password_env"].as<std::string>();
         }
@@ -197,6 +211,17 @@ Result<AppConfig, Error> LoadFromCli(int argc, const char* const* argv) {
         .help("SAP password");
     program.add_argument("--password-env")
         .help("Environment variable containing SAP password");
+
+    program.add_argument("--client-certificate-thumbprint").help("SSO connection setting: client_certificate_thumbprint");
+    program.add_argument("--snc-library").help("SSO connection setting: snc_library");
+    program.add_argument("--snc-partner").help("SSO connection setting: snc_partner");
+    program.add_argument("--snc-name").help("SSO connection setting: snc_name");
+    program.add_argument("--sysnr").help("SSO connection setting: sysnr");
+    program.add_argument("--snc-qop").help("SSO connection setting: snc_qop");
+    program.add_argument("--auth").help("Authentication: basic, x509 or snc");
+    program.add_argument("--client-certificate").help("PEM client certificate chain for X.509 authentication");
+    program.add_argument("--client-key").help("PEM client private key");
+    program.add_argument("--ca-certificate").help("PEM server trust bundle");
 
     // Repository flags (single-repo mode)
     program.add_argument("--repo")
@@ -275,6 +300,27 @@ Result<AppConfig, Error> LoadFromCli(int argc, const char* const* argv) {
     if (auto val = program.present("--password-env")) {
         config.connection.password_env = *val;
     }
+
+    if (auto val = program.present("--auth")) {
+        auto mode = ParseAuthenticationMode(*val);
+        if (mode.IsErr()) return Result<AppConfig, Error>::Err(mode.Error());
+        config.connection.auth = mode.Value();
+    }
+    if (auto val = program.present("--client-certificate")) config.connection.client_certificate = *val;
+    if (auto val = program.present("--client-key")) config.connection.client_key = *val;
+    if (auto val = program.present("--ca-certificate")) config.connection.ca_certificate = *val;
+
+    if (auto val = program.present("--client-certificate-thumbprint")) config.connection.client_certificate_thumbprint = *val;
+
+    if (auto val = program.present("--snc-library")) config.connection.snc_library = *val;
+
+    if (auto val = program.present("--snc-partner")) config.connection.snc_partner = *val;
+
+    if (auto val = program.present("--snc-name")) config.connection.snc_name = *val;
+
+    if (auto val = program.present("--sysnr")) config.connection.sysnr = *val;
+
+    if (auto val = program.present("--snc-qop")) config.connection.snc_qop = *val;
 
     // Single-repo mode
     if (auto repo_url = program.present("--repo")) {
@@ -365,6 +411,23 @@ AppConfig MergeConfigs(const AppConfig& yaml_base, const AppConfig& cli_override
         merged.connection.client = cli_overrides.connection.client;
     }
 
+    if (cli_overrides.connection.auth) merged.connection.auth = cli_overrides.connection.auth;
+    if (cli_overrides.connection.client_certificate) merged.connection.client_certificate = cli_overrides.connection.client_certificate;
+    if (cli_overrides.connection.client_key) merged.connection.client_key = cli_overrides.connection.client_key;
+    if (cli_overrides.connection.ca_certificate) merged.connection.ca_certificate = cli_overrides.connection.ca_certificate;
+
+    if (cli_overrides.connection.client_certificate_thumbprint) merged.connection.client_certificate_thumbprint = cli_overrides.connection.client_certificate_thumbprint;
+
+    if (cli_overrides.connection.snc_library) merged.connection.snc_library = cli_overrides.connection.snc_library;
+
+    if (cli_overrides.connection.snc_partner) merged.connection.snc_partner = cli_overrides.connection.snc_partner;
+
+    if (cli_overrides.connection.snc_name) merged.connection.snc_name = cli_overrides.connection.snc_name;
+
+    if (cli_overrides.connection.sysnr) merged.connection.sysnr = cli_overrides.connection.sysnr;
+
+    if (cli_overrides.connection.snc_qop) merged.connection.snc_qop = cli_overrides.connection.snc_qop;
+
     // CLI repos override YAML repos if present
     if (!cli_overrides.repos.empty()) {
         merged.repos = cli_overrides.repos;
@@ -394,6 +457,11 @@ AppConfig MergeConfigs(const AppConfig& yaml_base, const AppConfig& cli_override
 // ResolvePasswordEnv
 // ---------------------------------------------------------------------------
 Result<AppConfig, Error> ResolvePasswordEnv(AppConfig config) {
+    if (config.connection.auth.value_or(AuthenticationMode::Basic) != AuthenticationMode::Basic) {
+        config.connection.password.clear();
+        config.connection.password_env.reset();
+        return Result<AppConfig, Error>::Ok(std::move(config));
+    }
     if (config.connection.password.empty() &&
         config.connection.password_env.has_value()) {
         const auto& env_var = *config.connection.password_env;
@@ -421,13 +489,33 @@ Result<void, Error> ValidateConfig(const AppConfig& config) {
     if (!config.connection.client.has_value()) {
         return Result<void, Error>::Err(MakeConfigError("Missing required field: client"));
     }
-    if (config.connection.user.empty()) {
+    const auto auth = config.connection.auth.value_or(AuthenticationMode::Basic);
+    if (auth == AuthenticationMode::Basic && config.connection.user.empty()) {
         return Result<void, Error>::Err(MakeConfigError("Missing required field: user"));
     }
-    if (config.connection.password.empty() &&
+    if (auth == AuthenticationMode::Basic && config.connection.password.empty() &&
         !config.connection.password_env.has_value()) {
         return Result<void, Error>::Err(
             MakeConfigError("Missing required field: password or password_env"));
+    }
+    const auto& c = config.connection;
+    if (auth == AuthenticationMode::X509) {
+        const bool pem = c.client_certificate && !c.client_certificate->empty() && c.client_key && !c.client_key->empty();
+        const bool native = c.client_certificate_thumbprint && !c.client_certificate_thumbprint->empty();
+        if (!c.use_https || pem == native || (native && (c.client_certificate || c.client_key || c.ca_certificate))) {
+            return Result<void, Error>::Err(MakeConfigError("X.509 requires HTTPS and either PEM certificate/key or Windows certificate thumbprint (OS trust)"));
+        }
+    } else if (c.client_certificate || c.client_key || c.client_certificate_thumbprint) {
+        return Result<void, Error>::Err(MakeConfigError("Client certificate credentials require auth: x509"));
+    }
+    if (auth == AuthenticationMode::Snc) {
+        const auto number = c.sysnr.value_or("00");
+        const auto qop = c.snc_qop.value_or("9");
+        if (number.size() != 2 || number.find_first_not_of("0123456789") != std::string::npos ||
+            !c.snc_library || c.snc_library->empty() || !c.snc_partner || c.snc_partner->empty() ||
+            (qop != "1" && qop != "2" && qop != "3" && qop != "9")) {
+            return Result<void, Error>::Err(MakeConfigError("SNC requires two-digit sysnr, snc_library, snc_partner and snc_qop of 1, 2, 3 or 9"));
+        }
     }
     if (config.repos.empty()) {
         return Result<void, Error>::Err(
