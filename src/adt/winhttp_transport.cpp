@@ -1,4 +1,5 @@
 #include "http_transport.hpp"
+#include "adt_utils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -114,6 +115,11 @@ public:
             }
         }
         std::string headers;
+        const auto has_accept = std::any_of(request.headers.begin(), request.headers.end(),
+            [](const auto& header) { return adt_utils::IEquals(header.first, "Accept"); });
+        // Match cpp-httplib's default. SAP ADT discovery rejects requests
+        // without Accept, while explicit vendor media types must be preserved.
+        if (!has_accept) headers = "Accept: */*\r\n";
         for (const auto& [name, value] : request.headers) {
             if (name.find_first_of("\r\n:") != std::string::npos || value.find_first_of("\r\n") != std::string::npos) {
                 return Outcome::Err(TransportError("Invalid HTTP header"));

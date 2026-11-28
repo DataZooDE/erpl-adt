@@ -210,6 +210,13 @@ TEST_CASE("mTLS carries CSRF and session cleanup without Basic credentials", "[a
     std::atomic<int> logoffs{0};
     server.Get("/sap/bc/adt/discovery", [&](const httplib::Request& request, httplib::Response& response) {
         if (request.has_header("Authorization")) authorization = true;
+        // Real SAP rejects this request with HTTP 400 when Accept is absent.
+        if (request.get_header_value("Accept") != "*/*" ||
+            request.get_header_value_count("Accept") != 1) {
+            response.status = 400;
+            response.set_content("Accept header missing or duplicated", "text/plain");
+            return;
+        }
         response.set_header("x-csrf-token", "certificate-token");
         response.set_header("Set-Cookie", "SAP_SESSIONID_TEST_001=test-session; Path=/; Secure");
         response.set_content("<discovery/>", "application/xml");
@@ -371,6 +378,12 @@ TEST_CASE("Windows store certificate uses a non-exportable key for TLS and sessi
     std::atomic<int> logoffs{0};
     server.Get("/sap/bc/adt/discovery", [&](const httplib::Request& request, httplib::Response& response) {
         if (request.has_header("Authorization")) authorization = true;
+        if (request.get_header_value("Accept") != "*/*" ||
+            request.get_header_value_count("Accept") != 1) {
+            response.status = 400;
+            response.set_content("Accept header missing or duplicated", "text/plain");
+            return;
+        }
         response.set_header("x-csrf-token", "native-token");
         response.set_header("Set-Cookie", "SAP_SESSIONID_TEST_001=native-session; Path=/; Secure");
         response.set_header("Set-Cookie", "sap-contextid=native-context; Path=/; Secure");
@@ -379,13 +392,20 @@ TEST_CASE("Windows store certificate uses a non-exportable key for TLS and sessi
     server.Post("/sap/bc/adt/test", [&](const httplib::Request& request, httplib::Response& response) {
         if (request.has_header("Authorization")) authorization = true;
         const auto cookie = request.get_header_value("Cookie");
-        if (request.get_header_value("x-csrf-token") != "native-token" ||
+        if (request.get_header_value("Accept") != "*/*" ||
+            request.get_header_value("x-csrf-token") != "native-token" ||
             cookie.find("native-session") == std::string::npos ||
             cookie.find("native-context") == std::string::npos) {
             response.status = 400;
             return;
         }
         response.set_content(request.body, "application/octet-stream");
+    });
+    server.Get("/sap/bc/adt/vendor", [&](const httplib::Request& request, httplib::Response& response) {
+        if (request.get_header_value_count("Accept") != 1 ||
+            request.get_header_value("Accept") != "application/vnd.sap.adt.test") {
+            response.status = 400;
+        }
     });
     server.Get("/sap/public/bc/icf/logoff", [&](const httplib::Request& request, httplib::Response&) {
         if (request.has_header("Authorization")) authorization = true;
@@ -397,6 +417,13 @@ TEST_CASE("Windows store certificate uses a non-exportable key for TLS and sessi
         options.windows_certificate_thumbprint = client.thumbprint;
         options.disable_tls_verify = true; // Only this ephemeral local server certificate.
         auto session = Session(running.port, true, options);
+        const auto discovery = session->Get("/sap/bc/adt/discovery");
+        INFO((discovery.IsErr() ? discovery.Error().ToString() : "discovery succeeded"));
+        REQUIRE(discovery.IsOk());
+        REQUIRE(discovery.Value().status_code == 200);
+        const auto vendor = session->Get("/sap/bc/adt/vendor", {{"aCcEpT", "application/vnd.sap.adt.test"}});
+        REQUIRE(vendor.IsOk());
+        REQUIRE(vendor.Value().status_code == 200);
         session->SetStateful(true);
         const std::string body("a\0b", 3);
         const auto result = session->Post("/sap/bc/adt/test", body, "application/octet-stream");

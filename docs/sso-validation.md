@@ -9,6 +9,7 @@ from a controlled local A4H trial, not the reporting company's installation.
 |---|---|---|
 | PEM HTTPS | Client-certificate-required TLS handshake failed; plaintext certificate configuration was accepted | Successful mTLS; missing, mismatched and untrusted credentials fail; no Basic header |
 | Windows certificate selection | Certificate-store options were not handled | Protected-key TLS/session fixture passes on Windows; actual Secure Login provider acceptance remains open |
+| Windows discovery | Real A4H returned HTTP 400 for a missing Accept header after successful CNG certificate authentication | Native transport supplies the default only when absent; wire-level fixture checks default and explicit vendor headers; Windows CI and live rerun pending |
 | Session persistence | A certificate session accepted unrelated saved cookies | Origin/client/authentication/certificate binding rejects legacy and mismatched SSO sessions |
 | HTTP session lifecycle | A failed operation prevented later independent work | Cleanup precedes recovery; failed mutations are not replayed |
 | HTTPS resource URLs | Valid absolute same-origin URLs failed or unsafe origins were accepted | Same-origin normalization, cross-origin and downgrade rejection |
@@ -85,8 +86,12 @@ fixture's loopback address, leaving compiled sources identical.
   non-exportable-key fixture is useful coverage, but is not this acceptance test.
   The available Windows VM reaches A4H on HTTP, HTTPS and RFC, but has no
   detected Secure Login Client installation or current-user certificates.
-  An additional native Windows-to-SAP test using a temporary non-exportable
-  CNG certificate is prepared but has not yet run.
+  An additional native Windows-to-SAP test used a temporary non-exportable
+  CNG certificate. Certificate authentication succeeded, but real discovery
+  returned HTTP 400 because the native transport omitted the default Accept
+  header. This is behavioral red evidence; the full Windows lifecycle must
+  pass after the regression fix. The test key, SAP mapping, trust entry and
+  helper were removed, with zero SAP sessions remaining.
 - Resolve distribution terms before shipping an RFC-enabled release. The
   optional dependency retains its own license; no RFC binaries are published
   by the private validation workflow.
