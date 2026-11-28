@@ -53,7 +53,8 @@ def test_x509_entry_points_have_no_password_fallback(mtls_peer, tmp_path, entry)
     binary = str(Path(os.getenv("ERPL_ADT_BINARY", Path(__file__).parents[2] / "build/erpl-adt")).resolve())
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SAP_", "ERPL_ADT_"))}
     env.update(SAP_PASSWORD="must-not-be-sent", ERPL_ADT_TELEMETRY="0")
-    flags = ["--host", "localhost", "--port", str(port), "--client", "040", "--https",
+    # Match the IPv4-only listener; localhost may resolve to ::1 on Windows.
+    flags = ["--host", "127.0.0.1", "--port", str(port), "--client", "040", "--https",
              "--auth", "x509", "--client-certificate", str(cert), "--client-key", str(key),
              "--ca-certificate", str(cert)]
     if entry.startswith("saved-"):
@@ -93,7 +94,7 @@ def test_identity_http_error_is_not_accepted_as_a_user(mtls_peer, tmp_path):
     identity["http_status"] = 401
     binary = str(Path(os.getenv("ERPL_ADT_BINARY", Path(__file__).parents[2] / "build/erpl-adt")).resolve())
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SAP_", "ERPL_ADT_"))}
-    result = subprocess.run([binary, "discover", "services", "--host", "localhost", "--port", str(port),
+    result = subprocess.run([binary, "discover", "services", "--host", "127.0.0.1", "--port", str(port),
         "--client", "040", "--https", "--auth", "x509", "--client-certificate", str(cert),
         "--client-key", str(key), "--ca-certificate", str(cert), "--json"],
         cwd=tmp_path, env=env, text=True, capture_output=True, timeout=20)
