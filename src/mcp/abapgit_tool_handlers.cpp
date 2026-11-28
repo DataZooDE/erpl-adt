@@ -234,7 +234,10 @@ ToolResult RunTool(const ToolSpec& spec, IAdtSession& session, const AbapGitTool
     if (!options.make_classrun_session) {
         return ParamError("abapgit tools need a classrun session factory");
     }
-    auto classrun_session = options.make_classrun_session();
+    auto classrun_created = options.make_classrun_session();
+    if (classrun_created.IsErr()) return ErrorResult(classrun_created.Error());
+    auto classrun_session = std::move(classrun_created).Value();
+    if (!classrun_session) return ParamError("classrun session factory returned no session");
     ClassrunHelperOptions helper;
     helper.helper_class = MakeHelperClassName();
     helper.description = "Temporary erpl-adt abapgit helper (safe to delete)";

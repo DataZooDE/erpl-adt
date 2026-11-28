@@ -100,6 +100,7 @@ ToolResult ToolRegistry::Execute(const std::string& name,
     }
 
     try {
+        if (before_execute_) before_execute_();
         return it->second(params);
     } catch (const std::exception& e) {
         ToolResult failed;

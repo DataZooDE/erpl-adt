@@ -138,6 +138,8 @@ bool CommandRouter::IsStrictFlags(const std::string& group, const std::string& a
 const std::vector<std::string>& CommandRouter::GlobalFlagNames() {
     static const std::vector<std::string> names = {
         "host", "port", "user", "password", "password-env", "client", "language",
+        "config", "auth", "client-certificate", "client-key", "ca-certificate",
+        "client-certificate-thumbprint", "snc-library", "snc-partner", "snc-name", "sysnr", "snc-qop",
         "https", "insecure", "json", "timeout", "session-file", "color", "no-color",
         "no-telemetry", "config", "help", "quiet", "no-banner"};
     return names;

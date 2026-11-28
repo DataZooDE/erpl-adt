@@ -26,6 +26,12 @@ struct AdtSessionOptions {
     std::chrono::seconds connect_timeout{30};
     std::chrono::seconds read_timeout{kDefaultReadTimeoutSeconds};
     bool disable_tls_verify = false;
+    // PEM client identity selects certificate authentication; Basic is disabled.
+    std::optional<std::string> client_certificate_path;
+    std::optional<std::string> client_key_path;
+    std::optional<std::string> ca_certificate_path;
+    // Explicit SHA-1 thumbprint in Windows CurrentUser\\MY; key stays in its provider.
+    std::optional<std::string> windows_certificate_thumbprint;
     std::chrono::seconds poll_interval{2};
     // SAP logon language for the connection. Sent as the Accept-Language
     // header (SAP maps it to the logon language). Defaults to English (EN)
@@ -40,7 +46,7 @@ struct AdtSessionOptions {
 // struct is defined in the .cpp file.
 //
 // Features:
-//   - Basic Auth on every request
+//   - Basic Auth or HTTPS PEM client certificate authentication
 //   - CSRF token lifecycle (fetch, cache, retry on 403)
 //   - SAP headers: sap-client, Accept-Language
 //   - Cookie jar: handled by httplib::Client automatically
@@ -101,19 +107,22 @@ public:
     // -- Session persistence (concrete class only, not on IAdtSession) --------
 
     /// Save session state (CSRF token, context ID, cookies) to a JSON file.
-    [[nodiscard]] Result<void, Error> SaveSession(const std::string& path) const;
+    [[nodiscard]] Result<void, Error> SaveSession(const std::string& path) const override;
 
     /// Load session state from a previously saved JSON file.
-    [[nodiscard]] Result<void, Error> LoadSession(const std::string& path);
+    [[nodiscard]] Result<void, Error> LoadSession(const std::string& path) override;
 
     /// Clear cached session state (CSRF tokens, cookies, context ID).
     /// Call before retrying after a "Session not found" error.
     void ResetStatefulSession();
 
+    // Called only between independent operations; failed logoff preserves the latch.
+    void RecoverForNextOperation() override;
+
 private:
     struct Impl;
     // Logs off on the server (ends the logon and any stateful context).
-    void EndServerSession();
+    bool EndServerSession();
 
     std::unique_ptr<Impl> impl_;
 };

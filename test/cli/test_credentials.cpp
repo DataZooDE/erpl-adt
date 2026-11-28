@@ -305,3 +305,37 @@ TEST_CASE("CredentialsFileHasLooseMode: nonexistent file returns false",
     CHECK_FALSE(CredentialsFileHasLooseMode("/tmp/erpl_adt_does_not_exist_xyz"));
 }
 #endif
+
+TEST_CASE("login: X509 stores references without a password or assumed user", "[cli][credentials][sso]") {
+    auto tmp = MakeTempDir();
+    TempDirGuard guard(tmp);
+    const char* argv[] = {"erpl-adt", "login", "--host", "sap.example.test",
+        "--https=true", "--auth", "x509", "--client-certificate", "client.pem",
+        "--client-key", "client.key", "--ca-certificate", "ca.pem"};
+    const int rc = HandleLogin(static_cast<int>(sizeof(argv) / sizeof(argv[0])), argv);
+    REQUIRE(rc == 0);
+    std::ifstream input(".adt.creds");
+    REQUIRE(input.good());
+    const auto saved = nlohmann::json::parse(input);
+    CHECK(saved.at("auth") == "x509");
+    CHECK(saved.at("client_certificate") == "client.pem");
+    CHECK(saved.at("client_key") == "client.key");
+    CHECK(saved.at("ca_certificate") == "ca.pem");
+    CHECK(saved.value("password", "").empty());
+    CHECK(saved.value("user", "").empty());
+}
+
+TEST_CASE("login: SNC stores destination references without password", "[cli][credentials][sso]") {
+    auto tmp = MakeTempDir();
+    TempDirGuard guard(tmp);
+    const char* argv[] = {"erpl-adt", "login", "--host", "sap.example.test", "--auth", "snc",
+        "--sysnr", "00", "--snc-library", "sapcrypto", "--snc-partner", "p:CN=server"};
+    const int rc = HandleLogin(static_cast<int>(sizeof(argv) / sizeof(argv[0])), argv);
+    REQUIRE(rc == 0);
+    std::ifstream input(".adt.creds");
+    const auto saved = nlohmann::json::parse(input);
+    CHECK(saved.at("auth") == "snc");
+    CHECK(saved.at("sysnr") == "00");
+    CHECK(saved.at("snc_partner") == "p:CN=server");
+    CHECK_FALSE(saved.contains("password"));
+}

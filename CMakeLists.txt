@@ -150,6 +150,10 @@ list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main\\.cpp$")
 
 if(LIB_SOURCES)
     add_library(erpl_adt_lib STATIC ${LIB_SOURCES})
+    option(ERPL_ADT_WITH_RFC "Build the optional BSL-licensed erpl-proto RFC/SNC transport" OFF)
+    if(ERPL_ADT_WITH_RFC)
+        include(cmake/ErplProto.cmake)
+    endif()
     target_include_directories(erpl_adt_lib PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/generated
@@ -187,7 +191,7 @@ if(LIB_SOURCES)
     elseif(MSVC)
         set_property(TARGET erpl_adt_lib PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_link_libraries(erpl_adt_lib PUBLIC iphlpapi)
+        target_link_libraries(erpl_adt_lib PUBLIC iphlpapi winhttp crypt32 advapi32)
     endif()
 else()
     # No source files yet — INTERFACE library so dependents still get includes/deps

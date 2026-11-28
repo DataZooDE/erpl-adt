@@ -491,6 +491,14 @@ export DATAZOO_DISABLE_TELEMETRY=1   # or DO_NOT_TRACK=1
 See [TELEMETRY.md](TELEMETRY.md) for exactly what is collected and the privacy
 contract.
 
+Passwordless SAP connections support explicit HTTPS client certificates and an
+optional RFC/SNC transport. See [SSO configuration and acceptance tests](docs/sso.md)
+for PEM and Windows certificate-store setup, SNC credentials, and build requirements.
+
 ## License
 
 [Apache License 2.0](LICENSE) — Copyright 2026 Datazoo GmbH
+
+The optional RFC/SNC build links a separate BSL 1.1 dependency. Its terms also
+apply to RFC-enabled binaries; see [the dependency notice](third_party/erpl_proto/README.md).
+Default public builds do not include that dependency.

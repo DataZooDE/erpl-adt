@@ -77,6 +77,10 @@ using ToolHandler = std::function<ToolResult(const nlohmann::json& params)>;
 // ---------------------------------------------------------------------------
 class ToolRegistry {
 public:
+    // Runs at the boundary of an independent tool call, before its handler.
+    explicit ToolRegistry(std::function<void()> before_execute = {})
+        : before_execute_(std::move(before_execute)) {}
+
     void Register(const std::string& name,
                   const std::string& description,
                   const nlohmann::json& input_schema,
@@ -125,6 +129,7 @@ public:
                                      const nlohmann::json& params) const;
 
 private:
+    std::function<void()> before_execute_;
     std::vector<ToolSchema> schemas_;
     std::map<std::string, ToolHandler> handlers_;
 };

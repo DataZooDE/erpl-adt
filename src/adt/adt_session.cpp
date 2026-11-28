@@ -1,5 +1,6 @@
 #include <erpl_adt/adt/adt_session.hpp>
 #include "adt_utils.hpp"
+#include "http_transport.hpp"
 #include <erpl_adt/adt/bw_hints.hpp>
 #include <erpl_adt/core/log.hpp>
 
@@ -166,6 +167,7 @@ httplib::Headers BuildRequestHeaders(
 // ---------------------------------------------------------------------------
 struct AdtSession::Impl {
     std::unique_ptr<httplib::Client> client;
+    std::unique_ptr<detail::IHttpTransport> native_transport;
     std::string sap_client;
     std::string logon_user;
     std::string accept_language;                 // resolved SAP logon language
@@ -180,6 +182,8 @@ struct AdtSession::Impl {
     // logged off when this object goes away.
     bool keep_logon_ = false;
     std::optional<Error> terminal_error_;
+    // Invalid credentials/configuration must also block the logoff escape hatch.
+    std::optional<Error> configuration_error_;
     // Kept for error messages: a transport failure that does not name the
     // server it tried is the hardest kind to diagnose.
     std::string base_url_;
@@ -206,7 +210,68 @@ struct AdtSession::Impl {
                     std::to_string(port);
         client = std::make_unique<httplib::Client>(base_url_);
 
-        client->set_basic_auth(user, password);
+        const bool certificate_auth = opts.client_certificate_path.has_value() ||
+                                      opts.client_key_path.has_value();
+        const auto reject = [&](const std::string& message) {
+            configuration_error_ = MakeSessionError("Connect", base_url_, std::nullopt,
+                                                    message, ErrorCategory::Authentication);
+        };
+        if ((certificate_auth || opts.windows_certificate_thumbprint || opts.ca_certificate_path) && !use_https) {
+            reject("Client certificates and custom CA trust require HTTPS");
+            return;
+        }
+        if (opts.windows_certificate_thumbprint) {
+            if (certificate_auth) {
+                reject("Cannot combine Windows certificate-store authentication with PEM identity files");
+                return;
+            }
+            auto transport = detail::CreateWindowsCertificateTransport(host, port, opts);
+            if (transport.IsErr()) {
+                configuration_error_ = transport.Error();
+                return;
+            }
+            native_transport = std::move(transport).Value();
+            return;
+        }
+        if (certificate_auth) {
+            if (!opts.client_certificate_path || opts.client_certificate_path->empty() ||
+                !opts.client_key_path || opts.client_key_path->empty()) {
+                reject("Certificate authentication requires both a PEM client certificate and private key");
+                return;
+            }
+            // Never allow OpenSSL's default interactive password prompt in CLI/MCP.
+            std::ifstream key_file(*opts.client_key_path);
+            if (!key_file) {
+                reject("Cannot read the PEM client private key");
+                return;
+            }
+            std::string line;
+            while (std::getline(key_file, line)) {
+                if (line.find("ENCRYPTED") != std::string::npos) {
+                    reject("Encrypted PEM private keys are not supported; use an unencrypted PEM key with restricted file permissions");
+                    return;
+                }
+            }
+            auto* tls = client->ssl_context();
+            if (!tls ||
+                SSL_CTX_use_certificate_chain_file(tls, opts.client_certificate_path->c_str()) != 1 ||
+                SSL_CTX_use_PrivateKey_file(tls, opts.client_key_path->c_str(), SSL_FILETYPE_PEM) != 1 ||
+                SSL_CTX_check_private_key(tls) != 1) {
+                reject("Cannot load PEM client certificate and matching private key");
+                return;
+            }
+        } else {
+            client->set_basic_auth(user, password);
+        }
+        if (opts.ca_certificate_path) {
+            if (!client->ssl_context() || opts.ca_certificate_path->empty() ||
+                SSL_CTX_load_verify_locations(client->ssl_context(),
+                                              opts.ca_certificate_path->c_str(), nullptr) != 1) {
+                reject("Cannot load the CA certificate file");
+                return;
+            }
+            client->set_ca_cert_path(*opts.ca_certificate_path);
+        }
         client->set_connection_timeout(opts.connect_timeout);
         client->set_read_timeout(opts.read_timeout);
 
@@ -267,6 +332,88 @@ struct AdtSession::Impl {
                                     httplib::to_string(http_error) +
                                     " (connecting to " + base_url_ + ")",
                                 category);
+    }
+
+    Result<httplib::Response, Error> Exchange(
+            const char* operation, const std::string& method, std::string_view path,
+            const httplib::Headers& headers, std::string_view body = {},
+            std::string_view content_type = {}) {
+        using Outcome = Result<httplib::Response, Error>;
+        // Async Location can be absolute, but credentials belong to exactly one origin.
+        if (path.substr(0, 7) == "http://" || path.substr(0, 8) == "https://") {
+            if (path == base_url_) {
+                path = "/";
+            } else if (path.size() > base_url_.size() &&
+                       path.substr(0, base_url_.size()) == base_url_ && path[base_url_.size()] == '/') {
+                path.remove_prefix(base_url_.size());
+            } else {
+                return Outcome::Err(MakeSessionError(operation, std::string(path), std::nullopt,
+                    "Refusing an HTTP request outside the configured origin (including HTTPS downgrade)",
+                    ErrorCategory::Authentication));
+            }
+        }
+        if (path.empty() || path.front() != '/' || path.substr(0, 2) == "//" ||
+            path.find_first_of("\r\n") != std::string_view::npos) {
+            return Outcome::Err(MakeSessionError(operation, std::string(path), std::nullopt,
+                "HTTP request path must be relative to the configured origin", ErrorCategory::Authentication));
+        }
+        if (native_transport) {
+            detail::TransportRequest request;
+            request.method = method;
+            request.path = std::string(path);
+            request.headers.assign(headers.begin(), headers.end());
+            request.body = std::string(body);
+            if (!content_type.empty()) request.headers.emplace_back("Content-Type", content_type);
+            auto received = native_transport->Send(request);
+            if (received.IsErr()) {
+                auto error = received.Error();
+                error.operation = operation;
+                error.endpoint = std::string(path);
+                AddBwHint(error);
+                return Outcome::Err(std::move(error));
+            }
+            auto response = std::move(received).Value();
+            httplib::Response converted;
+            converted.status = response.status;
+            converted.headers.insert(response.headers.begin(), response.headers.end());
+            converted.body = std::move(response.body);
+            return Outcome::Ok(std::move(converted));
+        }
+        const auto send = [&]() {
+            if (method == "POST") return client->Post(std::string(path), headers, std::string(body), std::string(content_type));
+            if (method == "PUT") return client->Put(std::string(path), headers, std::string(body), std::string(content_type));
+            if (method == "DELETE") return client->Delete(std::string(path), headers);
+            return client->Get(std::string(path), headers);
+        };
+        auto response = send();
+        if (!response) return Outcome::Err(MakeTransportError(operation, std::string(path), response.error()));
+        return Outcome::Ok(std::move(*response));
+    }
+
+    nlohmann::json SessionBinding() const {
+        std::string authentication = "basic";
+        std::string identity = logon_user;
+        if (options.windows_certificate_thumbprint) {
+            authentication = "windows-certificate";
+            identity = *options.windows_certificate_thumbprint;
+            std::transform(identity.begin(), identity.end(), identity.begin(),
+                           [](unsigned char value) { return static_cast<char>(std::toupper(value)); });
+        } else if (options.client_certificate_path || options.client_key_path) {
+            authentication = "x509-pem";
+            identity.clear();
+            const auto* certificate = client->ssl_context() ? SSL_CTX_get0_certificate(client->ssl_context()) : nullptr;
+            unsigned char digest[EVP_MAX_MD_SIZE]{};
+            unsigned int length = 0;
+            if (certificate && X509_digest(certificate, EVP_sha256(), digest, &length) == 1) {
+                constexpr char hex[] = "0123456789abcdef";
+                for (unsigned int index = 0; index < length; ++index) {
+                    identity += hex[digest[index] >> 4];
+                    identity += hex[digest[index] & 15];
+                }
+            }
+        }
+        return {{"version", 1}, {"origin", base_url_}, {"client", sap_client},
+                {"authentication", authentication}, {"identity", identity}};
     }
 
     // Check if a request path targets the BW Modeling API.
@@ -373,6 +520,7 @@ struct AdtSession::Impl {
     // Execute a GET, returning our HttpResponse.
     Result<HttpResponse, Error> DoGet(std::string_view path,
                                       const HttpHeaders& extra_headers) {
+        if (configuration_error_) return Result<HttpResponse, Error>::Err(*configuration_error_);
         if (terminal_error_ && path != "/sap/public/bc/icf/logoff") {
             return Result<HttpResponse, Error>::Err(*terminal_error_);
         }
@@ -383,18 +531,16 @@ struct AdtSession::Impl {
         InjectBwHeaders(path, hdrs);
         LogInfo("http", "GET " + std::string(path));
         LogRequestHeaders(hdrs);
-        auto res = client->Get(std::string(path), hdrs);
+        auto res = Exchange("Get", "GET", path, hdrs);
         if (!res) {
-            const auto http_error = res.error();
-            return Result<HttpResponse, Error>::Err(
-                MakeTransportError("Get", std::string(path), http_error));
+            return Result<HttpResponse, Error>::Err(res.Error());
         }
-        LogResponse(res->status, res->headers, res->body);
-        CaptureContextId(res->headers);
-        CaptureCookies(res->headers);
-        RememberSessionFailure("Get", path, res->status, res->body);
+        LogResponse(res.Value().status, res.Value().headers, res.Value().body);
+        CaptureContextId(res.Value().headers);
+        CaptureCookies(res.Value().headers);
+        RememberSessionFailure("Get", path, res.Value().status, res.Value().body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
-            res->status, ToHttpHeaders(res->headers), res->body});
+            res.Value().status, ToHttpHeaders(res.Value().headers), res.Value().body});
     }
 
     // Execute a POST, returning our HttpResponse.
@@ -402,6 +548,7 @@ struct AdtSession::Impl {
                                        std::string_view body,
                                        std::string_view content_type,
                                        const HttpHeaders& extra_headers) {
+        if (configuration_error_) return Result<HttpResponse, Error>::Err(*configuration_error_);
         if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
@@ -410,19 +557,16 @@ struct AdtSession::Impl {
         InjectBwHeaders(path, hdrs);
         LogInfo("http", "POST " + std::string(path));
         LogRequestHeaders(hdrs);
-        auto res = client->Post(std::string(path), hdrs,
-                                std::string(body), std::string(content_type));
+        auto res = Exchange("Post", "POST", path, hdrs, body, content_type);
         if (!res) {
-            const auto http_error = res.error();
-            return Result<HttpResponse, Error>::Err(
-                MakeTransportError("Post", std::string(path), http_error));
+            return Result<HttpResponse, Error>::Err(res.Error());
         }
-        LogResponse(res->status, res->headers, res->body);
-        CaptureContextId(res->headers);
-        CaptureCookies(res->headers);
-        RememberSessionFailure("Post", path, res->status, res->body);
+        LogResponse(res.Value().status, res.Value().headers, res.Value().body);
+        CaptureContextId(res.Value().headers);
+        CaptureCookies(res.Value().headers);
+        RememberSessionFailure("Post", path, res.Value().status, res.Value().body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
-            res->status, ToHttpHeaders(res->headers), res->body});
+            res.Value().status, ToHttpHeaders(res.Value().headers), res.Value().body});
     }
 
     // Execute a PUT, returning our HttpResponse.
@@ -430,6 +574,7 @@ struct AdtSession::Impl {
                                       std::string_view body,
                                       std::string_view content_type,
                                       const HttpHeaders& extra_headers) {
+        if (configuration_error_) return Result<HttpResponse, Error>::Err(*configuration_error_);
         if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
@@ -438,24 +583,22 @@ struct AdtSession::Impl {
         InjectBwHeaders(path, hdrs);
         LogInfo("http", "PUT " + std::string(path));
         LogRequestHeaders(hdrs);
-        auto res = client->Put(std::string(path), hdrs,
-                               std::string(body), std::string(content_type));
+        auto res = Exchange("Put", "PUT", path, hdrs, body, content_type);
         if (!res) {
-            const auto http_error = res.error();
-            return Result<HttpResponse, Error>::Err(
-                MakeTransportError("Put", std::string(path), http_error));
+            return Result<HttpResponse, Error>::Err(res.Error());
         }
-        LogResponse(res->status, res->headers, res->body);
-        CaptureContextId(res->headers);
-        CaptureCookies(res->headers);
-        RememberSessionFailure("Put", path, res->status, res->body);
+        LogResponse(res.Value().status, res.Value().headers, res.Value().body);
+        CaptureContextId(res.Value().headers);
+        CaptureCookies(res.Value().headers);
+        RememberSessionFailure("Put", path, res.Value().status, res.Value().body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
-            res->status, ToHttpHeaders(res->headers), res->body});
+            res.Value().status, ToHttpHeaders(res.Value().headers), res.Value().body});
     }
 
     // Execute a DELETE, returning our HttpResponse.
     Result<HttpResponse, Error> DoDelete(std::string_view path,
                                          const HttpHeaders& extra_headers) {
+        if (configuration_error_) return Result<HttpResponse, Error>::Err(*configuration_error_);
         if (terminal_error_) return Result<HttpResponse, Error>::Err(*terminal_error_);
         auto hdrs = BuildRequestHeaders(extra_headers, sap_client, accept_language,
                                         CsrfTokenFor(path), cookies_,
@@ -464,18 +607,16 @@ struct AdtSession::Impl {
         InjectBwHeaders(path, hdrs);
         LogInfo("http", "DELETE " + std::string(path));
         LogRequestHeaders(hdrs);
-        auto res = client->Delete(std::string(path), hdrs);
+        auto res = Exchange("Delete", "DELETE", path, hdrs);
         if (!res) {
-            const auto http_error = res.error();
-            return Result<HttpResponse, Error>::Err(
-                MakeTransportError("Delete", std::string(path), http_error));
+            return Result<HttpResponse, Error>::Err(res.Error());
         }
-        LogResponse(res->status, res->headers, res->body);
-        CaptureContextId(res->headers);
-        CaptureCookies(res->headers);
-        RememberSessionFailure("Delete", path, res->status, res->body);
+        LogResponse(res.Value().status, res.Value().headers, res.Value().body);
+        CaptureContextId(res.Value().headers);
+        CaptureCookies(res.Value().headers);
+        RememberSessionFailure("Delete", path, res.Value().status, res.Value().body);
         return Result<HttpResponse, Error>::Ok(HttpResponse{
-            res->status, ToHttpHeaders(res->headers), res->body});
+            res.Value().status, ToHttpHeaders(res.Value().headers), res.Value().body});
     }
 
     // Fetch a new CSRF token. When request_path targets BW, fetch from
@@ -484,6 +625,7 @@ struct AdtSession::Impl {
     // by the BW endpoint and vice versa.
     Result<std::string, Error> DoFetchCsrfToken(
             std::string_view request_path = "") {
+        if (configuration_error_) return Result<std::string, Error>::Err(*configuration_error_);
         if (terminal_error_) return Result<std::string, Error>::Err(*terminal_error_);
         const bool bw = IsBwPath(request_path);
         const auto fetch_from = [&](const std::string& fetch_path) -> Result<std::string, Error> {
@@ -496,28 +638,26 @@ struct AdtSession::Impl {
 
             LogInfo("http", "GET " + fetch_path + " (CSRF fetch)");
             LogRequestHeaders(hdrs);
-            auto res = client->Get(fetch_path, hdrs);
+            auto res = Exchange("FetchCsrfToken", "GET", fetch_path, hdrs);
             if (!res) {
-                const auto http_error = res.error();
-                return Result<std::string, Error>::Err(
-                    MakeTransportError("FetchCsrfToken", fetch_path, http_error));
+                return Result<std::string, Error>::Err(res.Error());
             }
-            LogResponse(res->status, res->headers, res->body);
+            LogResponse(res.Value().status, res.Value().headers, res.Value().body);
             // Even a refused CSRF fetch can establish a security session.
-            CaptureCookies(res->headers);
-            CaptureContextId(res->headers);
-            if (res->status != 200) {
-                auto error = MakeSessionHttpError("FetchCsrfToken", fetch_path, res->status, res->body);
+            CaptureCookies(res.Value().headers);
+            CaptureContextId(res.Value().headers);
+            if (res.Value().status != 200) {
+                auto error = MakeSessionHttpError("FetchCsrfToken", fetch_path, res.Value().status, res.Value().body);
                 if (error.IsSessionFailure()) terminal_error_ = error;
                 return Result<std::string, Error>::Err(error);
             }
 
             auto token = adt_utils::FindHeaderValueCi(
-                ToHttpHeaders(res->headers), "x-csrf-token");
+                ToHttpHeaders(res.Value().headers), "x-csrf-token");
             if (!token.has_value()) {
                 return Result<std::string, Error>::Err(
                     MakeSessionError("FetchCsrfToken", fetch_path,
-                                     res->status,
+                                     res.Value().status,
                                      "No x-csrf-token header in response",
                                      ErrorCategory::CsrfToken));
             }
@@ -576,7 +716,7 @@ bool HoldsLogonSession(const std::map<std::string, std::string>& cookies) {
 // `sap-sessioncmd=close` (parameter or header) and `sap-sessioncmd=logoff`
 // on an ADT URL are answered 200 but end nothing; /sap/public/bc/icf/logoff
 // does. Best effort: on failure the session times out on the server.
-void AdtSession::EndServerSession() {
+bool AdtSession::EndServerSession() {
     // Logoff needs the security cookie, not a new stateful ABAP context.
     const bool stateful = impl_->stateful_;
     impl_->stateful_ = false;
@@ -589,7 +729,7 @@ void AdtSession::EndServerSession() {
         if (!impl_->terminal_error_) impl_->terminal_error_ = error;
         LogWarn("http", "Logging off failed; stopping further work and retaining the session "
                         "for final cleanup: " + error.message);
-        return;
+        return false;
     }
     for (auto it = impl_->cookies_.begin(); it != impl_->cookies_.end();) {
         const auto& name = it->first;
@@ -603,6 +743,7 @@ void AdtSession::EndServerSession() {
     impl_->csrf_token.reset();
     impl_->bw_csrf_token_.reset();
     impl_->sap_context_id_.clear();
+    return true;
 }
 
 // A session nobody will continue (no --session-file) logs off when it goes
@@ -762,6 +903,18 @@ void AdtSession::SetStateful(bool enabled) {
     }
 }
 
+void AdtSession::RecoverForNextOperation() {
+    if (!impl_->terminal_error_) return;
+    if ((HoldsLogonSession(impl_->cookies_) || impl_->cookies_.count("sap-contextid") > 0) &&
+        !EndServerSession()) return;
+    impl_->csrf_token.reset();
+    impl_->bw_csrf_token_.reset();
+    impl_->sap_context_id_.clear();
+    impl_->cookies_.clear();
+    impl_->stateful_ = false;
+    impl_->terminal_error_.reset();
+}
+
 void AdtSession::ResetStatefulSession() {
     if (impl_->terminal_error_) return;
     if (HoldsLogonSession(impl_->cookies_) || impl_->cookies_.count("sap-contextid") > 0) {
@@ -845,7 +998,9 @@ Result<PollResult, Error> AdtSession::PollUntilComplete(
 // SaveSession / LoadSession
 // ---------------------------------------------------------------------------
 Result<void, Error> AdtSession::SaveSession(const std::string& path) const {
+    if (impl_->configuration_error_) return Result<void, Error>::Err(*impl_->configuration_error_);
     nlohmann::json j;
+    j["binding"] = impl_->SessionBinding();
     if (impl_->csrf_token.has_value()) {
         j["csrf_token"] = *impl_->csrf_token;
     }
@@ -886,6 +1041,16 @@ Result<void, Error> AdtSession::LoadSession(const std::string& path) {
         return Result<void, Error>::Err(
             MakeSessionError("LoadSession", path, std::nullopt,
                              "Malformed JSON: " + std::string(e.what())));
+    }
+
+    if (impl_->configuration_error_) return Result<void, Error>::Err(*impl_->configuration_error_);
+    const bool certificate_auth = impl_->options.client_certificate_path || impl_->options.client_key_path ||
+                                  impl_->options.windows_certificate_thumbprint;
+    if ((certificate_auth && !j.contains("binding")) ||
+        (j.contains("binding") && j["binding"] != impl_->SessionBinding())) {
+        return Result<void, Error>::Err(MakeSessionError("LoadSession", path, std::nullopt,
+            "Session file does not match the server, SAP client, or authentication identity; start a new session",
+            ErrorCategory::Authentication));
     }
 
     if (j.contains("csrf_token") && j["csrf_token"].is_string()) {

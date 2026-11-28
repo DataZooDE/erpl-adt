@@ -1,0 +1,14 @@
+connection:
+  host: sap.example.test
+  port: 443
+  https: true
+  client: '040'
+  auth: x509
+  client_certificate: /test/client.pem
+  client_key: /test/client.key
+  ca_certificate: /test/ca.pem
+  password_env: ERPL_ADT_TEST_MISSING_SSO_PASSWORD
+repos:
+  - name: example
+    url: https://github.com/example/example.git
+    package: ZEXAMPLE

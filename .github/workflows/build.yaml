@@ -137,6 +137,12 @@ jobs:
           ERPL_ADT_BINARY: ${{ github.workspace }}/build/erpl-adt${{ runner.os == 'Windows' && '.exe' || '' }}
         run: uv run --project test/integration_py pytest -q test/integration_py/test_52_session_exhaustion.py
 
+      - name: Certificate authentication E2E (real CLI and MCP)
+        shell: bash
+        env:
+          ERPL_ADT_BINARY: ${{ github.workspace }}/build/erpl-adt${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: uv run --project test/integration_py pytest -q test/integration_py/test_54_sso_protocol.py
+
       - name: Check the Claude Code plugin against the binary
         if: runner.os != 'Windows'
         run: python3 scripts/check_plugin_docs.py --binary build/erpl-adt

@@ -26,7 +26,7 @@ struct AbapGitToolOptions {
     std::filesystem::path root;
     // A second, independent session for the temporary helper class's
     // classrun (see workflow/classrun_helper.hpp). Called once per tool call.
-    std::function<std::unique_ptr<IAdtSession>()> make_classrun_session;
+    std::function<Result<std::unique_ptr<IAdtSession>, Error>()> make_classrun_session;
     // "host:port/client" of the SAP system, for the deploy record.
     std::string system;
     // Server-side directory for deploy records that cannot stay inside the
