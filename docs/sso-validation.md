@@ -9,7 +9,7 @@ from a controlled local A4H trial, not the reporting company's installation.
 |---|---|---|
 | PEM HTTPS | Client-certificate-required TLS handshake failed; plaintext certificate configuration was accepted | Successful mTLS; missing, mismatched and untrusted credentials fail; no Basic header |
 | Windows certificate selection | Certificate-store options were not handled | Protected-key TLS/session fixture passes on Windows; actual Secure Login provider acceptance remains open |
-| Windows discovery | Real A4H returned HTTP 400 for a missing Accept header after successful CNG certificate authentication | Native transport supplies the default only when absent; wire-level fixture checks default and explicit vendor headers; Windows CI and live rerun pending |
+| Windows discovery | Real A4H returned HTTP 400 for a missing Accept header after successful CNG certificate authentication | Native transport supplies the default only when absent; wire-level fixture checks default and explicit vendor headers; Windows CI and the real CNG-to-A4H lifecycle pass |
 | Session persistence | A certificate session accepted unrelated saved cookies | Origin/client/authentication/certificate binding rejects legacy and mismatched SSO sessions |
 | HTTP session lifecycle | A failed operation prevented later independent work | Cleanup precedes recovery; failed mutations are not replayed |
 | HTTPS resource URLs | Valid absolute same-origin URLs failed or unsafe origins were accepted | Same-origin normalization, cross-origin and downgrade rejection |
@@ -49,6 +49,33 @@ that live test. Offline mTLS fixtures separately exercise trusted and rejected
 server certificates. The live SNC test used Linux CommonCryptoLib/PSE, with
 QoP 9 and neither a username nor password as a logon credential.
 
+## Real Windows native-key acceptance
+
+A Windows 10 VM completed the same lifecycle against local A4H using the public
+Windows executable from commit `062f1c7` and a non-exportable RSA key in the
+Microsoft Software Key Storage Provider. The guest verified that private-key
+export was rejected. No SAP password was passed to the MCP processes.
+
+The first run authenticated successfully but discovery returned HTTP 400 because
+WinHTTP omitted the default Accept header. The fix adds `Accept: */*` only when
+no case-insensitive Accept header exists. Wire-level regression tests check the
+default and preservation of explicit vendor media types. An independent agent
+review found no further issues.
+
+The corrected executable passed all 25 live MCP steps: ADT/BW discovery, ABAP
+repository search, mapped DEVELOPER identity, Unicode source creation/readback,
+activation, three rejected-write/recovery cycles, graceful process exit while
+holding a lock, successful relocking from a new process, deletion and absence
+verification. The independent HANA oracle saw zero sessions before the test,
+one live test session, and zero afterward. Guest object and certificate/key
+cleanup completed without errors. The temporary SAP user mapping, trust entry
+and helper were also removed; a final session check still returned zero.
+
+This verifies the native Windows CNG path against SAP, not SAP Secure Login
+Client interoperability. As in the Linux live test, A4H's local server certificate
+required disabling server-certificate verification; trusted/rejected server
+certificates remain covered by the offline TLS fixtures.
+
 ## Independent review
 
 Codex agents performed separate authentication/protocol, architecture/factory,
@@ -79,6 +106,13 @@ passed 1,860 C++ tests and 111 Rust tests, including protected-key TLS/session
 cleanup. It built `9c32dda`; subsequent code changes only corrected the Python
 fixture's loopback address, leaving compiled sources identical.
 
+The [Windows regression run](https://github.com/DataZooDE/erpl-adt/actions/runs/46160020604)
+passed 1,861 C++ tests and 11 CLI/MCP tests at `062f1c7`; its Linux job also
+passed. Both macOS jobs were still running when this evidence was recorded.
+An additional [RFC-enabled Windows run](https://github.com/DataZooDE/erpl-proto/actions/runs/46160398430)
+for the same fix is pending; the earlier four-platform RFC results above remain
+separate evidence.
+
 ## Remaining acceptance gates
 
 - Verify the actual Windows Secure Login provider against a controlled SAP
@@ -86,12 +120,7 @@ fixture's loopback address, leaving compiled sources identical.
   non-exportable-key fixture is useful coverage, but is not this acceptance test.
   The available Windows VM reaches A4H on HTTP, HTTPS and RFC, but has no
   detected Secure Login Client installation or current-user certificates.
-  An additional native Windows-to-SAP test used a temporary non-exportable
-  CNG certificate. Certificate authentication succeeded, but real discovery
-  returned HTTP 400 because the native transport omitted the default Accept
-  header. This is behavioral red evidence; the full Windows lifecycle must
-  pass after the regression fix. The test key, SAP mapping, trust entry and
-  helper were removed, with zero SAP sessions remaining.
+
 - Resolve distribution terms before shipping an RFC-enabled release. The
   optional dependency retains its own license; no RFC binaries are published
   by the private validation workflow.
